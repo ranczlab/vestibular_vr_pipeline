@@ -13,11 +13,14 @@ import time
 import traceback #fixme for debugging purposes
 
 #FIXME list
-#DONE save_path generation and usage should be refactored
-#Events handling is confusing and probably unnecessary complicated (see issue #4 on repo)
+#Events handling is confusing, and probably unnecessary complicated (see issue #4 on repo)
     #the current example notebook and batch notebook does not use extract_events
     #remove extract_events function as not needed
     #remove events from create_basic as not needed? waiting for Hilde's input 
+#dF/F calculation uses Afam method, uses exp fit as baseline, this does not make much sense to me, but results look right 
+    # Based on: https://github.com/ThomasAkam/photometry_preprocessing
+#keeps raw_data (and data?) when actually not needed for further processing (not a big memory load, but untidy)
+#confused names of signals, traces in functions 
 
 
 class preprocess:
@@ -96,19 +99,11 @@ class preprocess:
 
     def create_basic(self, cutend = False, cutstart = False, target_area = 'X', motion = False):
         '''
-        The code assumes 470 nm channel always has data and does the following.
-        0) loads Events.csv and Fluorescence-unaligned.csv
-        1) aligns events and all fluorescence to the 470 nm channel in one dataframe
-        2) if cutstart = True, removes first 15 seconds
-        3) creates a new TimeStamp column in seconds rather than ms 
-        4) creates a df with the data from all recorded wavelengths
-        5) use the path to make a new path to the output data from the preprocessing.
-        6) adds mousename, target_area and experiment type to info
-        :param: cutend: default set to False, removes last 300 seconds, e.g. if you know that you forgot to turn off the equipment before removing fiber
-        :param: cutstart: default set to False,removes first 15 seconds
-        :param: target_area: default set to 'X', can be changed to the target area of the experiment
-        :return: rawdata, data (cut at start and end if needed), data_seconds (timestamp), signals (main output df), save_path
-        FIXME unclear why the events file is even read as it is not saved at the end
+        populates self.info with the experiment information
+        reads fluorescence and event csv files 
+        alignes all channels to the same timestamp (470 nm)
+        does the same for events, but this makes no sense, it's some historical remnant (and not used later anyway)
+        returns the raw data, data, data_seconds and signals FIXME confusing names, signals is used going froward, but then what is data? 
         '''
         
         info = self.info
@@ -133,7 +128,8 @@ class preprocess:
             self.info['experiment_type'] = ()
         self.info['experiment_type'] = experiments
         if 'motion_correction' not in self.info:
-            self.info['motion_correction'] = motion
+            self.info['motion_correction'] = ()
+        self.info['motion_correction'] = motion
         
         #print the mousename and session to output, epsecially usefull for batch processing 
         print(f'\n\033[1mPreprocessing data for {self.info["mousename"]} in session {session}...\033[0m\n')
@@ -215,35 +211,6 @@ class preprocess:
  
         return(rawdata, data, data_seconds, signals)
         
- 
-    def extract_events(self): #FIXME any use for this?    
-        """
-        Assigns a boolean data column for each unique event type indicating 
-        whether the event occurred at each time point (True/False). 
-        Removes 'Event' and 'State' columns after processing.
-        Saves the updated data DataFrame to self.data.
-        
-        Returns:
-            DataFrame with 'Event' and 'State' columns (original values) before removal.
-        """
-        # Copy the data for processing
-        data = self.data.copy()
-    
-        # List to hold unique event names for reference (optional)
-        events = []
-    
-        # Check if the Event column exists and is not empty
-        if 'Event' not in data.columns or data['Event'].isna().all():
-            print("There are no recorded events.")
-
-        else:
-            events = pd.DataFrame()
-            for col in data.columns:
-                if 'event' in col:
-                    events[col]= data[col]
-            
-        return events#data[[event for event in events]]
-
 
     def low_pass_filt(self, method = "auto", plot=False, x_start=None, x_end=None, savefig = False):
         """
@@ -360,6 +327,11 @@ class preprocess:
 
 
     def detrend(self, plot=False, method='divisive', savefig = False):
+        '''
+        Detrends the filtered data using a double exponential fit
+        Method can be divisive (returns dF/F by construction) or subtractive (returns raw signal values)
+        '''
+        
         try:
             traces = self.filtered
         except:
@@ -465,15 +437,15 @@ class preprocess:
         return detrended, exp_fits
 
 
-    def movement_correct(self, plot=False, iso_ch = 410, signal_ch = 470):
+    def motion_correct(self, plot=False, iso_ch = 410, signal_ch = 470):
         """
-        Performs motion correction on photometry signals using linear regression between 410nm and 470nm channels.
+        Performs motion correction on photometry signals using linear regression between iso_ch and signal_ch channels.
         
         Args:
-            plot (bool): If True, generates a correlation plot between 410nm and 470nm signals.
+            plot (bool): If True, generates a correlation plot between 410nm and signal_ch signals.
         
         Returns:
-            pandas.DataFrame: Contains all signals with motion-corrected 470nm and original 410nm/560nm signals.
+            pandas.DataFrame: Contains all signals with motion-corrected signal_ch and original other channel signals.
                             Returns empty DataFrame if correction fails.
         """
         # Check if we have detrended data
@@ -484,17 +456,13 @@ class preprocess:
         if 'motion_correction_slope' not in self.info:
             self.info['motion_correction_slope'] = []
             self.info['motion_correction_R-squared'] = []
+            self.info['motion_correction_isosbestic'] = iso_ch
+            self.info['motion_correction_signal'] = signal_ch
     
         data = self.detrended
         corrected_data = pd.DataFrame()
         iso_channel = f'detrend_filtered_{iso_ch}'
         signal_channel = f'detrend_filtered_{signal_ch}'
-        
-        # # Check if required columns exist
-        # required_columns = ['detrend_filtered_410', 'detrend_filtered_470']
-        # if not all(col in data.columns for col in required_columns):
-        #     print('Required columns (detrend_filtered_410, detrend_filtered_470) not found in detrended data.')
-        #     return pd.DataFrame()
         
         try:
             # Perform linear regression
@@ -524,20 +492,24 @@ class preprocess:
                 return corrected_data
     
             if slope > 0:
-                # Calculate motion-corrected signal
-                control_corr = intercept + slope * data[iso_channel] #the correction calculated using the signal_ch/iso_ch linear fit is applied to all channels
-                corrected_470 = data['detrend_filtered_470'] - control_corr
-                corrected_410 = data['detrend_filtered_410'] - control_corr
-                corrected_560 = data['detrend_filtered_560'] - control_corr
+                # Calculate motion-corrected signal,the correction calculated using the signal_ch/iso_ch linear fit is applied to the signal channel only 
+                control_corr = intercept + slope * data[iso_channel] #
+                corrected_410 = data['detrend_filtered_410']
+                if signal_ch == 470:
+                    corrected_470 = data['detrend_filtered_470'] - control_corr
+                    corrected_560 = data['detrend_filtered_560']
+                if signal_ch == 560:
+                    corrected_470 = data['detrend_filtered_470']
+                    corrected_560 = data['detrend_filtered_560'] - control_corr
                 
                 #Create output DataFrame with all signals
                 for col in data.columns:
                     if '470' in col:
-                        corrected_data['motion_corr_470'] = corrected_470  # Add motion-corrected 470
+                        corrected_data['motion_corr_470'] = corrected_470
                     elif '410' in col:
-                        corrected_data['motion_corr_410'] = corrected_410 # data[col]  # Add original 410
+                        corrected_data['motion_corr_410'] = corrected_410
                     elif '560' in col:
-                        corrected_data['motion_corr_560'] = corrected_560 # data[col]  # Add original 560
+                        corrected_data['motion_corr_560'] = corrected_560 
 
                 self.info['motion_correction'] = True
                 print(f'Motion correction APPLIED to all channels based on iso {iso_ch} and singal {signal_ch}. slope = {slope:.3f} and R-squared = {r_value**2:.3f}')
@@ -584,10 +556,10 @@ class preprocess:
         '''
         Input:
         - the detrended signal as delta F
-        - The decay curve estimate as baseline fluorescence (how does this make sense? same in Akam notebook) 
-        Calculates deltaF / F
+        - The decay curve estimate as baseline fluorescence (FIXME how does this make sense? same in Akam notebook) 
+        Calculates deltaF / F if detrending was subtractive, otherwise returns the detrended (or motion corrected) signal as dF/F
         :returns
-        - dF/F (signals relative to baseline)
+        - dF/F signals
         '''
         dF_F = pd.DataFrame()
     
@@ -601,17 +573,12 @@ class preprocess:
                     signal_dF_F = deltaF / F
                     dF_F[f'{signal[-3:]}_dfF'] = signal_dF_F
             if self.info['motion_correction'] == True:
-                deltaF = self.motion_corrected
-                F = self.exp_fits['expfit_470']
-                signal_dF_F = deltaF / F
-                dF_F['470_dfF'] = signal_dF_F
-                main_data = self.detrended
+                main_data = self.motion_corrected
                 for signal, fit in zip(main_data, self.exp_fits):
-                    if '470' not in signal:
-                        F = self.exp_fits[fit]
-                        deltaF = main_data[signal]
-                        signal_dF_F = deltaF / F
-                        dF_F[f'{signal[-3:]}_dfF'] = signal_dF_F
+                    F = self.exp_fits[fit]
+                    deltaF = main_data[signal]
+                    signal_dF_F = deltaF / F
+                    dF_F[f'{signal[-3:]}_dfF'] = signal_dF_F
     
         if self.info['detrend_method'] == 'divisive': #already dF/F and was motion corrected  
             print('Only doing motion correction if needed, as divisive detrending already resulted in deltaF/F')
@@ -648,8 +615,6 @@ class preprocess:
     def z_score(self, plot=False, savefig=False):
         '''
         Z-scoring of signal traces
-        Gets relative values of signal
-        Calculates median signal value and standard deviation
         Gives the signal strength in terms of standard deviation units
         '''
         zscored_data = pd.DataFrame()
@@ -764,6 +729,9 @@ class preprocess:
     
 
     def write_preprocessed_csv(self, Onix_align = True, motion = False):
+        '''
+        Saves the preprocessed data with renamed coluns and the events into csv files
+        '''
         # Combine the base data
         final_df = pd.concat([self.data_seconds.reset_index(drop=True),
                               self.deltaF_F.reset_index(drop=True),
@@ -802,7 +770,15 @@ class preprocess:
         
     
     def plot_all_signals(self, sensors, plot_info=''):
-        """Generate comprehensive figure of signal processing steps on A4 page"""
+        """
+        Generates a comprehensive figure of signal processing steps on an A4 page, 
+        including exponential fits, ΔF/F signals, Z-scored signals, and cross-correlation plots.
+        Inputs:
+            sensors (list): List of sensors used in the experiment.
+            plot_info (str, optional): Additional information to include in the plot title. Default is an empty string.
+        Outputs:
+            Saves the generated figure to the specified save path.
+        """
         # A4 dimensions and setup
         A4_WIDTH = 8.27
         A4_HEIGHT = 11.69
@@ -879,7 +855,14 @@ class preprocess:
         f'Motion Correction: {motion_correction}'
         )
         fig.suptitle(f'Signal Processing Steps - {self.info["mousename"]} {plot_info}', fontsize=MEDIUM_SIZE + 2, y=0.98)
-        fig.text(0.5, 0.95, f'Filtering: {filter_method}, Detrending: {detrend_method}, Motion Correction for 470: {motion_correction}', ha='center', fontsize=MEDIUM_SIZE)
+        # Add iso_ch and signal_ch if motion correction is True
+        if motion_correction:
+            iso_ch = self.info.get('motion_correction_isosbestic', 'N/A')
+            signal_ch = self.info.get('motion_correction_signal', 'N/A')
+            fig.text(0.5, 0.95, f'Filtering: {filter_method}, Detrending: {detrend_method}, Motion Correction: {motion_correction}, Iso: {iso_ch}, Signal: {signal_ch}', ha='center', fontsize=MEDIUM_SIZE)
+        else:
+            fig.text(0.5, 0.95, f'Filtering: {filter_method}, Detrending: {detrend_method}, Motion Correction: {motion_correction}', ha='center', fontsize=MEDIUM_SIZE)
+        
         plt.tight_layout()
         
         # Save figures in multiple formats
@@ -887,3 +870,32 @@ class preprocess:
         plt.savefig(f'{base_path}.png', bbox_inches='tight', dpi=300)
         plt.savefig(f'{base_path}.eps', bbox_inches='tight', format='eps')
         plt.close()
+        
+        
+    def extract_events(self): #FIXME any use for this?    
+        """
+        Assigns a boolean data column for each unique event type indicating 
+        whether the event occurred at each time point (True/False). 
+        Removes 'Event' and 'State' columns after processing.
+        Saves the updated data DataFrame to self.data.
+        
+        Returns:
+            DataFrame with 'Event' and 'State' columns (original values) before removal.
+        """
+        # Copy the data for processing
+        data = self.data.copy()
+    
+        # List to hold unique event names for reference (optional)
+        events = []
+    
+        # Check if the Event column exists and is not empty
+        if 'Event' not in data.columns or data['Event'].isna().all():
+            print("There are no recorded events.")
+
+        else:
+            events = pd.DataFrame()
+            for col in data.columns:
+                if 'event' in col:
+                    events[col]= data[col]
+            
+        return events#data[[event for event in events]]
