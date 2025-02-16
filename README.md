@@ -45,6 +45,7 @@ pip install sleap
 pip install lsq-ellipse
 pip install h5py
 pip install opencv-python
+pip install pympler # usefull for monitoring memory during dev
 ```
 
 ## Repository contents

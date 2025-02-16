@@ -330,7 +330,7 @@ def read_OnixAnalogData(dataset_path, channels=[0], binarise=False, method='adap
 
 
 def read_OnixAnalogClock(dataset_path): #multiple files aware
-    start_time = time.time()
+    
     arrays_to_concatenate = []
     files_to_read = [x for x in os.listdir(dataset_path/'OnixAnalogClock')]
     
@@ -347,7 +347,6 @@ def read_OnixAnalogClock(dataset_path): #multiple files aware
     
     output = np.concatenate(arrays_to_concatenate)
 
-    #print(f'OnixAnalogClock loaded in {time.time() - start_time:.2f} seconds.')
 
     return output
 

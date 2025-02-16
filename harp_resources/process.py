@@ -271,7 +271,7 @@ def reformat_and_add_many_streams(streams, dataframe, source_name, stream_names,
 
 
 def photometry_harp_onix_synchronisation(
-    onix_analog_data,
+    photodiode,
     onix_analog_clock, 
     onix_analog_framecount, 
     onix_digital, 
@@ -291,7 +291,7 @@ def photometry_harp_onix_synchronisation(
         upsampled_framecount[col] = np.interp(new_index, np.arange(len(df)), df[col])
 
     # Check onix_analog shapes for consistency
-    data_len = onix_analog_data.shape[0]
+    data_len = photodiode.shape[0]
     clock_len = onix_analog_clock.shape[0]
     framecount_len = len(upsampled_framecount)
     
