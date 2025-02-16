@@ -1,26 +1,23 @@
-import matplotlib.pyplot as plt
+import os
 import numpy as np
 import pandas as pd
-import csv
 from scipy.signal import butter, filtfilt
-from scipy.stats import linregress, zscore
-from scipy.optimize import curve_fit, minimize
-from datetime import datetime, timedelta
-import os
+from scipy.stats import linregress
+from scipy.optimize import curve_fit
 import matplotlib as mpl
-import time
+import matplotlib.pyplot as plt
+import csv
+import traceback #for debugging purposes
 
-import traceback #fixme for debugging purposes
-
-#FIXME list
+#FIXME cleanup list 
 #Events handling is confusing, and probably unnecessary complicated (see issue #4 on repo)
     #the current example notebook and batch notebook does not use extract_events
     #remove extract_events function as not needed
     #remove events from create_basic as not needed? waiting for Hilde's input 
-#dF/F calculation uses Afam method, uses exp fit as baseline, this does not make much sense to me, but results look right 
+#dF/F calculation uses Akam method, uses exp fit as baseline, this does not make much sense to me, but results look right 
     # Based on: https://github.com/ThomasAkam/photometry_preprocessing
 #keeps raw_data (and data?) when actually not needed for further processing (not a big memory load, but untidy)
-#confused names of signals, traces in functions 
+#Different functions use different names internally eg signals or traces  
 
 
 class preprocess:
@@ -222,7 +219,6 @@ class preprocess:
         x_start (float, optional): Start time for x-axis in seconds. If None, uses minimum time.
         x_end (float, optional): End time for x-axis in seconds. If None, uses maximum time.
         """
-        start_time = time.time()
         
         signals = self.signals
         sensors = self.sensors
@@ -485,7 +481,7 @@ class preprocess:
     
             # Apply motion correction if enabled and slope is positive
             if self.info['motion_correction'] == False:
-                print('Motion correction NOT applied, correlation plot for information only.')
+                print('Motion correction NOT applied, plot (if present) for information only.')
                 # Copy all original signals
                 for col in data.columns:
                     corrected_data[col] = data[col]
@@ -564,7 +560,7 @@ class preprocess:
         dF_F = pd.DataFrame()
     
         if self.info['detrend_method'] == 'subtractive':
-            print('The method used for detrending was subtractive, deltaF/F is calculated now.')
+            print('dF/F: The method used for detrending was subtractive, deltaF/F is calculated now.')
             if self.info['motion_correction'] == False:
                 main_data = self.detrended
                 for signal, fit in zip(main_data, self.exp_fits):
@@ -581,7 +577,7 @@ class preprocess:
                     dF_F[f'{signal[-3:]}_dfF'] = signal_dF_F
     
         if self.info['detrend_method'] == 'divisive': #already dF/F and was motion corrected  
-            print('Only doing motion correction if needed, as divisive detrending already resulted in deltaF/F')
+            print('dF/F: Only doing motion correction if needed, as divisive detrending already resulted in deltaF/F')
             if self.info['motion_correction'] == False:
                 # Copy all detrended signals to dF_F
                 for signal in self.detrended.columns:
@@ -620,14 +616,14 @@ class preprocess:
         zscored_data = pd.DataFrame()
     
         if self.info['motion_correction'] == True: 
-            print('Working on motion corrected data')
+            print('z-scoring motion corrected data')
             signals = self.motion_corrected
             for signal in signals:
                 signal_corrected = signals[signal]
                 zscored_data[f'z_{signal[-3:]}'] = (signal_corrected - np.median(signal_corrected)) / np.std(signal_corrected)
     
         if self.info['motion_correction'] == False:
-            print('Working on NOT motion corrected data') 
+            print('z-scoring non-motion corrected data') 
             signals = self.detrended
             for signal in signals:
                 signal_corrected = signals[signal]
@@ -769,6 +765,9 @@ class preprocess:
         mpl.pyplot.close()
         
     
+        import matplotlib.patheffects as path_effects
+        
+        
     def plot_all_signals(self, sensors, plot_info=''):
         """
         Generates a comprehensive figure of signal processing steps on an A4 page, 
@@ -801,24 +800,25 @@ class preprocess:
         for idx, signal in enumerate(self.signals.columns):
             # 1. Exponential fit
             ax1 = fig.add_subplot(gs[idx*3])
-            ax1.plot(self.data_seconds['TimeStamp'], self.filtered[f'filtered_{signal}'],
+            line1 = ax1.plot(self.data_seconds['TimeStamp'], self.filtered[f'filtered_{signal}'],
                     color=self.colors[idx], alpha=1, label=f'Filtered {signal}', linewidth=0.5)
-            ax1.plot(self.data_seconds['TimeStamp'], self.exp_fits[f'expfit_{signal[-3:]}'],
+            line2 = ax1.plot(self.data_seconds['TimeStamp'], self.exp_fits[f'expfit_{signal[-3:]}'],
                     color='black', alpha=1, label='Exponential fit', linewidth=1)
             ax1.set_title(f'Exponential Fit - {sensors[signal[-3:]]}', fontsize=TITLE_SIZE)
             ax1.legend(loc='upper right')
             
             # 2. dF/F signal
             ax2 = fig.add_subplot(gs[idx*3 + 1])
-            ax2.plot(self.data_seconds['TimeStamp'], self.deltaF_F[f'{signal[-3:]}_dfF'],
+            line3 = ax2.plot(self.data_seconds['TimeStamp'], self.deltaF_F[f'{signal[-3:]}_dfF'],
                     color=self.colors[idx], linewidth=0.2)
             ax2.set_title(f'ΔF/F Signal - {sensors[signal[-3:]]}', fontsize=TITLE_SIZE)
             
             # 3. Z-scored signal
             ax3 = fig.add_subplot(gs[idx*3 + 2])
-            ax3.plot(self.data_seconds['TimeStamp'], self.zscored[f'z_{signal[-3:]}'],
+            line4 = ax3.plot(self.data_seconds['TimeStamp'], self.zscored[f'z_{signal[-3:]}'],
                     color=self.colors[idx], linewidth=0.2)
             ax3.set_title(f'Z-scored Signal - {sensors[signal[-3:]]}', fontsize=TITLE_SIZE)
+        
         
         # Add cross-correlation plot
         ax_cc = fig.add_subplot(gs[-1])
@@ -835,7 +835,7 @@ class preprocess:
         peak_idx = np.argmax(np.abs(window))
         peak_value = round(window[peak_idx], 2)
         peak_lag = round(window_lags[peak_idx], 2)
-        ax_cc.plot(window_lags, window, label='Cross-correlation')
+        line5 = ax_cc.plot(window_lags, window, label='Cross-correlation')
         ax_cc.axvline(x=peak_lag, color='r', linestyle='--', label=f'Peak at {peak_lag:.2f}s')
         ax_cc.scatter([peak_lag], [peak_value], color='r')
         ax_cc.set_title(f'Cross-correlation between {sensors[col1]} and {sensors[col2]}', fontsize=TITLE_SIZE)
@@ -867,8 +867,8 @@ class preprocess:
         
         # Save figures in multiple formats
         base_path = f'{self.save_path}/all_signals_{self.info["mousename"]}'
-        plt.savefig(f'{base_path}.png', bbox_inches='tight', dpi=300)
-        plt.savefig(f'{base_path}.eps', bbox_inches='tight', format='eps')
+        plt.savefig(f'{base_path}.png', bbox_inches='tight', dpi=600)
+        plt.savefig(f'{base_path}.svg', bbox_inches='tight', format='svg')
         plt.close()
         
         
