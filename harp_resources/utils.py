@@ -396,17 +396,17 @@ def read_SessionSettings(dataset_path, print_contents=False):
 #     return Events
 
 
-def load_registers(dataset_path, dataframe=True, verbose = False):
+def load_registers(dataset_path, dataframe=True, has_heartbeat = True, verbose=False):
     """Load register data and return as either dictionary or DataFrame
     Args:
         dataset_path: Path to data directory
         dataframe: If True returns DataFrame, if False returns dict
     """
-    h1_dict, h2_dict = load_register_paths(dataset_path, verbose)
+    h1_dict, h2_dict = load_register_paths(dataset_path, verbose=verbose)
     
     h1_data_streams = {}
     for register in h1_dict.keys():
-        data_stream = load(get_register_object(register, 'h1'), dataset_path/'HarpDataH1')
+        data_stream = load(get_register_object(register, 'h1', has_heartbeat), dataset_path/'HarpDataH1')
         
         if data_stream.columns.shape[0] > 1:
             for col_name in data_stream.columns:
@@ -418,7 +418,7 @@ def load_registers(dataset_path, dataframe=True, verbose = False):
     
     h2_data_streams = {}
     for register in h2_dict.keys():
-        data_stream = load(get_register_object(register, 'h2'), dataset_path/'HarpDataH2')
+        data_stream = load(get_register_object(register, 'h2', has_heartbeat), dataset_path/'HarpDataH2')
         
         if data_stream.columns.shape[0] > 1:
             for col_name in data_stream.columns:
@@ -446,7 +446,7 @@ def load_registers(dataset_path, dataframe=True, verbose = False):
         return {'H1': h1_data_streams, 'H2': h2_data_streams}
   
     
-def load_register_paths(dataset_path, verbose=False):
+def load_register_paths(dataset_path, verbose):
     
     if not os.path.exists(dataset_path/'HarpDataH1') or not os.path.exists(dataset_path/'HarpDataH2'):
         raise FileNotFoundError(f"'HarpDataH1' or 'HarpDataH2' folder was not found in {dataset_path}.")
@@ -513,23 +513,42 @@ def load_register_paths(dataset_path, verbose=False):
     return h1_dict, h2_dict
     
     
-def get_register_object(register_number, harp_board='h1'):
+def get_register_object(register_number, harp_board='h1', has_heartbeat = True):
     h1_reader = harp.create_reader(f'harp_resources/h1-device.yml', epoch=harp.REFERENCE_EPOCH)
     h2_reader = harp.create_reader(f'harp_resources/h2-device.yml', epoch=harp.REFERENCE_EPOCH)
-    reference_dict = {
-        'h1': {
-            32: h1_reader.Cam0Event,
-            33: h1_reader.Cam1Event,
-            38: h1_reader.StartAndStop,
-            46: h1_reader.OpticalTrackingRead
-        },
-        'h2': {
-            38: h2_reader.Encoder,
-            39: h2_reader.AnalogInput,
-            42: h2_reader.ImmediatePulses
+    if has_heartbeat == True:
+        reference_dict = {
+            'h1': {
+                8: h1_reader.Heartbeat,
+                32: h1_reader.Cam0Event,
+                33: h1_reader.Cam1Event,
+                38: h1_reader.StartAndStop,
+                46: h1_reader.OpticalTrackingRead
+            },
+            'h2': {
+                8: h2_reader.Heartbeat,
+                38: h2_reader.Encoder,
+                39: h2_reader.AnalogInput,
+                42: h2_reader.ImmediatePulses
+            }
         }
-    }
-    
+    else:
+        reference_dict = {
+            'h1': {
+                8: h1_reader.Heartbeat,
+                32: h1_reader.Cam0Event,
+                33: h1_reader.Cam1Event,
+                38: h1_reader.StartAndStop,
+                46: h1_reader.OpticalTrackingRead
+            },
+            'h2': {
+                8: h2_reader.Heartbeat,
+                38: h2_reader.Encoder,
+                39: h2_reader.AnalogInput,
+                42: h2_reader.ImmediatePulses
+            }
+        }
+
     if register_number not in reference_dict[harp_board]:
         raise KeyError(f"Register number {register_number} not found for harp board {harp_board}")
     
