@@ -40,19 +40,6 @@ class SessionData(Reader):
         # Pretty print if needed
         if print_contents:
             print(json.dumps(data, indent=4))
-
-
-#not used 
-# class PhotometryReader(Csv):
-#     def __init__(self, pattern):
-#         #super().__init__(pattern, columns=["Time", "Events", "CH1-410", "CH1-470", "CH1-560", "U"], extension="csv")
-#         super().__init__(pattern, columns=["TimeStamp", "dfF_470", "dfF_560", "dfF_410"], extension="csv")
-#         self._rawcolumns = self.columns
-
-#     def read(self, file):
-#         data = pd.read_csv(file, header=1, names=self._rawcolumns)
-#         data.set_index("Time", inplace=True)
-#         return data
     
 
 class Video(Csv):
@@ -79,11 +66,19 @@ class TimestampedCsvReader(Csv):
 
     def read(self, file):
         data = pd.read_csv(file, header=0, names=self._rawcolumns)
-        data["Seconds"] = data["Time"]
+        data["Seconds"] = data["Time"]  # Temporarily store seconds
         data["Time"] = data["Time"].transform(lambda x: api.aeon(x))
         data.set_index("Time", inplace=True)
+        
+        # Remove unwanted columns
+        columns_to_drop = ["Seconds"]
+        if "HubClock" in data.columns:
+            columns_to_drop.append("HubClock")
+        if "HubSynchCounter" in data.columns:
+            columns_to_drop.append("HubSynchCounter")
+        
+        data = data.drop(columns=columns_to_drop)
         return data
-    
     
 class OnixDigitalReader(Csv): #multiple files aware
     def __init__(self, pattern, columns):
@@ -104,7 +99,6 @@ class OnixDigitalReader(Csv): #multiple files aware
                     processed_line = {
                         'Seconds': float(parts[0]),
                         'Value.Clock': float(parts[1]),
-                        'Value.HubClock': float(parts[2]),
                         'Value.DigitalInputs': parts[3].strip(),
                         'Value.Buttons': parts[-1]
                     }
@@ -119,7 +113,6 @@ class OnixDigitalReader(Csv): #multiple files aware
             # Rename columns
             column_mapping = {
                 'Value.Clock': 'Clock',
-                'Value.HubClock': 'HubClock',
                 'Value.DigitalInputs': 'DigitalInputs0'
             }
             data = data.rename(columns=column_mapping)
@@ -131,7 +124,7 @@ class OnixDigitalReader(Csv): #multiple files aware
             except ValueError:
                 is_numeric = False
             
-            # Create PhotometrySyncState column
+            # Create PhotometrySyncState column and make it bool 
             if is_numeric:
                 data['PhotometrySyncState'] = data['DigitalInputs0'].apply(lambda x: x == 255)
             else:
@@ -141,7 +134,16 @@ class OnixDigitalReader(Csv): #multiple files aware
             data["Time"] = data["Seconds"].apply(api.aeon)
             data.set_index("Time", inplace=True)
             
+            # Remove unwanted columns
+            columns_to_drop = ["Seconds"]
+            data = data.drop(columns=columns_to_drop)
+            
             return data
+                
+        except Exception as e:
+            print(f"Error processing file {file}: {e}")
+            print("Data sample at error:", data.head() if 'data' in locals() else "No data loaded")
+            raise
             
         except Exception as e:
             print(f"Error processing file {file}: {e}")
@@ -219,16 +221,6 @@ def read_ExperimentEvents(path):
     except Exception as e:
         print('Reading failed:', e)
         return None
-
-
-# def read_OnixAnalogFrameCount(path): #multiple files aware, but we use load_2 instead
-#     filenames = os.listdir(path/'OnixAnalogFrameCount')
-#     filenames = [x for x in filenames if x[:20]=='OnixAnalogFrameCount'] # filter out other (hidden) files
-#     sorted_filenames = pd.to_datetime(pd.Series([x.split('_')[1].split('.')[0] for x in filenames])).sort_values()
-#     read_dfs = []
-#     for row in sorted_filenames:
-#         read_dfs.append(pd.read_csv(path/'OnixAnalogFrameCount'/f"OnixAnalogFrameCount_{row.strftime('%Y-%m-%dT%H-%M-%S')}.csv"))
-#     return pd.concat(read_dfs).reset_index().drop(columns='index')
 
 
 def read_OnixAnalogData(dataset_path, channels=[0], binarise=False, method='adaptive', refractory = 300, flip=True, verbose=False):
@@ -381,19 +373,6 @@ def read_SessionSettings(dataset_path, print_contents=False):
                 print(json.dumps(data, indent=4))
 
     return data
-
-# def read_fluorescence(photometry_data_path):
-#     try:
-#         Fluorescence = pd.read_csv(photometry_data_path/'Processed_Fluorescence.csv', skiprows=1, index_col=False)
-#     except FileNotFoundError:
-#         Fluorescence = pd.read_csv(photometry_data_path/'Fluorescence.csv', skiprows=1, index_col=False)
-        
-#     if 'Unnamed: 5' in Fluorescence.columns: Fluorescence = Fluorescence.drop(columns='Unnamed: 5')
-#     return Fluorescence
-
-# def read_fluorescence_events(photometry_data_path):
-#     Events = pd.read_csv(photometry_data_path/'Events.csv', skiprows=0, index_col=False)
-#     return Events
 
 
 def load_registers(dataset_path, dataframe=True, has_heartbeat = True, verbose=False):
@@ -654,3 +633,37 @@ def load_streams_from_h5(data_path):
                 reconstructed_streams[source_name][stream_name] = pd.Series(data=stream_data, index=common_index)
 
     return reconstructed_streams
+
+#not used 
+# class PhotometryReader(Csv):
+#     def __init__(self, pattern):
+#         #super().__init__(pattern, columns=["Time", "Events", "CH1-410", "CH1-470", "CH1-560", "U"], extension="csv")
+#         super().__init__(pattern, columns=["TimeStamp", "dfF_470", "dfF_560", "dfF_410"], extension="csv")
+#         self._rawcolumns = self.columns
+
+#     def read(self, file):
+#         data = pd.read_csv(file, header=1, names=self._rawcolumns)
+#         data.set_index("Time", inplace=True)
+#         return data
+
+# def read_fluorescence(photometry_data_path):
+#     try:
+#         Fluorescence = pd.read_csv(photometry_data_path/'Processed_Fluorescence.csv', skiprows=1, index_col=False)
+#     except FileNotFoundError:
+#         Fluorescence = pd.read_csv(photometry_data_path/'Fluorescence.csv', skiprows=1, index_col=False)
+        
+#     if 'Unnamed: 5' in Fluorescence.columns: Fluorescence = Fluorescence.drop(columns='Unnamed: 5')
+#     return Fluorescence
+
+# def read_fluorescence_events(photometry_data_path):
+#     Events = pd.read_csv(photometry_data_path/'Events.csv', skiprows=0, index_col=False)
+#     return Events
+
+# def read_OnixAnalogFrameCount(path): #multiple files aware, but we use load_2 instead
+#     filenames = os.listdir(path/'OnixAnalogFrameCount')
+#     filenames = [x for x in filenames if x[:20]=='OnixAnalogFrameCount'] # filter out other (hidden) files
+#     sorted_filenames = pd.to_datetime(pd.Series([x.split('_')[1].split('.')[0] for x in filenames])).sort_values()
+#     read_dfs = []
+#     for row in sorted_filenames:
+#         read_dfs.append(pd.read_csv(path/'OnixAnalogFrameCount'/f"OnixAnalogFrameCount_{row.strftime('%Y-%m-%dT%H-%M-%S')}.csv"))
+#     return pd.concat(read_dfs).reset_index().drop(columns='index')
