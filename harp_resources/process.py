@@ -76,8 +76,6 @@ def get_timepoint_info(registers_dict, print_all=False):
     return global_first_timestamp, global_last_timestamp, first_timestamps, last_timestamps
 
 def pad_and_resample(streams_dict, resampling_period='0.1ms', method='linear'):
-
-    start_time = time()
     
     streams_dict = copy.deepcopy(streams_dict)
     
@@ -269,7 +267,6 @@ def reformat_and_add_many_streams(streams, dataframe, source_name, stream_names,
         streams = add_stream(streams, source_name, new_stream, stream_name)
     return streams
 
-
 def photometry_harp_onix_synchronisation(
     photodiode,
     onix_analog_clock, 
@@ -310,6 +307,9 @@ def photometry_harp_onix_synchronisation(
     onix_to_harp_seconds = lambda x: x * o_m + o_b
     onix_to_harp_timestamp = lambda x: api.aeon(onix_to_harp_seconds(x))
     harp_to_onix_clock = lambda x: (x - o_b) / o_m
+    
+    # Print o_m and o_b
+    print(f"for onix to harp o_m: {o_m}, o_b: {o_b}")
     
     # Calculate R-squared value
     y_pred = onix_to_harp_seconds(clock)
@@ -381,6 +381,9 @@ def photometry_harp_onix_synchronisation(
     photometry_to_onix_time = lambda x: x * m + b
     photometry_to_harp_time = lambda x: onix_to_harp_timestamp(photometry_to_onix_time(x))
     onix_time_to_photometry = lambda x: (x - b) / m
+    
+    # Print m and b
+    print(f"for photometry to harp m: {m}, b: {b}")
     
     # Calculate R-squared value
     y_pred = photometry_to_onix_time(photometry_sync_events.index)
