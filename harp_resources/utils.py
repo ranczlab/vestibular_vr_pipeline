@@ -495,6 +495,13 @@ def get_register_object(register_number, harp_board='h1', has_heartbeat = True):
         raise KeyError(f"Register number {register_number} not found for harp board {harp_board}")
     
     return reference_dict[harp_board][register_number]
+
+
+def load(reader: Reader, root: Path) -> pd.DataFrame: #used to load H1 & H2 registers 
+    root = Path(root)
+    pattern = f"{root.joinpath(root.name)}_{reader.register.address}_*.bin"
+    data = [reader.read(file) for file in glob(pattern)]
+    return pd.concat(data)
     
 
 def detect_and_remove_outliers(df, x_column, y_column, verbose=False):
@@ -645,8 +652,3 @@ def load_streams_from_h5(data_path):
 #     data = [reader.read(file) for file in glob(pattern)]
 #     return pd.concat(data)
 
-# def load(reader: Reader, root: Path) -> pd.DataFrame: #used to load H1 & H2 registers separately if needed for debug
-#     root = Path(root)
-#     pattern = f"{root.joinpath(root.name)}_{reader.register.address}_*.bin"
-#     data = [reader.read(file) for file in glob(pattern)]
-#     return pd.concat(data)
