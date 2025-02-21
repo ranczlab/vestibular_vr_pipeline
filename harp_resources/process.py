@@ -39,25 +39,24 @@ def resample_index(index, freq):
     series = pd.Series(resampled_index, resampled_index.floor('D'))
     return pd.DatetimeIndex(series.loc[index].values)
 
-def get_timepoint_info(registers_dict, print_all=False):
-    
+def get_global_minmax_timestamps(stream_dict, print_all=False):
     # Finding the very first and very last timestamp across all streams
     first_timestamps, last_timestamps = {}, {}
-    for source_name, register_source in registers_dict.items():
-        first_timestamps[source_name] = {k:v.index[0] for k,v in register_source.items()}
-        last_timestamps[source_name] = {k:v.index[-1] for k,v in register_source.items()}
+    for source_name, stream_source in stream_dict.items():
+        first_timestamps[source_name] = {k: v.index[0] for k, v in stream_source.items()}
+        last_timestamps[source_name] = {k: v.index[-1] for k, v in stream_source.items()}
     
     # Saving global first and last timestamps across the sources and the registers
     joint_first_timestamps, joint_last_timestamps = [], []
     
-    for register_source in first_timestamps.values():
-        for register in register_source.values():
-            joint_first_timestamps = joint_first_timestamps + [register]
+    for stream_source in first_timestamps.values():
+        for register in stream_source.values():
+            joint_first_timestamps.append(register)
     joint_first_timestamps = pd.DataFrame(joint_first_timestamps)
     
-    for register_source in last_timestamps.values():
-        for register in register_source.values():
-            joint_last_timestamps = joint_last_timestamps + [register]
+    for stream_source in last_timestamps.values():
+        for register in stream_source.values():
+            joint_last_timestamps.append(register)
     joint_last_timestamps = pd.DataFrame(joint_last_timestamps)
     
     global_first_timestamp = joint_first_timestamps.iloc[joint_first_timestamps[0].argmin()][0]
@@ -68,14 +67,45 @@ def get_timepoint_info(registers_dict, print_all=False):
         print(f'Global last timestamp: {global_last_timestamp}')
         print(f'Global length: {global_last_timestamp - global_first_timestamp}')
         
-        for source_name in registers_dict.keys():
+        for source_name in stream_dict.keys():
             print(f'\n{source_name}')
             for key in first_timestamps[source_name].keys():
-                print(f'{key}: \n\tfirst  {first_timestamps[source_name][key]} \n\tlast   {last_timestamps[source_name][key]} \n\tlength {last_timestamps[source_name][key] - first_timestamps[source_name][key]} \n\tmean difference between timestamps {registers_dict[source_name][key].index.diff().mean()}')
+                print(f'{key}: \n\tfirst  {first_timestamps[source_name][key]} \n\tlast   {last_timestamps[source_name][key]} \n\tlength {last_timestamps[source_name][key] - first_timestamps[source_name][key]} \n\tmean difference between timestamps {stream_dict[source_name][key].index.to_series().diff().mean()}')
     
     return global_first_timestamp, global_last_timestamp, first_timestamps, last_timestamps
 
-def pad_and_resample(streams_dict, resampling_period='0.1ms', method='linear'):
+def pad_dataframe_with_global_timestamps(df, global_min_datetime, global_max_datetime):
+    
+    # Function to determine the padding value based on column dtype
+    def get_padding_value(dtype):
+        if pd.api.types.is_bool_dtype(dtype):
+            return False
+        elif pd.api.types.is_numeric_dtype(dtype):
+            return np.nan
+        elif pd.api.types.is_object_dtype(dtype):
+            return None
+        else:
+            return pd.NA
+    
+    # Check if the first index is greater than the global minimum datetime
+    if df.index[0] > global_min_datetime:
+        # Create a new row with the global minimum datetime, padding with appropriate values
+        new_start = pd.DataFrame({col: [get_padding_value(df[col].dtype)] for col in df.columns}, index=[global_min_datetime])
+        # Append the new row to the DataFrame
+        df = pd.concat([new_start, df])
+        df = df.sort_index()
+    
+    # Check if the last index is less than the global maximum datetime
+    if df.index[-1] < global_max_datetime:
+        # Create a new row with the global maximum datetime, padding with appropriate values
+        new_end = pd.DataFrame({col: [get_padding_value(df[col].dtype)] for col in df.columns}, index=[global_max_datetime])
+        # Append the new row to the DataFrame
+        df = pd.concat([df, new_end])
+        df = df.sort_index()
+    
+    return df
+
+# def pad_and_resample(streams_dict, resampling_period='0.1ms', method='linear'):
     
     streams_dict = copy.deepcopy(streams_dict)
     
