@@ -13,31 +13,48 @@ import re # for photometry alignment
 from . import utils
 import aeon.io.api as api
 
-def resample_stream(data_stream_df, resampling_period='0.1ms', method='linear'):
-    return data_stream_df.resample(resampling_period).last().interpolate(method=method)
-
-def resample_index(index, freq):
-    """Resamples each day in the daily `index` to the specified `freq`.
-
-    Parameters
-    ----------
-    index : pd.DatetimeIndex
-        The daily-frequency index to resample
-    freq : str
-        A pandas frequency string which should be higher than daily
-
-    Returns
-    -------
-    pd.DatetimeIndex
-        The resampled index
-
+def downsample_numpy(arr, factor, method="mean"):
     """
-    assert isinstance(index, pd.DatetimeIndex)
-    start_date = index.min()
-    end_date = index.max() + pd.DateOffset(days=1)
-    resampled_index = pd.date_range(start_date, end_date, freq=freq)[:-1]
-    series = pd.Series(resampled_index, resampled_index.floor('D'))
-    return pd.DatetimeIndex(series.loc[index].values)
+    Downsamples a NumPy array by a given factor.
+    
+    Args:
+        arr (np.ndarray): Input array.
+        factor (int): Downsampling factor.
+        method (str): 'mean', 'median', or 'first' for downsampling strategy.
+        
+    Returns:
+        np.ndarray: Downsampled array.
+    """
+    if method == "mean":
+        return arr[:len(arr)//factor * factor].reshape(-1, factor).mean(axis=1)
+    elif method == "median":
+        return np.median(arr[:len(arr)//factor * factor].reshape(-1, factor), axis=1)
+    elif method == "first":
+        return arr[::factor]
+    else:
+        raise ValueError("Invalid method. Choose 'mean', 'median', or 'first'.")
+
+def running_unit_conversion(running_array): #for ball linear movement
+    resolution = 12000 # counts per inch
+    inches_per_count = 1 / resolution
+    meters_per_count = 0.0254 * inches_per_count
+    dt = 0.01 # for OpticalTrackingRead0Y(46) -this is sensor specific. current sensor samples at 100 hz 
+    linear_velocity = meters_per_count / dt # meters per second per count
+    
+    return running_array * linear_velocity
+
+def turning_unit_conversion(turning_array): # for ball rotation
+    resolution = 12000 # counts per inch
+    inches_per_count = 1 / resolution
+    meters_per_count = 0.0254 * inches_per_count
+    dt = 0.01 # for OpticalTrackingRead0Y(46) -this is sensor specific. current sensor samples at 100 hz 
+    linear_velocity = meters_per_count / dt # meters per second per count
+    
+    ball_radius = 0.1 # meters 
+    angular_velocity = linear_velocity / ball_radius # radians per second per count
+    angular_velocity = angular_velocity * (180 / np.pi) # degrees per second per count
+    
+    return turning_array * angular_velocity
 
 def get_global_minmax_timestamps(stream_dict, print_all=False):
     # Finding the very first and very last timestamp across all streams
@@ -144,191 +161,15 @@ def pad_dataframe_with_global_timestamps(df, global_min_datetime, global_max_dat
 
     return streams_dict
 
-def compute_Lomb_Scargle_psd(data_df, freq_min=0.001, freq_max=10**6, num_freqs=1000, normalise=True):
-    freqs = np.linspace(freq_min, freq_max, num_freqs)
-#     x = (data_df.index - data_df.index[0]).total_seconds().to_numpy()
-    x = data_df.index
-    y = data_df.values
-    if y.ndim != 1: y = y[:,0]
-    psd = signal.lombscargle(x, y, freqs, normalize=normalise)
-    return freqs, psd
-
-def plot_detail(data_stream_df, dataset_name, register, sample_num_to_plot=25):
-    
-    resampled_data_stream_df = resample_stream(data_stream_df)
-    
-    fig, ax = plt.subplots(nrows=3, ncols=2, figsize=(10,15))
-    
-    fig.suptitle(f'DATASET [{dataset_name}] REGISTER [{register}]')
-    
-    ax[0][0].plot(data_stream_df, alpha=0.75)
-    ax[0][0].plot(resampled_data_stream_df, alpha=0.75)
-    ax[0][0].set_title('Full signal')
-    ax[0][0].set_xlabel('Timestamp')
-    ax[0][0].set_ylabel('Signal Magnitude')
-    ax[0][0].set_xticklabels(ax[0][0].get_xticklabels(), rotation=-45)
-    ax[0][0].grid()
-    
-    ax[1][0].plot(data_stream_df[:sample_num_to_plot], alpha=0.75)
-    ax[1][0].scatter(data_stream_df[:sample_num_to_plot].index, data_stream_df[:sample_num_to_plot], s=25)
-    filtered_resampled_df = resampled_data_stream_df[resampled_data_stream_df.index < data_stream_df.index[sample_num_to_plot]]
-    ax[1][0].plot(filtered_resampled_df, alpha=0.75)
-    ax[1][0].scatter(filtered_resampled_df.index, filtered_resampled_df, s=25, alpha=0.25)
-    ax[1][0].set_xlabel('Timestamp')
-    ax[1][0].set_ylabel('Signal Magnitude')
-    ax[1][0].set_title(f'Zoom into first {sample_num_to_plot} timepoints')
-    ax[1][0].set_xticks(data_stream_df[:sample_num_to_plot].index)
-    ax[1][0].set_xticklabels(data_stream_df[:sample_num_to_plot].index.strftime('%H:%M:%S.%f'), rotation=-90)
-    ax[1][0].grid()
-    print('First five original timestamps:')
-    for ts in data_stream_df[:5].index.to_list(): print(ts)
-    print('\nFirst five resampled timestamps:')
-    for ts in resampled_data_stream_df[:5].index.to_list(): print(ts)
-    
-    ax[1][1].plot(data_stream_df[-sample_num_to_plot:], alpha=0.75)
-    ax[1][1].scatter(data_stream_df[-sample_num_to_plot:].index, data_stream_df[-sample_num_to_plot:], s=25)
-    filtered_resampled_df = resampled_data_stream_df[resampled_data_stream_df.index >= data_stream_df.index[-sample_num_to_plot]]
-    ax[1][1].plot(filtered_resampled_df, alpha=0.75)
-    ax[1][1].scatter(filtered_resampled_df.index, filtered_resampled_df, s=25, alpha=0.25)
-    ax[1][1].set_xlabel('Timestamp')
-    ax[1][1].set_ylabel('Signal Magnitude')
-    ax[1][1].set_title(f'Zoom into last {sample_num_to_plot} timepoints')
-    ax[1][1].set_xticks(data_stream_df[-sample_num_to_plot:].index)
-    ax[1][1].set_xticklabels(data_stream_df[-sample_num_to_plot:].index.strftime('%H:%M:%S.%f'), rotation=-90)
-    ax[1][1].grid()
-    
-    inter_timestamp_invervals = np.diff(data_stream_df.index).astype(np.uint32) * (10**-9) # converted to seconds
-    ax[2][0].hist(inter_timestamp_invervals, bins=50)
-    ax[2][0].set_title('Histogram of intervals between timestamps')
-    ax[2][0].set_xlabel('Inter-timestamp interval (seconds)')
-    ax[2][0].set_ylabel('Count')
-    ax[2][0].set_xticklabels(ax[2][0].get_xticklabels(), rotation=-45)
-    ax[2][0].grid()
-    
-    plt.tight_layout()
-    plt.show()
-
-def plot_dataset(dataset_path):
-    registers = utils.load_registers(dataset_path)
-    h1_data_streams, h2_data_streams = registers['H1'], registers['H2']
-    for register, register_stream in h1_data_streams.items():
-        plot_detail(register_stream, dataset_path.name, register=str(register))
-    for register, register_stream in h2_data_streams.items():
-        plot_detail(register_stream, dataset_path.name, register=str(register))
-
-def align_fluorescence_first_approach(fluorescence_df, onixdigital_df): #DEPRECATED, could be useful for Cohort0?
-    # Aligns Fluorescence signal using the HARP timestamps from onix_digital and interpolation
-    # Steps:
-    # - Selecting the rows where there are photometry synchronisation events occurring
-    # - Getting the values from 'Seconds' column of onix_digital and setting them to Fluorescence dataframe
-    # - Estimating the very first and the very last 'Seconds' value based on timestamps of the photometry software ('TimeStamp' column)
-    # - Applying default Pandas interpolation
-    # - based on https://github.com/neurogears/vestibular-vr/issues/76
-    # - FIXME relays on serious assumptions, do not use (or maybe for Cohort 0)?
-    
-    start_time = time()
-
-    fluorescence_df = copy.deepcopy(fluorescence_df)
-    
-    # Adding a new column
-    fluorescence_df['Seconds'] = np.nan
-    
-    # Setting the rows of Seconds column where there are events with HARP timestamp values from onix_digital
-    fluorescence_df.loc[fluorescence_df['Events'].notna(), 'Seconds'] = onixdigital_df['Seconds'].values
-    
-    # estimate the very first and very last values of Seconds column in Fluorescence to be able to interpolate between
-    first_val_to_insert = fluorescence_df[fluorescence_df['Events'].notna()].iloc[0]['Seconds'] - fluorescence_df[fluorescence_df['Events'].notna()].iloc[0]['TimeStamp'] / 1000
-    # first_val_to_insert = Seconds value of the first Event to occur - seconds elapsed since start of recording (converted from ms)
-    last_val_to_insert = fluorescence_df[fluorescence_df['Events'].notna()].iloc[-1]['Seconds'] + (fluorescence_df.iloc[-1]['TimeStamp'] / 1000 - fluorescence_df[fluorescence_df['Events'].notna()].iloc[-1]['TimeStamp'] / 1000)
-    # last_val_to_insert = Seconds value of the last Event to occur + seconds elapsed between the last row of Fluorescence and the last event to occur
-    
-    fluorescence_df.loc[0, 'Seconds'] = first_val_to_insert
-    fluorescence_df.loc[-1, 'Seconds'] = last_val_to_insert
-    
-    fluorescence_df[['Seconds']] = fluorescence_df[['Seconds']].interpolate()
-
-    print(f'Fluorescence alignment finished in {time() - start_time:.2f} seconds.')
-    
-    return fluorescence_df
-
-def convert_datetime_to_seconds(timestamp_input):
-    if type(timestamp_input) == datetime or type(timestamp_input) == pd.DatetimeIndex:
-        return (timestamp_input - utils.harp.REFERENCE_EPOCH).total_seconds()
-    else:
-        return timestamp_input.apply(lambda x: (x - utils.harp.REFERENCE_EPOCH).total_seconds())
-
-def convert_seconds_to_datetime(seconds_input):
-        return utils.harp.REFERENCE_EPOCH + timedelta(seconds=seconds_input)
-
-def reformat_dataframe(input_df, name, index_column_name='Seconds', data_column_name='Data'):
-
-    if input_df[index_column_name].values.dtype == np.dtype('<M8[ns]'):
-        return pd.Series(data=input_df[data_column_name].values, 
-                          index=input_df[index_column_name], 
-                          name=name)
-    else:
-        return pd.Series(data=input_df[data_column_name].values, 
-                            index=input_df[index_column_name].apply(convert_seconds_to_datetime), 
-                            name=name)
-
-def convert_arrays_to_dataframe(list_of_names, list_of_arrays):
-    return pd.DataFrame({list_of_names[i]: list_of_arrays[i] for i in range(len(list_of_names))})
-
-def convert_stream_from_datetime_to_seconds(stream):
-    return pd.Series(data=stream.values, index=convert_datetime_to_seconds(stream.index))
-
-def convert_all_streams_from_datetime_to_seconds(streams):
-    for source_name in streams.keys():
-        for stream_name in streams[source_name].keys():
-            streams[source_name][stream_name] = convert_stream_from_datetime_to_seconds(streams[source_name][streams])
-    return streams
-
-def add_stream(streams, source_name, new_stream, new_stream_name):
-    if not source_name in streams.keys():
-        streams[source_name] = {}
-        
-    streams[source_name][new_stream_name] = new_stream
-    
-    return streams
-
-def reformat_and_add_many_streams(streams, dataframe, source_name, stream_names, index_column_name='Seconds'):
-    for stream_name in stream_names:
-        new_stream = reformat_dataframe(dataframe, stream_name, index_column_name, data_column_name=stream_name)
-        streams = add_stream(streams, source_name, new_stream, stream_name)
-    return streams
-
 def photometry_harp_onix_synchronisation(
     photodiode,
     onix_analog_clock, 
-    onix_analog_framecount, 
     onix_digital, 
     onix_harp,
     photometry_events, 
     verbose=True
 ):
-    start_time = time()
     output = {}
-
-    # Efficient upsampling of framecount
-    upsample_factor = 100
-    df = onix_analog_framecount
-    new_index = np.linspace(0, len(df) - 1, len(df) * upsample_factor)
-    upsampled_framecount = pd.DataFrame(index=new_index)
-    for col in df.columns:
-        upsampled_framecount[col] = np.interp(new_index, np.arange(len(df)), df[col])
-
-    # Check onix_analog shapes for consistency
-    data_len = photodiode.shape[0]
-    clock_len = onix_analog_clock.shape[0]
-    framecount_len = len(upsampled_framecount)
-    
-    if data_len != framecount_len or clock_len != framecount_len:
-        offset = framecount_len - clock_len
-        upsampled_framecount = upsampled_framecount.iloc[offset:]
-        print(f"Warning: analog_data and _framecount mismatch by {offset}! Should be OK, but see https://github.com/neurogears/vestibular-vr/issues/81 for more information.")
-    else:
-        if verbose:
-            print("onix_analog shapes are consistent!")
 
     # Find the time mapping/warping between onix and harp clock
     clock = onix_harp["Clock"]
@@ -431,6 +272,121 @@ def photometry_harp_onix_synchronisation(
         
     return output, photometry_sync_events, harp_to_onix_clock, onix_time_to_photometry, onix_to_harp_timestamp, photometry_to_harp_time
 
+def resample_stream(data_stream_df, resampling_period='0.1ms', method='linear'):
+    return data_stream_df.resample(resampling_period).last().interpolate(method=method)
+
+def resample_index(index, freq):
+    """Resamples each day in the daily `index` to the specified `freq`.
+
+    Parameters
+    ----------
+    index : pd.DatetimeIndex
+        The daily-frequency index to resample
+    freq : str
+        A pandas frequency string which should be higher than daily
+
+    Returns
+    -------
+    pd.DatetimeIndex
+        The resampled index
+
+    """
+    assert isinstance(index, pd.DatetimeIndex)
+    start_date = index.min()
+    end_date = index.max() + pd.DateOffset(days=1)
+    resampled_index = pd.date_range(start_date, end_date, freq=freq)[:-1]
+    series = pd.Series(resampled_index, resampled_index.floor('D'))
+    return pd.DatetimeIndex(series.loc[index].values)
+
+def compute_Lomb_Scargle_psd(data_df, freq_min=0.001, freq_max=10**6, num_freqs=1000, normalise=True):
+    freqs = np.linspace(freq_min, freq_max, num_freqs)
+#     x = (data_df.index - data_df.index[0]).total_seconds().to_numpy()
+    x = data_df.index
+    y = data_df.values
+    if y.ndim != 1: y = y[:,0]
+    psd = signal.lombscargle(x, y, freqs, normalize=normalise)
+    return freqs, psd
+
+def align_fluorescence_first_approach(fluorescence_df, onixdigital_df): #DEPRECATED, could be useful for Cohort0?
+    # Aligns Fluorescence signal using the HARP timestamps from onix_digital and interpolation
+    # Steps:
+    # - Selecting the rows where there are photometry synchronisation events occurring
+    # - Getting the values from 'Seconds' column of onix_digital and setting them to Fluorescence dataframe
+    # - Estimating the very first and the very last 'Seconds' value based on timestamps of the photometry software ('TimeStamp' column)
+    # - Applying default Pandas interpolation
+    # - based on https://github.com/neurogears/vestibular-vr/issues/76
+    # - FIXME relays on serious assumptions, do not use (or maybe for Cohort 0)?
+    
+    start_time = time()
+
+    fluorescence_df = copy.deepcopy(fluorescence_df)
+    
+    # Adding a new column
+    fluorescence_df['Seconds'] = np.nan
+    
+    # Setting the rows of Seconds column where there are events with HARP timestamp values from onix_digital
+    fluorescence_df.loc[fluorescence_df['Events'].notna(), 'Seconds'] = onixdigital_df['Seconds'].values
+    
+    # estimate the very first and very last values of Seconds column in Fluorescence to be able to interpolate between
+    first_val_to_insert = fluorescence_df[fluorescence_df['Events'].notna()].iloc[0]['Seconds'] - fluorescence_df[fluorescence_df['Events'].notna()].iloc[0]['TimeStamp'] / 1000
+    # first_val_to_insert = Seconds value of the first Event to occur - seconds elapsed since start of recording (converted from ms)
+    last_val_to_insert = fluorescence_df[fluorescence_df['Events'].notna()].iloc[-1]['Seconds'] + (fluorescence_df.iloc[-1]['TimeStamp'] / 1000 - fluorescence_df[fluorescence_df['Events'].notna()].iloc[-1]['TimeStamp'] / 1000)
+    # last_val_to_insert = Seconds value of the last Event to occur + seconds elapsed between the last row of Fluorescence and the last event to occur
+    
+    fluorescence_df.loc[0, 'Seconds'] = first_val_to_insert
+    fluorescence_df.loc[-1, 'Seconds'] = last_val_to_insert
+    
+    fluorescence_df[['Seconds']] = fluorescence_df[['Seconds']].interpolate()
+
+    print(f'Fluorescence alignment finished in {time() - start_time:.2f} seconds.')
+    
+    return fluorescence_df
+
+def convert_datetime_to_seconds(timestamp_input):
+    if type(timestamp_input) == datetime or type(timestamp_input) == pd.DatetimeIndex:
+        return (timestamp_input - utils.harp.REFERENCE_EPOCH).total_seconds()
+    else:
+        return timestamp_input.apply(lambda x: (x - utils.harp.REFERENCE_EPOCH).total_seconds())
+
+def convert_seconds_to_datetime(seconds_input):
+        return utils.harp.REFERENCE_EPOCH + timedelta(seconds=seconds_input)
+
+def reformat_dataframe(input_df, name, index_column_name='Seconds', data_column_name='Data'):
+
+    if input_df[index_column_name].values.dtype == np.dtype('<M8[ns]'):
+        return pd.Series(data=input_df[data_column_name].values, 
+                          index=input_df[index_column_name], 
+                          name=name)
+    else:
+        return pd.Series(data=input_df[data_column_name].values, 
+                            index=input_df[index_column_name].apply(convert_seconds_to_datetime), 
+                            name=name)
+
+def convert_arrays_to_dataframe(list_of_names, list_of_arrays):
+    return pd.DataFrame({list_of_names[i]: list_of_arrays[i] for i in range(len(list_of_names))})
+
+def convert_stream_from_datetime_to_seconds(stream):
+    return pd.Series(data=stream.values, index=convert_datetime_to_seconds(stream.index))
+
+def convert_all_streams_from_datetime_to_seconds(streams):
+    for source_name in streams.keys():
+        for stream_name in streams[source_name].keys():
+            streams[source_name][stream_name] = convert_stream_from_datetime_to_seconds(streams[source_name][streams])
+    return streams
+
+def add_stream(streams, source_name, new_stream, new_stream_name):
+    if not source_name in streams.keys():
+        streams[source_name] = {}
+        
+    streams[source_name][new_stream_name] = new_stream
+    
+    return streams
+
+def reformat_and_add_many_streams(streams, dataframe, source_name, stream_names, index_column_name='Seconds'):
+    for stream_name in stream_names:
+        new_stream = reformat_dataframe(dataframe, stream_name, index_column_name, data_column_name=stream_name)
+        streams = add_stream(streams, source_name, new_stream, stream_name)
+    return streams
 
 def select_from_photodiode_data(onix_analog_clock, OnixAnalogData, hard_start_time, harp_end_time, conversions):
 
@@ -445,28 +401,6 @@ def select_from_photodiode_data(onix_analog_clock, OnixAnalogData, hard_start_ti
     print(f'Selection of photodiode data finished in {time() - start_time:.2f} seconds.')
 
     return x, y
-
-def running_unit_conversion(running_array): #for ball linear movement
-    resolution = 12000 # counts per inch
-    inches_per_count = 1 / resolution
-    meters_per_count = 0.0254 * inches_per_count
-    dt = 0.01 # for OpticalTrackingRead0Y(46) -this is sensor specific. current sensor samples at 100 hz 
-    linear_velocity = meters_per_count / dt # meters per second per count
-    
-    return running_array * linear_velocity
-
-def rotation_unit_conversion(rotation_array): # for ball rotation
-    resolution = 12000 # counts per inch
-    inches_per_count = 1 / resolution
-    meters_per_count = 0.0254 * inches_per_count
-    dt = 0.01 # for OpticalTrackingRead0Y(46) -this is sensor specific. current sensor samples at 100 hz 
-    linear_velocity = meters_per_count / dt # meters per second per count
-    
-    ball_radius = 0.1 # meters 
-    angular_velocity = linear_velocity / ball_radius # radians per second per count
-    angular_velocity = angular_velocity * (180 / np.pi) # degrees per second per count
-    
-    return rotation_array * angular_velocity
 
 def save_streams_as_h5(data_path, resampled_streams, streams_to_save_pattern={'H1': ['OpticalTrackingRead0X(46)', 'OpticalTrackingRead0Y(46)'], 'H2': ['Encoder(38)'], 'Photometry': ['CH1-410', 'CH1-470', 'CH1-560'], 'SleapVideoData1': ['Ellipse.Diameter', 'Ellipse.Center.X', 'Ellipse.Center.Y'], 'SleapVideoData2': ['Ellipse.Diameter', 'Ellipse.Center.X', 'Ellipse.Center.Y'], 'ONIX': ['Photodiode']}):
 
@@ -504,26 +438,6 @@ def save_streams_as_h5(data_path, resampled_streams, streams_to_save_pattern={'H
                 source_group.create_dataset(stream_name, data=stream_data.values)
 
     print(f'Data saved as H5 file in {time() - start_time:.2f} seconds to {output_file}.')
-
-def read_ExperimentEvents(path):
-    filenames = os.listdir(path/'ExperimentEvents')
-    filenames = [x for x in filenames if x[:16]=='ExperimentEvents'] # filter out other (hidden) files
-    date_strings = [x.split('_')[1].split('.')[0] for x in filenames] 
-    sorted_filenames = pd.to_datetime(date_strings, format='%Y-%m-%dT%H-%M-%S').sort_values()
-    read_dfs = []
-    try:
-        for row in sorted_filenames:
-            read_dfs.append(pd.read_csv(path/'ExperimentEvents'/f"ExperimentEvents_{row.strftime('%Y-%m-%dT%H-%M-%S')}.csv"))
-        return pd.concat(read_dfs).reset_index().drop(columns='index')
-    except pd.errors.ParserError as e:
-        filename = f"ExperimentEvents_{row.strftime('%Y-%m-%dT%H-%M-%S')}.csv"
-        print(f'Tokenisation failed for file "{filename}".\n')
-        print(f'Exact description of error: {e}')
-        print('Likely due to extra commas in the "Value" column of ExperimentEvents. Please manually remove and run again.')
-        return None
-    except Exception as e:
-        print('Reading failed:', e)
-        return None
         
 def add_experiment_events(data_dict, events_dict, mouse_info):
     # Iterate over each mouse key in the dictionaries
@@ -805,18 +719,86 @@ def moving_average_smoothing(X,k):
             S[t] = np.sum(X[t-k:t])/k
     return S
 
-def running_unit_conversion(running_array):
-    resolution = 12000 # counts per inch
-    inches_per_count = 1 / resolution
-    meters_per_count = 0.0254 * inches_per_count
-    dt = 0.01 # for OpticalTrackingRead0Y(46)
-    linear_velocity = meters_per_count / dt # meters per second per count
+def plot_detail(data_stream_df, dataset_name, register, sample_num_to_plot=25):
     
-    # ball_radius = 0.1 # meters 
-    # angular_velocity = linear_velocity / ball_radius # radians per second per count
-    # angular_velocity = angular_velocity * (180 / np.pi) # degrees per second per count
-    # print(angular_velocity)
+    resampled_data_stream_df = resample_stream(data_stream_df)
     
-    return running_array * linear_velocity * 100
+    fig, ax = plt.subplots(nrows=3, ncols=2, figsize=(10,15))
+    
+    fig.suptitle(f'DATASET [{dataset_name}] REGISTER [{register}]')
+    
+    ax[0][0].plot(data_stream_df, alpha=0.75)
+    ax[0][0].plot(resampled_data_stream_df, alpha=0.75)
+    ax[0][0].set_title('Full signal')
+    ax[0][0].set_xlabel('Timestamp')
+    ax[0][0].set_ylabel('Signal Magnitude')
+    ax[0][0].set_xticklabels(ax[0][0].get_xticklabels(), rotation=-45)
+    ax[0][0].grid()
+    
+    ax[1][0].plot(data_stream_df[:sample_num_to_plot], alpha=0.75)
+    ax[1][0].scatter(data_stream_df[:sample_num_to_plot].index, data_stream_df[:sample_num_to_plot], s=25)
+    filtered_resampled_df = resampled_data_stream_df[resampled_data_stream_df.index < data_stream_df.index[sample_num_to_plot]]
+    ax[1][0].plot(filtered_resampled_df, alpha=0.75)
+    ax[1][0].scatter(filtered_resampled_df.index, filtered_resampled_df, s=25, alpha=0.25)
+    ax[1][0].set_xlabel('Timestamp')
+    ax[1][0].set_ylabel('Signal Magnitude')
+    ax[1][0].set_title(f'Zoom into first {sample_num_to_plot} timepoints')
+    ax[1][0].set_xticks(data_stream_df[:sample_num_to_plot].index)
+    ax[1][0].set_xticklabels(data_stream_df[:sample_num_to_plot].index.strftime('%H:%M:%S.%f'), rotation=-90)
+    ax[1][0].grid()
+    print('First five original timestamps:')
+    for ts in data_stream_df[:5].index.to_list(): print(ts)
+    print('\nFirst five resampled timestamps:')
+    for ts in resampled_data_stream_df[:5].index.to_list(): print(ts)
+    
+    ax[1][1].plot(data_stream_df[-sample_num_to_plot:], alpha=0.75)
+    ax[1][1].scatter(data_stream_df[-sample_num_to_plot:].index, data_stream_df[-sample_num_to_plot:], s=25)
+    filtered_resampled_df = resampled_data_stream_df[resampled_data_stream_df.index >= data_stream_df.index[-sample_num_to_plot]]
+    ax[1][1].plot(filtered_resampled_df, alpha=0.75)
+    ax[1][1].scatter(filtered_resampled_df.index, filtered_resampled_df, s=25, alpha=0.25)
+    ax[1][1].set_xlabel('Timestamp')
+    ax[1][1].set_ylabel('Signal Magnitude')
+    ax[1][1].set_title(f'Zoom into last {sample_num_to_plot} timepoints')
+    ax[1][1].set_xticks(data_stream_df[-sample_num_to_plot:].index)
+    ax[1][1].set_xticklabels(data_stream_df[-sample_num_to_plot:].index.strftime('%H:%M:%S.%f'), rotation=-90)
+    ax[1][1].grid()
+    
+    inter_timestamp_invervals = np.diff(data_stream_df.index).astype(np.uint32) * (10**-9) # converted to seconds
+    ax[2][0].hist(inter_timestamp_invervals, bins=50)
+    ax[2][0].set_title('Histogram of intervals between timestamps')
+    ax[2][0].set_xlabel('Inter-timestamp interval (seconds)')
+    ax[2][0].set_ylabel('Count')
+    ax[2][0].set_xticklabels(ax[2][0].get_xticklabels(), rotation=-45)
+    ax[2][0].grid()
+    
+    plt.tight_layout()
+    plt.show()
+
+def plot_dataset(dataset_path):
+    registers = utils.load_registers(dataset_path)
+    h1_data_streams, h2_data_streams = registers['H1'], registers['H2']
+    for register, register_stream in h1_data_streams.items():
+        plot_detail(register_stream, dataset_path.name, register=str(register))
+    for register, register_stream in h2_data_streams.items():
+        plot_detail(register_stream, dataset_path.name, register=str(register))
 
 
+# def read_ExperimentEvents(path):
+#     filenames = os.listdir(path/'ExperimentEvents')
+#     filenames = [x for x in filenames if x[:16]=='ExperimentEvents'] # filter out other (hidden) files
+#     date_strings = [x.split('_')[1].split('.')[0] for x in filenames] 
+#     sorted_filenames = pd.to_datetime(date_strings, format='%Y-%m-%dT%H-%M-%S').sort_values()
+#     read_dfs = []
+#     try:
+#         for row in sorted_filenames:
+#             read_dfs.append(pd.read_csv(path/'ExperimentEvents'/f"ExperimentEvents_{row.strftime('%Y-%m-%dT%H-%M-%S')}.csv"))
+#         return pd.concat(read_dfs).reset_index().drop(columns='index')
+#     except pd.errors.ParserError as e:
+#         filename = f"ExperimentEvents_{row.strftime('%Y-%m-%dT%H-%M-%S')}.csv"
+#         print(f'Tokenisation failed for file "{filename}".\n')
+#         print(f'Exact description of error: {e}')
+#         print('Likely due to extra commas in the "Value" column of ExperimentEvents. Please manually remove and run again.')
+#         return None
+#     except Exception as e:
+        # print('Reading failed:', e)
+        # return None

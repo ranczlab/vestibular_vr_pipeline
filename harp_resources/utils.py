@@ -15,6 +15,8 @@ from aeon.io.reader import Reader, Csv, Harp
 import aeon.io.api as api
 
 import csv
+from pympler import asizeof # for memory check in get_pympler_memory_usage
+import gc # garbage collector
 
 #FIXME list
 # some functions are very verbose, e.g. printing which dataset is loaded many times, giving how long it took (find and remove these time.time())
@@ -603,6 +605,49 @@ def load_streams_from_h5(data_path):
                 reconstructed_streams[source_name][stream_name] = pd.Series(data=stream_data, index=common_index)
 
     return reconstructed_streams
+
+
+def get_pympler_memory_usage(top_n=12):
+    """
+    Get memory usage of top variables, including Pandas DataFrames and NumPy arrays,
+    from the Jupyter Notebook's global namespace.
+    """
+    gc.collect()  # Ensure garbage collection is complete
+    vars_info = {}
+
+    # Get Jupyter notebook's global variables
+    ipython = get_ipython()  # Fetch interactive shell
+    if ipython:
+        notebook_globals = ipython.user_global_ns
+    else:
+        notebook_globals = globals()  # Fallback if not in Jupyter
+
+    for var, obj in notebook_globals.items():
+        if var in {"quit", "exit"}:
+            continue  # Skip quit and exit
+        
+        try:
+            if isinstance(obj, pd.DataFrame):
+                vars_info[var] = obj.memory_usage(deep=True).sum() / (1024 ** 2)  # MB
+            elif isinstance(obj, np.ndarray):
+                vars_info[var] = obj.nbytes / (1024 ** 2)  # MB
+            else:
+                vars_info[var] = asizeof.asizeof(obj) / (1024 ** 2)  # MB
+        except Exception as e:
+            print(f"⚠️ Skipping {var}: {e}")
+
+    df = pd.DataFrame(vars_info.items(), columns=["Variable", "Size (MB)"])
+    df = df.sort_values("Size (MB)", ascending=False)
+
+    print("🔹 Top Memory-Consuming Variables (in MB):")
+    from IPython.display import display
+    display(df.head(top_n))
+
+    total_mem = df["Size (MB)"].sum()
+    print(f"\n🔹 Total Memory Used: {total_mem:.2f} MB")
+
+    return df
+
 
 #not used 
 # class PhotometryReader(Csv):
