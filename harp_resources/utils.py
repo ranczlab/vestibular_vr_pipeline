@@ -280,8 +280,6 @@ def read_OnixAnalogData(dataset_path, channels=[0], binarise=False, method='adap
                # print(f"First 5 falling edge indices: {valid_falls[:5]}")
             if falling_edges == 0:
                 print("Warning: No falling edges detected. Check threshold value and signal.")
-        
-        return photo_diode
     
     return photo_diode
 

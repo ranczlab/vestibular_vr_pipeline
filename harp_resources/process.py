@@ -43,10 +43,10 @@ def running_unit_conversion(running_array): #for ball linear movement
     
     return running_array * linear_velocity
 
-def rotation_unit_conversion(rotation_array, home_position): #for ball linear movement
+def encoder_unit_conversion(encoder_array, home_position): #for ball linear movement
     encoder_resolution = 4000 # counts per revolution
     gear_ratio = 6 # motor to platform 
-    position = (rotation_array - home_position) / (encoder_resolution * gear_ratio / 360)
+    position = (encoder_array - home_position) / (encoder_resolution * gear_ratio / 360)
     wrapped_position = np.mod(position, 360)	
     return wrapped_position 
 
@@ -98,8 +98,6 @@ def get_encoder_home_position(experiment_events, harp_streams, event="Homing pla
 
     return encoder_value_event, encoder_value_next_event
 
-
-
 def turning_unit_conversion(turning_array): # for ball rotation
     resolution = 12000 # counts per inch
     inches_per_count = 1 / resolution
@@ -112,6 +110,139 @@ def turning_unit_conversion(turning_array): # for ball rotation
     angular_velocity = angular_velocity * (180 / np.pi) # degrees per second per count
     
     return turning_array * angular_velocity
+
+
+def photometry_harp_onix_synchronisation(
+    photodiode,
+    onix_analog_clock, 
+    onix_digital, 
+    onix_harp,
+    photometry_events,
+    photometry_data, 
+    verbose=True
+):
+    output = {}
+
+    # Find the time mapping/warping between onix and harp clock
+    clock = onix_harp["Clock"]
+    harp = onix_harp["HarpTime"]
+    o_m, o_b = np.polyfit(clock, harp, 1)
+    onix_to_harp_seconds = lambda x: x * o_m + o_b#FIXME used???
+    onix_to_harp = lambda x: api.aeon(onix_to_harp_seconds(x))
+    harp_to_onix = lambda x: (x - o_b) / o_m
+     
+    # Calculate R-squared value
+    y_pred = onix_to_harp_seconds(clock)
+    ss_res = np.sum((harp - y_pred) ** 2)
+    ss_tot = np.sum((harp - np.mean(harp)) ** 2)
+    r_squared_harp_to_onix = 1 - (ss_res / ss_tot)
+
+    if r_squared_harp_to_onix < 0.999:
+        print(f"❗WARNING: R-squared value between Clock and HarpTime in onix_harp is {r_squared_harp_to_onix:.6f}. Could be an issue with the dataset.")
+    output["onix_to_harp"] = onix_to_harp
+    output["harp_to_onix"] = harp_to_onix
+
+
+    # Drop rows with NaN values from photometry_events and convert to seconds
+    nan_count = photometry_events.isna().sum().sum()
+    if verbose and nan_count > 0:
+        print(f"❗WARNING:, {nan_count} NaNs detected, check Events'csv")
+    photometry_sync_events = photometry_events.dropna()
+    photometry_sync_events["Seconds"] = photometry_sync_events["TimeStamp"] / 1000  # Convert to seconds and rename column
+    photometry_sync_events = photometry_sync_events[photometry_sync_events['Name'] == 'Input1']  # Filter to Input1
+    photometry_sync_events.set_index("Seconds", inplace=True)
+    photometry_sync_events = photometry_sync_events["State"]
+
+    photometry_data["Seconds"] = photometry_data["TimeStamp"] / 1000
+    photometry_data.set_index("Seconds", inplace=True)
+
+    # Truncate photometry to onix_digital as photometry recording starts before the sync signal 
+    min_length = min(len(photometry_sync_events), len(onix_digital["Clock"]))
+    photometry_sync_events = photometry_sync_events.iloc[:min_length]
+    num_truncated = len(photometry_sync_events) - min_length
+    if num_truncated > 1:
+        print(f"❗WARNING: Photometry_sync_events was truncated by {num_truncated} points, more than the expected single sync pulse.")
+    onix_digital["PhotometrySyncState"] = ~onix_digital["PhotometrySyncState"]  # Flip sync line to match photometry FIXME why is this necessary?
+
+    # Define conversion functions between timestamps (photometry to harp)
+    m, b = np.polyfit(photometry_sync_events.index, onix_digital["Clock"], 1)
+    photometry_to_onix = lambda x: x * m + b
+    photometry_to_harp = lambda x: onix_to_harp(photometry_to_onix(x))
+    onix_to_photometry = lambda x: (x - b) / m #FIXME used???
+    
+    # Calculate R-squared value
+    y_pred = photometry_to_onix(photometry_sync_events.index)
+    ss_res = np.sum((onix_digital["Clock"] - y_pred) ** 2)
+    ss_tot = np.sum((onix_digital["Clock"] - np.mean(onix_digital["Clock"])) ** 2)
+    r_squared_photometry_to_onix = 1 - (ss_res / ss_tot)
+    
+    if r_squared_photometry_to_onix < 0.999:
+        print(f"❗WARNING: R-squared value between photometry and onix_digital is {r_squared_photometry_to_onix:.6f}. Could be an issue with the dataset.")
+
+    output["photometry_to_onix"] = photometry_to_onix
+    output["photometry_to_harp"] = photometry_to_harp
+    
+    if verbose:
+        print(f"for onix to harp o_m: {o_m}, o_b: {o_b}")
+        print(f"R-squared value for harp to onix: {r_squared_harp_to_onix}")
+        print(f"for photometry to harp m: {m}, b: {b}")
+        print(f"R-squared value for photometry to onix: {r_squared_photometry_to_onix}")
+    
+    # Align photometry_data, photometry_sync_events and onix_digital events to harp
+    photometry_aligned = photometry_data.copy()
+    photometry_aligned.index = photometry_to_harp(photometry_data.index)
+    #FIXME add photodiode alignment
+    photometry_sync_aligned = photometry_to_harp(photometry_sync_events.index) #for plotting only 
+    onix_digital_aligned = onix_to_harp(onix_digital["Clock"])  #for plotting only 
+
+    # Plotting
+    if verbose:
+        print(f"{len(photometry_sync_events)} events found")
+        if not photometry_sync_events.empty:
+            if len(photometry_sync_events) > 15:
+                print("Plotting the first 15 sync events")
+            plot_limit = 15
+            plot_limit = min(15, len(photometry_sync_events))
+            limited_index = photometry_sync_events.index[:plot_limit]
+            limited_values = photometry_sync_events.values[:plot_limit]
+    
+            # Plot the first 15 aligned events
+            limited_photometry_sync_aligned = photometry_sync_aligned[:plot_limit]
+            limited_onix_digital_aligned = onix_digital_aligned[:plot_limit]
+            limited_photometry_sync_state = onix_digital["PhotometrySyncState"][:plot_limit]
+    
+            fig, (ax1, ax2) = plt.subplots(ncols=2, figsize=(12, 6))
+    
+            # First subplot (replacing the original ax1)
+            ax1.set_xlabel("Harp Time (s)")
+            ax1.set_ylabel("Event State", color="tab:blue")
+            ax1.step(limited_photometry_sync_aligned, limited_values, where="mid", color="tab:blue", label="Photometry Events")
+            ax1.tick_params(axis="y", labelcolor="tab:blue")
+    
+            ax1_twin = ax1.twinx()
+            ax1_twin.set_ylabel("Sync Line", color="tab:orange")
+            ax1_twin.step(limited_onix_digital_aligned, limited_photometry_sync_state, where="mid", linestyle="--", color="tab:orange", label="Onix Digital Sync Line")
+            ax1_twin.tick_params(axis="y", labelcolor="tab:orange")
+    
+            ax1.legend(loc="upper left")
+            ax1_twin.legend(loc="upper right")
+            ax1.set_title("Aligned Photometry Events and Onix Digital Sync Line to Harp Time")
+    
+            # Second subplot
+            ax2.set_xlabel("Photometry Time(s)")
+            ax2.set_ylabel("Onix Digital Clock", color="tab:orange")
+            ax2.scatter(photometry_sync_events.index, onix_digital["Clock"], color="tab:orange", label="Onix Digital Clock")
+            ax2.tick_params(axis="y", labelcolor="tab:orange")
+            ax2.legend(loc="upper right")
+            ax2.set_title("Photometry Events vs Onix Digital Clock")
+    
+            fig.tight_layout()
+            plt.show()
+        else:
+            print(f"❗Something's wrong, short recording? Found only {len(photometry_sync_events)} sync events.")
+    
+    return photometry_sync_events, onix_to_harp, harp_to_onix, photometry_to_onix, photometry_to_harp, output, photometry_aligned #FIXME conversions output used???
+
 
 def get_global_minmax_timestamps(stream_dict, print_all=False):
     # Finding the very first and very last timestamp across all streams
@@ -217,116 +348,6 @@ def pad_dataframe_with_global_timestamps(df, global_min_datetime, global_max_dat
     print(f'Padding and resampling finished in {time() - start_time:.2f} seconds.')
 
     return streams_dict
-
-def photometry_harp_onix_synchronisation(
-    photodiode,
-    onix_analog_clock, 
-    onix_digital, 
-    onix_harp,
-    photometry_events, 
-    verbose=True
-):
-    output = {}
-
-    # Find the time mapping/warping between onix and harp clock
-    clock = onix_harp["Clock"]
-    harp = onix_harp["HarpTime"]
-    o_m, o_b = np.polyfit(clock, harp, 1)
-    onix_to_harp_seconds = lambda x: x * o_m + o_b
-    onix_to_harp_timestamp = lambda x: api.aeon(onix_to_harp_seconds(x))
-    harp_to_onix_clock = lambda x: (x - o_b) / o_m
-     
-    # Calculate R-squared value
-    y_pred = onix_to_harp_seconds(clock)
-    ss_res = np.sum((harp - y_pred) ** 2)
-    ss_tot = np.sum((harp - np.mean(harp)) ** 2)
-    r_squared_harp_to_onix = 1 - (ss_res / ss_tot)
-
-    output["onix_to_harp_timestamp"] = onix_to_harp_timestamp
-    output["harp_to_onix_clock"] = harp_to_onix_clock
-    output["r_squared_harp_to_onix"] = r_squared_harp_to_onix
-
-    if r_squared_harp_to_onix < 0.999:
-        print(f"Warning: R-squared value between Clock and HarpTime in onix_harp is {r_squared_harp_to_onix:.6f}. Could be an issue with the dataset.")
-    
-    # Drop rows with NaN values
-    nan_count = photometry_events.isna().sum().sum()
-    if verbose and nan_count > 0:
-        print(f"WARNING, {nan_count} NaNs detected, check Events'csv")
-    photometry_sync_events = photometry_events.dropna()
-    photometry_sync_events["TimeStamp"] = photometry_sync_events["TimeStamp"] / 1000  # Convert to seconds
-    photometry_sync_events.set_index("TimeStamp", inplace=True)
-    photometry_sync_events = photometry_sync_events["State"]
-
-    # Truncate photometry to onix_digital
-    min_length = min(len(photometry_sync_events), len(onix_digital["Clock"]))
-    photometry_sync_events = photometry_sync_events.iloc[:min_length]
-    num_truncated = len(photometry_sync_events) - min_length
-    if num_truncated > 1:
-        print(f"WARNING Photometry_sync_events was truncated by {num_truncated} points, more than the expected 1.")
-    
-    onix_digital["sync_line"] = 1 - (onix_digital["PhotometrySyncState"] & 1)  # Flip sync line
-    
-    # Plotting
-    if verbose:
-        print(f"{len(photometry_sync_events)} events found")
-        if not photometry_sync_events.empty:
-            if len(photometry_sync_events) > 15:
-                print (" Many events detected, plotting the first 15")    
-            plot_limit = 15
-            plot_limit = min(15, len(photometry_sync_events))
-            limited_index = photometry_sync_events.index[:plot_limit]
-            limited_values = photometry_sync_events.values[:plot_limit]
-            
-            plt.figure()
-            plt.step(limited_index, limited_values)
-            plt.xlabel("Time (s)")
-            plt.ylabel("Event State")
-            plt.title("Photometry Events")
-            plt.show()
-        else:
-            print(f"Not enough events to plot: found {len(photometry_sync_events)} events.")
-        
-        plt.figure()
-        plt.step(onix_digital["Clock"][:plot_limit], onix_digital["sync_line"][:plot_limit])
-        plt.xlabel("Clock")
-        plt.ylabel("Sync Line")
-        plt.title("Onix Digital Sync Line")
-        plt.show()
-
-        plt.figure()
-        plt.scatter(photometry_sync_events.index, onix_digital["Clock"]) #plot whole range to see if there are outliers 
-        plt.xlabel("Photometry Time(s)")
-        plt.ylabel("Onix Digital Clock")
-        plt.title("Photometry Events vs Onix Digital Clock")
-        plt.show()
-    
-    # Define conversion functions between timestamps (onix to harp)
-    m, b = np.polyfit(photometry_sync_events.index, onix_digital["Clock"], 1)
-    photometry_to_onix_time = lambda x: x * m + b
-    photometry_to_harp_time = lambda x: onix_to_harp_timestamp(photometry_to_onix_time(x))
-    onix_time_to_photometry = lambda x: (x - b) / m
-    
-     # Print o_m and o_b
-    print(f"for onix to harp o_m: {o_m}, o_b: {o_b}")
-    # Print m and b
-    print(f"for photometry to harp m: {m}, b: {b}")
-    
-    # Calculate R-squared value
-    y_pred = photometry_to_onix_time(photometry_sync_events.index)
-    ss_res = np.sum((onix_digital["Clock"] - y_pred) ** 2)
-    ss_tot = np.sum((onix_digital["Clock"] - np.mean(onix_digital["Clock"])) ** 2)
-    r_squared_photometry_to_onix = 1 - (ss_res / ss_tot)
-    output["r_squared_photometry_to_onix"] = r_squared_photometry_to_onix
-    
-    if r_squared_photometry_to_onix < 0.999:
-        print(f"Warning: R-squared value between photometry and onix_digital is {r_squared_photometry_to_onix:.6f}. Could be an issue with the dataset.")
-    
-    if verbose:
-        print(f"R-squared value for HarpTime to OnixClock: {r_squared_harp_to_onix}")
-        print(f"R-squared value for photometry to onix: {r_squared_photometry_to_onix}")
-        
-    return output, photometry_sync_events, harp_to_onix_clock, onix_time_to_photometry, onix_to_harp_timestamp, photometry_to_harp_time
 
 def resample_stream(data_stream_df, resampling_period='0.1ms', method='linear'):
     return data_stream_df.resample(resampling_period).last().interpolate(method=method)
