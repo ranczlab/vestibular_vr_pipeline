@@ -43,6 +43,63 @@ def running_unit_conversion(running_array): #for ball linear movement
     
     return running_array * linear_velocity
 
+def rotation_unit_conversion(rotation_array, home_position): #for ball linear movement
+    encoder_resolution = 4000 # counts per revolution
+    gear_ratio = 6 # motor to platform 
+    position = (rotation_array - home_position) / (encoder_resolution * gear_ratio / 360)
+    wrapped_position = np.mod(position, 360)	
+    return wrapped_position 
+
+def get_encoder_home_position(experiment_events, harp_streams, event="Homing platform", column="Encoder(38)"):
+    """
+    Finds the first occurrence of `event` in `experiment_events`, then finds the next event in the DataFrame.
+    Retrieves the corresponding next valid values from the specified column in `harp_streams`.
+
+    Args:
+        experiment_events (pd.DataFrame): DataFrame with datetime index and event labels.
+        harp_streams (pd.DataFrame): DataFrame with datetime index containing the target column.
+        event (str): The event to search for (default: "Homing platform").
+        column (str): The target column in `harp_streams` (default: "Encoder(38)").
+
+    Returns:
+        tuple: (encoder_value_event, encoder_value_next_event), where each value is the first valid
+               value found in `harp_streams` after the corresponding event timestamp.
+    """
+    # Step 1: Find the first occurrence of the specified event
+    first_event_idx = experiment_events[experiment_events.eq(event)].first_valid_index()
+
+    # Step 2: Find the next event that happens after the first occurrence
+    if first_event_idx is None:
+        return None, None  # If event not found, return None
+    
+    # Find the next event that occurs *after* the first event
+    next_event_df = experiment_events.loc[first_event_idx:].dropna()
+    next_event_df = next_event_df[next_event_df != event]  # Exclude the first event itself
+
+    next_event_idx = next_event_df.first_valid_index() if not next_event_df.empty else None
+
+    # Function to find the next valid timestamp in harp_streams
+    def get_next_valid_value(timestamp, df, column):
+        if timestamp is None:
+            return None  # No valid timestamp found
+        
+        # Get valid timestamps where column is not NaN
+        valid_indices = df.index[df[column].notna()]
+        pos = valid_indices.searchsorted(timestamp)  # Find next valid timestamp
+
+        if pos < len(valid_indices):  # Check if we found a valid index
+            return df.loc[valid_indices[pos], column]
+
+        return None  # No valid index found
+
+    # Step 3: Get values from harp_streams
+    encoder_value_event = get_next_valid_value(first_event_idx, harp_streams, column)
+    encoder_value_next_event = get_next_valid_value(next_event_idx, harp_streams, column)
+
+    return encoder_value_event, encoder_value_next_event
+
+
+
 def turning_unit_conversion(turning_array): # for ball rotation
     resolution = 12000 # counts per inch
     inches_per_count = 1 / resolution
@@ -178,10 +235,7 @@ def photometry_harp_onix_synchronisation(
     onix_to_harp_seconds = lambda x: x * o_m + o_b
     onix_to_harp_timestamp = lambda x: api.aeon(onix_to_harp_seconds(x))
     harp_to_onix_clock = lambda x: (x - o_b) / o_m
-    
-    # Print o_m and o_b
-    print(f"for onix to harp o_m: {o_m}, o_b: {o_b}")
-    
+     
     # Calculate R-squared value
     y_pred = onix_to_harp_seconds(clock)
     ss_res = np.sum((harp - y_pred) ** 2)
@@ -253,6 +307,8 @@ def photometry_harp_onix_synchronisation(
     photometry_to_harp_time = lambda x: onix_to_harp_timestamp(photometry_to_onix_time(x))
     onix_time_to_photometry = lambda x: (x - b) / m
     
+     # Print o_m and o_b
+    print(f"for onix to harp o_m: {o_m}, o_b: {o_b}")
     # Print m and b
     print(f"for photometry to harp m: {m}, b: {b}")
     
