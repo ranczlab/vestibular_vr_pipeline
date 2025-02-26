@@ -111,7 +111,6 @@ def turning_unit_conversion(turning_array): # for ball rotation
     
     return turning_array * angular_velocity
 
-
 def photometry_harp_onix_synchronisation(
     photodiode,
     onix_analog_clock, 
@@ -122,6 +121,10 @@ def photometry_harp_onix_synchronisation(
     verbose=True
 ):
     output = {}
+
+    #---------------------
+    # Onix alingment 
+    #---------------------
 
     # Find the time mapping/warping between onix and harp clock
     clock = onix_harp["Clock"]
@@ -142,7 +145,10 @@ def photometry_harp_onix_synchronisation(
     output["onix_to_harp"] = onix_to_harp
     output["harp_to_onix"] = harp_to_onix
 
-
+    #---------------------
+    # Photometry alignment
+    #---------------------
+    # Find the time mapping/warping between photometry and harp clock
     # Drop rows with NaN values from photometry_events and convert to seconds
     nan_count = photometry_events.isna().sum().sum()
     if verbose and nan_count > 0:
@@ -187,13 +193,19 @@ def photometry_harp_onix_synchronisation(
         print(f"R-squared value for harp to onix: {r_squared_harp_to_onix}")
         print(f"for photometry to harp m: {m}, b: {b}")
         print(f"R-squared value for photometry to onix: {r_squared_photometry_to_onix}")
-    
+
+    #---------------------
+    # Calculate alignment
+    #---------------------   
+
     # Align photometry_data, photometry_sync_events and onix_digital events to harp
     photometry_aligned = photometry_data.copy()
     photometry_aligned.index = photometry_to_harp(photometry_data.index)
+    photodiode_aligned = onix_to_harp(photodiode["Clock"])
     #FIXME add photodiode alignment
     photometry_sync_aligned = photometry_to_harp(photometry_sync_events.index) #for plotting only 
-    onix_digital_aligned = onix_to_harp(onix_digital["Clock"])  #for plotting only 
+    onix_digital_aligned = onix_to_harp(onix_digital["Clock"]) 
+    photodiode_aligned = onix_to_harp(photodiode["Clock"])
 
     # Plotting
     if verbose:
@@ -241,7 +253,7 @@ def photometry_harp_onix_synchronisation(
         else:
             print(f"❗Something's wrong, short recording? Found only {len(photometry_sync_events)} sync events.")
     
-    return photometry_sync_events, onix_to_harp, harp_to_onix, photometry_to_onix, photometry_to_harp, output, photometry_aligned #FIXME conversions output used???
+    return photometry_sync_events, onix_to_harp, harp_to_onix, photometry_to_onix, photometry_to_harp, output, photometry_aligned #FIXME probably only need returning photometry_aligned and photodiode_aligned
 
 
 def get_global_minmax_timestamps(stream_dict, print_all=False):

@@ -193,8 +193,9 @@ def read_OnixAnalogData(dataset_path, channels=[0], binarise=False, method='adap
     
     Args:
         dataset_path: Path to data
-        channels: List of channels to read [0-11]
+        channels: List of channels to read [0-11] from OnixAnalogData
         binarise: Whether to binarize data
+        refractory: how many points to disregard after threshold crossing
         method: 'adaptive' or 'threshold'
         flip: Flip binary values
         verbose: Print processing details
@@ -273,13 +274,15 @@ def read_OnixAnalogData(dataset_path, channels=[0], binarise=False, method='adap
                 last_fall = idx
         
         falling_edges = len(valid_falls)
-        
+
+        if falling_edges == 0:
+            print("❗Warning: No falling edges detected. Check threshold value and signal.")
+            return photo_diode
+
         if verbose:
             print(f"Number of falling edges detected: {falling_edges}")
             #if falling_edges > 0:
                # print(f"First 5 falling edge indices: {valid_falls[:5]}")
-            if falling_edges == 0:
-                print("Warning: No falling edges detected. Check threshold value and signal.")
     
     return photo_diode
 
