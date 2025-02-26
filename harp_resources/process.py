@@ -194,6 +194,7 @@ def photometry_harp_onix_synchronisation(
     # Align photometry_data, photometry_sync_events and onix_digital events to harp
     photometry_aligned = photometry_data.copy()
     photometry_aligned.index = photometry_to_harp(photometry_data.index)
+    photometry_aligned.index = photometry_aligned.index.round("us")  # Convert to microseconds
     photometry_aligned.index.name = 'Time'  # Rename the index to 'Time'
     photometry_sync_aligned = photometry_to_harp(photometry_sync_events.index) #for plotting only 
     onix_digital_aligned = onix_to_harp(onix_digital["Clock"]) #for plotting only
@@ -245,8 +246,7 @@ def photometry_harp_onix_synchronisation(
         else:
             print(f"❗Something's wrong, short recording? Found only {len(photometry_sync_events)} sync events.")
     
-    return onix_to_harp, harp_to_onix, photometry_to_onix, photometry_to_harp, output, photometry_aligned, photometry_sync_events #FIXME probably only need returning
-
+    return onix_to_harp, harp_to_onix, photometry_to_onix, photometry_to_harp, output, photometry_aligned #FIXME probably only need returning
 def get_global_minmax_timestamps(stream_dict, print_all=False):
     # Finding the very first and very last timestamp across all streams
     first_timestamps, last_timestamps = {}, {}
@@ -298,35 +298,51 @@ def get_global_minmax_timestamps(stream_dict, print_all=False):
     return global_first_timestamp, global_last_timestamp, global_first_df_name, global_last_df_name
 
 def pad_dataframe_with_global_timestamps(df, global_min_datetime, global_max_datetime):
+    """
+    Adds rows at global_min_datetime and global_max_datetime if they don't exist in the DataFrame.
+    Preserves original data types but converts integer columns to nullable Int64 to handle NaN values.
     
-    # Function to determine the padding value based on column dtype
-    def get_padding_value(dtype):
-        if pd.api.types.is_bool_dtype(dtype):
-            return False
-        elif pd.api.types.is_numeric_dtype(dtype):
-            return np.nan
-        elif pd.api.types.is_object_dtype(dtype):
-            return None
-        else:
-            return pd.NA
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        DataFrame with DatetimeIndex to be padded
+    global_min_datetime : pd.Timestamp
+        Global minimum datetime to add if df starts later
+    global_max_datetime : pd.Timestamp
+        Global maximum datetime to add if df ends earlier
+        
+    Returns:
+    --------
+    pd.DataFrame
+        Padded DataFrame with preserved data types
+    """
+    # First, convert all int64 columns to Int64 (nullable integer type)
+    df_copy = df.copy()
+    for col in df_copy.columns:
+        if pd.api.types.is_integer_dtype(df_copy[col].dtype):
+            df_copy[col] = df_copy[col].astype(pd.Int64Dtype())
+    
+    # Now we can add NaN rows without type conversion issues
+    rows_to_add = []
     
     # Check if the first index is greater than the global minimum datetime
-    if df.index[0] > global_min_datetime:
-        # Create a new row with the global minimum datetime, padding with appropriate values
-        new_start = pd.DataFrame({col: [get_padding_value(df[col].dtype)] for col in df.columns}, index=[global_min_datetime])
-        # Append the new row to the DataFrame
-        df = pd.concat([new_start, df])
-        df = df.sort_index()
+    if df_copy.index[0] > global_min_datetime:
+        # Create a new row with the global minimum datetime, all NaN values
+        rows_to_add.append(pd.DataFrame({col: [pd.NA] for col in df_copy.columns}, 
+                                     index=[global_min_datetime]))
     
     # Check if the last index is less than the global maximum datetime
-    if df.index[-1] < global_max_datetime:
-        # Create a new row with the global maximum datetime, padding with appropriate values
-        new_end = pd.DataFrame({col: [get_padding_value(df[col].dtype)] for col in df.columns}, index=[global_max_datetime])
-        # Append the new row to the DataFrame
-        df = pd.concat([df, new_end])
-        df = df.sort_index()
+    if df_copy.index[-1] < global_max_datetime:
+        # Create a new row with the global maximum datetime, all NaN values
+        rows_to_add.append(pd.DataFrame({col: [pd.NA] for col in df_copy.columns},
+                                     index=[global_max_datetime]))
     
-    return df
+    # If we have rows to add, concatenate them with the original dataframe
+    if rows_to_add:
+        df_copy = pd.concat([df_copy] + rows_to_add)
+        df_copy = df_copy.sort_index()
+        
+    return df_copy
 
 # def pad_and_resample(streams_dict, resampling_period='0.1ms', method='linear'):
     
