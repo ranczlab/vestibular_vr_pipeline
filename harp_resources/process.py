@@ -66,17 +66,20 @@ def get_encoder_home_position(experiment_events, harp_streams, event="Homing pla
                value found in `harp_streams` after the corresponding event timestamp.
     """
     # Step 1: Find the first occurrence of the specified event
-    first_event_idx = experiment_events[experiment_events.eq(event)].first_valid_index()
-
-    # Step 2: Find the next event that happens after the first occurrence
-    if first_event_idx is None:
-        return None, None  # If event not found, return None
+    event_rows = experiment_events[experiment_events["Event"] == event]
     
-    # Find the next event that occurs *after* the first event
-    next_event_df = experiment_events.loc[first_event_idx:].dropna()
-    next_event_df = next_event_df[next_event_df != event]  # Exclude the first event itself
+    if event_rows.empty:
+        return None, None  # Event not found
 
-    next_event_idx = next_event_df.first_valid_index() if not next_event_df.empty else None
+    # Step 2: Extract the first timestamp where the event occurs
+    first_event_idx = event_rows.index[0]
+
+    # Step 3: Find the next event that occurs AFTER the first one
+    next_event_df = experiment_events.loc[first_event_idx:].iloc[1:]  # Start after the first event
+    next_event_df = next_event_df[next_event_df["Event"] != event]  # Ignore repeated events
+
+    # Step 4: Extract the timestamp of the next event
+    next_event_idx = next_event_df.index[0] if not next_event_df.empty else None
 
     # Function to find the next valid timestamp in harp_streams
     def get_next_valid_value(timestamp, df, column):
@@ -301,6 +304,7 @@ def pad_dataframe_with_global_timestamps(df, global_min_datetime, global_max_dat
     """
     Adds rows at global_min_datetime and global_max_datetime if they don't exist in the DataFrame.
     Preserves original data types but converts integer columns to nullable Int64 to handle NaN values.
+    Boolean columns will be padded with False values.
     
     Parameters:
     -----------
@@ -322,25 +326,37 @@ def pad_dataframe_with_global_timestamps(df, global_min_datetime, global_max_dat
         if pd.api.types.is_integer_dtype(df_copy[col].dtype):
             df_copy[col] = df_copy[col].astype(pd.Int64Dtype())
     
-    # Now we can add NaN rows without type conversion issues
+    # Now we can add padding rows without type conversion issues
     rows_to_add = []
+    
+    # Function to get appropriate padding value based on column dtype
+    def get_padding_value(col_name):
+        if pd.api.types.is_bool_dtype(df_copy[col_name].dtype):
+            return False  # Use False for boolean columns
+        else:
+            return pd.NA  # Use pd.NA for other columns
     
     # Check if the first index is greater than the global minimum datetime
     if df_copy.index[0] > global_min_datetime:
-        # Create a new row with the global minimum datetime, all NaN values
-        rows_to_add.append(pd.DataFrame({col: [pd.NA] for col in df_copy.columns}, 
+        # Create a new row with the global minimum datetime, with appropriate padding values
+        rows_to_add.append(pd.DataFrame({col: [get_padding_value(col)] for col in df_copy.columns}, 
                                      index=[global_min_datetime]))
     
     # Check if the last index is less than the global maximum datetime
     if df_copy.index[-1] < global_max_datetime:
-        # Create a new row with the global maximum datetime, all NaN values
-        rows_to_add.append(pd.DataFrame({col: [pd.NA] for col in df_copy.columns},
+        # Create a new row with the global maximum datetime, with appropriate padding values
+        rows_to_add.append(pd.DataFrame({col: [get_padding_value(col)] for col in df_copy.columns},
                                      index=[global_max_datetime]))
     
     # If we have rows to add, concatenate them with the original dataframe
     if rows_to_add:
         df_copy = pd.concat([df_copy] + rows_to_add)
         df_copy = df_copy.sort_index()
+    
+    # Ensure boolean columns remain boolean
+    for col in df_copy.columns:
+        if pd.api.types.is_bool_dtype(df_copy[col].dtype):
+            df_copy[col] = df_copy[col].astype(bool)
         
     return df_copy
 
