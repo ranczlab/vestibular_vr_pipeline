@@ -157,9 +157,6 @@ def photometry_harp_onix_synchronisation(
     photometry_sync_events.set_index("Seconds", inplace=True)
     photometry_sync_events = photometry_sync_events["State"]
 
-    photometry_data["Seconds"] = photometry_data["TimeStamp"] / 1000
-    photometry_data.set_index("Seconds", inplace=True)
-
     # Truncate photometry to onix_digital as photometry recording starts before the sync signal 
     min_length = min(len(photometry_sync_events), len(onix_digital["Clock"]))
     photometry_sync_events = photometry_sync_events.iloc[:min_length]
@@ -193,12 +190,14 @@ def photometry_harp_onix_synchronisation(
         print(f"R-squared value for photometry to onix: {r_squared_photometry_to_onix}")
 
     #---------------------
-    # Calculate alignment
+    # Align photometry_data  
     #---------------------   
 
     # Align photometry_data, photometry_sync_events and onix_digital events to harp
     photometry_aligned = photometry_data.copy()
+    photometry_aligned.set_index("TimeStamp", inplace=True)
     photometry_aligned.index = photometry_to_harp(photometry_data.index)
+    photometry_aligned.index.name = 'Time'  # Rename the index to 'Time'
     photometry_sync_aligned = photometry_to_harp(photometry_sync_events.index) #for plotting only 
     onix_digital_aligned = onix_to_harp(onix_digital["Clock"]) #for plotting only
 
@@ -249,7 +248,7 @@ def photometry_harp_onix_synchronisation(
         else:
             print(f"❗Something's wrong, short recording? Found only {len(photometry_sync_events)} sync events.")
     
-    return onix_to_harp, harp_to_onix, photometry_to_onix, photometry_to_harp, output, photometry_aligned #FIXME probably only need returning
+    return onix_to_harp, harp_to_onix, photometry_to_onix, photometry_to_harp, output, photometry_aligned, photometry_sync_events #FIXME probably only need returning
 
 def get_global_minmax_timestamps(stream_dict, print_all=False):
     # Finding the very first and very last timestamp across all streams
@@ -300,7 +299,7 @@ def get_global_minmax_timestamps(stream_dict, print_all=False):
         #         print(f'{key}: \n\tfirst  {first_timestamps[source_name][key]} \n\tlast   {last_timestamps[source_name][key]} \n\tlength {last_timestamps[source_name][key] - first_timestamps[source_name][key]} \n\tmean difference between timestamps {stream_dict[source_name][key].index.to_series().diff().mean()}')
     
     return global_first_timestamp, global_last_timestamp, global_first_df_name, global_last_df_name
-    
+
 def pad_dataframe_with_global_timestamps(df, global_min_datetime, global_max_datetime):
     
     # Function to determine the padding value based on column dtype
