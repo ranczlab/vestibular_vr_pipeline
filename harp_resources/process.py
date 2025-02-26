@@ -152,9 +152,7 @@ def photometry_harp_onix_synchronisation(
     if verbose and nan_count > 0:
         print(f"❗WARNING:, {nan_count} NaNs detected, check Events'csv")
     photometry_sync_events = photometry_events.dropna()
-    photometry_sync_events["Seconds"] = photometry_sync_events["TimeStamp"] / 1000  # Convert to seconds and rename column
     photometry_sync_events = photometry_sync_events[photometry_sync_events['Name'] == 'Input1']  # Filter to Input1
-    photometry_sync_events.set_index("Seconds", inplace=True)
     photometry_sync_events = photometry_sync_events["State"]
 
     # Truncate photometry to onix_digital as photometry recording starts before the sync signal 
@@ -195,7 +193,6 @@ def photometry_harp_onix_synchronisation(
 
     # Align photometry_data, photometry_sync_events and onix_digital events to harp
     photometry_aligned = photometry_data.copy()
-    photometry_aligned.set_index("TimeStamp", inplace=True)
     photometry_aligned.index = photometry_to_harp(photometry_data.index)
     photometry_aligned.index.name = 'Time'  # Rename the index to 'Time'
     photometry_sync_aligned = photometry_to_harp(photometry_sync_events.index) #for plotting only 
