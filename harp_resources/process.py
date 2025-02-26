@@ -112,8 +112,6 @@ def turning_unit_conversion(turning_array): # for ball rotation
     return turning_array * angular_velocity
 
 def photometry_harp_onix_synchronisation(
-    photodiode,
-    onix_analog_clock, 
     onix_digital, 
     onix_harp,
     photometry_events,
@@ -201,11 +199,9 @@ def photometry_harp_onix_synchronisation(
     # Align photometry_data, photometry_sync_events and onix_digital events to harp
     photometry_aligned = photometry_data.copy()
     photometry_aligned.index = photometry_to_harp(photometry_data.index)
-    photodiode_aligned = onix_to_harp(photodiode["Clock"])
-    #FIXME add photodiode alignment
     photometry_sync_aligned = photometry_to_harp(photometry_sync_events.index) #for plotting only 
-    onix_digital_aligned = onix_to_harp(onix_digital["Clock"]) 
-    photodiode_aligned = onix_to_harp(photodiode["Clock"])
+    onix_digital_aligned = onix_to_harp(onix_digital["Clock"]) #for plotting only
+
 
     # Plotting
     if verbose:
@@ -253,8 +249,7 @@ def photometry_harp_onix_synchronisation(
         else:
             print(f"❗Something's wrong, short recording? Found only {len(photometry_sync_events)} sync events.")
     
-    return photometry_sync_events, onix_to_harp, harp_to_onix, photometry_to_onix, photometry_to_harp, output, photometry_aligned #FIXME probably only need returning photometry_aligned and photodiode_aligned
-
+    return onix_to_harp, harp_to_onix, photometry_to_onix, photometry_to_harp, output, photometry_aligned #FIXME probably only need returning
 
 def get_global_minmax_timestamps(stream_dict, print_all=False):
     # Finding the very first and very last timestamp across all streams
@@ -265,32 +260,47 @@ def get_global_minmax_timestamps(stream_dict, print_all=False):
     
     # Saving global first and last timestamps across the sources and the registers
     joint_first_timestamps, joint_last_timestamps = [], []
+    first_dfs, last_dfs = {}, {}
+    first_df_names, last_df_names = {}, {}  # Add dictionaries to track DF names
     
-    for stream_source in first_timestamps.values():
-        for register in stream_source.values():
-            joint_first_timestamps.append(register)
+    for source_name, stream_source in first_timestamps.items():
+        for register, timestamp in stream_source.items():
+            joint_first_timestamps.append(timestamp)
+            first_dfs[timestamp] = stream_dict[source_name][register]
+            first_df_names[timestamp] = f"{source_name}/{register}"  # Store the df name
+    
+    for source_name, stream_source in last_timestamps.items():
+        for register, timestamp in stream_source.items():
+            joint_last_timestamps.append(timestamp)
+            last_dfs[timestamp] = stream_dict[source_name][register]
+            last_df_names[timestamp] = f"{source_name}/{register}"  # Store the df name
+    
     joint_first_timestamps = pd.DataFrame(joint_first_timestamps)
-    
-    for stream_source in last_timestamps.values():
-        for register in stream_source.values():
-            joint_last_timestamps.append(register)
     joint_last_timestamps = pd.DataFrame(joint_last_timestamps)
     
     global_first_timestamp = joint_first_timestamps.iloc[joint_first_timestamps[0].argmin()][0]
     global_last_timestamp = joint_last_timestamps.iloc[joint_last_timestamps[0].argmax()][0]
     
+    global_first_whichdf = first_dfs[global_first_timestamp]
+    global_last_whichdf = last_dfs[global_last_timestamp]
+    
+    global_first_df_name = first_df_names[global_first_timestamp]  # Get the df name
+    global_last_df_name = last_df_names[global_last_timestamp]  # Get the df name
+    
     if print_all:
         print(f'Global first timestamp: {global_first_timestamp}')
+        print(f'Global first timestamp from: {global_first_df_name}')
         print(f'Global last timestamp: {global_last_timestamp}')
+        print(f'Global last timestamp from: {global_last_df_name}')
         print(f'Global length: {global_last_timestamp - global_first_timestamp}')
         
-        for source_name in stream_dict.keys():
-            print(f'\n{source_name}')
-            for key in first_timestamps[source_name].keys():
-                print(f'{key}: \n\tfirst  {first_timestamps[source_name][key]} \n\tlast   {last_timestamps[source_name][key]} \n\tlength {last_timestamps[source_name][key] - first_timestamps[source_name][key]} \n\tmean difference between timestamps {stream_dict[source_name][key].index.to_series().diff().mean()}')
+        # for source_name in stream_dict.keys():
+        #     print(f'\n{source_name}')
+        #     for key in first_timestamps[source_name].keys():
+        #         print(f'{key}: \n\tfirst  {first_timestamps[source_name][key]} \n\tlast   {last_timestamps[source_name][key]} \n\tlength {last_timestamps[source_name][key] - first_timestamps[source_name][key]} \n\tmean difference between timestamps {stream_dict[source_name][key].index.to_series().diff().mean()}')
     
-    return global_first_timestamp, global_last_timestamp, first_timestamps, last_timestamps
-
+    return global_first_timestamp, global_last_timestamp, global_first_df_name, global_last_df_name
+    
 def pad_dataframe_with_global_timestamps(df, global_min_datetime, global_max_datetime):
     
     # Function to determine the padding value based on column dtype
