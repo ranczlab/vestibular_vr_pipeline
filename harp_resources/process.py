@@ -250,7 +250,7 @@ def photometry_harp_onix_synchronisation(
             print(f"❗Something's wrong, short recording? Found only {len(photometry_sync_events)} sync events.")
     
     return onix_to_harp, harp_to_onix, photometry_to_onix, photometry_to_harp, output, photometry_aligned #FIXME probably only need returning
-def get_global_minmax_timestamps(stream_dict, print_all=False):
+def get_global_minmax_timestamps(stream_dict, print_all=False, verbose = False):
     # Finding the very first and very last timestamp across all streams
     first_timestamps, last_timestamps = {}, {}
     for source_name, stream_source in stream_dict.items():
@@ -286,17 +286,18 @@ def get_global_minmax_timestamps(stream_dict, print_all=False):
     global_first_df_name = first_df_names[global_first_timestamp]  # Get the df name
     global_last_df_name = last_df_names[global_last_timestamp]  # Get the df name
     
-    if print_all:
+    if verbose:
         print(f'Global first timestamp: {global_first_timestamp}')
         print(f'Global first timestamp from: {global_first_df_name}')
         print(f'Global last timestamp: {global_last_timestamp}')
         print(f'Global last timestamp from: {global_last_df_name}')
         print(f'Global length: {global_last_timestamp - global_first_timestamp}')
-        
-        # for source_name in stream_dict.keys():
-        #     print(f'\n{source_name}')
-        #     for key in first_timestamps[source_name].keys():
-        #         print(f'{key}: \n\tfirst  {first_timestamps[source_name][key]} \n\tlast   {last_timestamps[source_name][key]} \n\tlength {last_timestamps[source_name][key] - first_timestamps[source_name][key]} \n\tmean difference between timestamps {stream_dict[source_name][key].index.to_series().diff().mean()}')
+    
+    if print_all:
+        for source_name in stream_dict.keys():
+            print(f'\n{source_name}')
+            for key in first_timestamps[source_name].keys():
+                print(f'{key}: \n\tfirst  {first_timestamps[source_name][key]} \n\tlast   {last_timestamps[source_name][key]} \n\tlength {last_timestamps[source_name][key] - first_timestamps[source_name][key]} \n\tmean difference between timestamps {stream_dict[source_name][key].index.to_series().diff().mean()}')
     
     return global_first_timestamp, global_last_timestamp, global_first_df_name, global_last_df_name
 
