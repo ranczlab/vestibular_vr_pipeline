@@ -37,7 +37,7 @@ def downsample_numpy(arr, factor, method="mean"):
 def running_unit_conversion(running_array): #for ball linear movement
     resolution = 12000 # counts per inch
     inches_per_count = 1 / resolution
-    meters_per_count = 0.0254 * inches_per_count
+    meters_per_count = 0.0254 * inches_per_count #inch to meter conversion 
     dt = 0.01 # for OpticalTrackingRead0Y(46) -this is sensor specific. current sensor samples at 100 hz 
     linear_velocity = meters_per_count / dt # meters per second per count
     
