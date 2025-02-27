@@ -46,8 +46,11 @@ def running_unit_conversion(running_array): #for ball linear movement
 def encoder_unit_conversion(encoder_array, home_position): #for ball linear movement
     encoder_resolution = 4000 # counts per revolution
     gear_ratio = 6 # motor to platform 
-    position = (encoder_array - home_position) / (encoder_resolution * gear_ratio / 360)
-    wrapped_position = np.mod(position, 360)	
+    wrap_period = 65536  # (32767 - (-32768) + 1)
+
+    encoder_unwrapped = np.unwrap(encoder_array, discont=wrap_period / 2)
+    position = (encoder_unwrapped - home_position) / (encoder_resolution * gear_ratio / 360)
+    wrapped_position = np.mod(position, 360) # wrap to 0-360 degrees
     return wrapped_position 
 
 def get_encoder_home_position(experiment_events, harp_streams, event="Homing platform", column="Encoder(38)"):
@@ -250,6 +253,7 @@ def photometry_harp_onix_synchronisation(
             print(f"❗Something's wrong, short recording? Found only {len(photometry_sync_events)} sync events.")
     
     return onix_to_harp, harp_to_onix, photometry_to_onix, photometry_to_harp, output, photometry_aligned #FIXME probably only need returning
+
 def get_global_minmax_timestamps(stream_dict, print_all=False, verbose = False):
     # Finding the very first and very last timestamp across all streams
     first_timestamps, last_timestamps = {}, {}
