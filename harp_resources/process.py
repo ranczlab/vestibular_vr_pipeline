@@ -38,10 +38,9 @@ def running_unit_conversion(running_array): #for ball linear movement
     resolution = 12000 # counts per inch
     inches_per_count = 1 / resolution
     meters_per_count = 0.0254 * inches_per_count #inch to meter conversion 
-    dt = 0.01 # for OpticalTrackingRead0Y(46) -this is sensor specific. current sensor samples at 100 hz 
-    linear_velocity = meters_per_count / dt # meters per second per count
-    
-    return running_array * linear_velocity
+    #dt = 0.01 # for OpticalTrackingRead0Y(46) -this is sensor specific. current sensor samples at 100 hz 
+    #linear_velocity = meters_per_count / dt # meters per second per count; this makes no sense as array will go back to datetime indexed harp_streams df
+    return running_array * meters_per_count
 
 def encoder_unit_conversion(encoder_array, home_position): #for ball linear movement
     encoder_resolution = 4000 # counts per revolution
@@ -108,14 +107,14 @@ def turning_unit_conversion(turning_array): # for ball rotation
     resolution = 12000 # counts per inch
     inches_per_count = 1 / resolution
     meters_per_count = 0.0254 * inches_per_count
-    dt = 0.01 # for OpticalTrackingRead0Y(46) -this is sensor specific. current sensor samples at 100 hz 
-    linear_velocity = meters_per_count / dt # meters per second per count
+    #dt = 0.01 # for OpticalTrackingRead0Y(46) -this is sensor specific. current sensor samples at 100 hz 
+    turning_array = turning_array * meters_per_count #/ dt # meters per second per count 
     
     ball_radius = 0.1 # meters 
-    angular_velocity = linear_velocity / ball_radius # radians per second per count
-    angular_velocity = angular_velocity * (180 / np.pi) # degrees per second per count
+    turning_array = turning_array / ball_radius # radians per second per count
+    turning_array = turning_array * (180 / np.pi) # degrees per second per count
     
-    return turning_array * angular_velocity
+    return turning_array
 
 def photometry_harp_onix_synchronisation(
     onix_digital, 
@@ -842,7 +841,7 @@ def load_h5_streams_to_dict(data_paths):
     return reconstructed_dict
 
     
-def moving_average_smoothing(X,k):
+def moving_average_smoothing(X,k): # X is input np array, k is the window size
     S = np.zeros(X.shape[0])
     for t in range(X.shape[0]):
         if t < k:
