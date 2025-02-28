@@ -364,114 +364,55 @@ def pad_dataframe_with_global_timestamps(df, global_min_datetime, global_max_dat
         
     return df_copy
 
-# def pad_and_resample(streams_dict, resampling_period='0.1ms', method='linear'):
-    
-    streams_dict = copy.deepcopy(streams_dict)
-    
-    # Padding: Getting the global first/last timepoints, adding them to every stream that starts/ends later/earler
-    # Resampling + linear interpolation between points
-    
-    first_timestamp, last_timestamp, _, _ = get_timepoint_info(streams_dict)
-    
-    for source_name, source_element in streams_dict.items():
-        for stream_name, stream in source_element.items():
-            if stream.dtype==bool:
-                dummy_value = 1
-            else:
-                dummy_value = 0
-            # Check if global first and last timestamps already exist in a given stream
-            if stream.index[0] != first_timestamp:
-                # Create new element with the earliest timestamp
-                new_start = pd.Series([dummy_value], index=[first_timestamp]).astype(stream.dtype)
-                # Append the new element to the Series
-                stream = pd.concat([new_start, stream])
-                stream = stream.sort_index()
-            if stream.index[-1] != last_timestamp:
-                # Create new element with the latest timestamp
-                new_end = pd.Series([dummy_value], index=[last_timestamp]).astype(stream.dtype)
-                # Append the new element to the Series
-                stream = pd.concat([stream, new_end])
-                stream = stream.sort_index()
-
-            # Resampling and interpolation
-            if stream.dtype==bool:
-                streams_dict[source_name][stream_name] = resample_stream(stream, resampling_period=resampling_period, method='nearest').astype(bool)
-            else:
-                streams_dict[source_name][stream_name] = resample_stream(stream, resampling_period=resampling_period, method=method)
-    
-    print(f'Padding and resampling finished in {time() - start_time:.2f} seconds.')
-
-    return streams_dict
-
-def resample_stream(data_stream_df, resampling_period='0.1ms', method='linear'):
-    return data_stream_df.resample(resampling_period).last().interpolate(method=method)
-
-def resample_index(index, freq):
-    """Resamples each day in the daily `index` to the specified `freq`.
-
-    Parameters
-    ----------
-    index : pd.DatetimeIndex
-        The daily-frequency index to resample
-    freq : str
-        A pandas frequency string which should be higher than daily
-
-    Returns
-    -------
-    pd.DatetimeIndex
-        The resampled index
-
+def resample_dataframe(df, target_freq_hz=1000):
     """
-    assert isinstance(index, pd.DatetimeIndex)
-    start_date = index.min()
-    end_date = index.max() + pd.DateOffset(days=1)
-    resampled_index = pd.date_range(start_date, end_date, freq=freq)[:-1]
-    series = pd.Series(resampled_index, resampled_index.floor('D'))
-    return pd.DatetimeIndex(series.loc[index].values)
+    Efficiently resample a large datetime-indexed DataFrame to a given frequency.
+
+    Args:
+        df (pd.DataFrame): The input DataFrame with a DatetimeIndex.
+        target_freq_hz (int): Target resampling frequency in Hz (default 1000 Hz).
+
+    Returns:
+        pd.DataFrame: The resampled DataFrame.
+    """
+    # Ensure DatetimeIndex
+    if not isinstance(df.index, pd.DatetimeIndex):
+        raise ValueError("DataFrame index must be a DatetimeIndex.")
+    bool_cols = df.select_dtypes(include=['bool']).columns
+
+    # Convert frequency in Hz to a pandas frequency string
+    target_freq = f'{int(1e6 / target_freq_hz)}us'  # Microseconds
+
+    # Resample using different methods for different data types
+    resampled = pd.DataFrame(index=pd.date_range(df.index.min(), df.index.max(), freq=target_freq))
+
+    # Reindex to the new resampled index
+    df = df.reindex(resampled.index)
+
+    # Handle float columns (interpolation for smooth transitions)
+    float_cols = df.select_dtypes(include=['float64']).columns
+    df[float_cols] = df[float_cols].interpolate(method='linear', limit_direction='both').fillna(method='bfill').fillna(method='ffill')
+
+    # Handle integer columns (use nearest available value)
+    int_cols = df.select_dtypes(include=['Int64']).columns
+    df[int_cols] = df[int_cols].fillna(method='ffill').fillna(method='bfill').astype('Int64')
+
+    # Handle boolean columns (use ffill and bfill, then convert back to bool)
+    df[bool_cols] = df[bool_cols].fillna(method='ffill').fillna(method='bfill').astype(bool)
+
+    return df
+
+
+
 
 def compute_Lomb_Scargle_psd(data_df, freq_min=0.001, freq_max=10**6, num_freqs=1000, normalise=True):
     freqs = np.linspace(freq_min, freq_max, num_freqs)
-#     x = (data_df.index - data_df.index[0]).total_seconds().to_numpy()
+    x = (data_df.index - data_df.index[0]).total_seconds().to_numpy()
     x = data_df.index
     y = data_df.values
     if y.ndim != 1: y = y[:,0]
     psd = signal.lombscargle(x, y, freqs, normalize=normalise)
     return freqs, psd
-
-def align_fluorescence_first_approach(fluorescence_df, onixdigital_df): #DEPRECATED, could be useful for Cohort0?
-    # Aligns Fluorescence signal using the HARP timestamps from onix_digital and interpolation
-    # Steps:
-    # - Selecting the rows where there are photometry synchronisation events occurring
-    # - Getting the values from 'Seconds' column of onix_digital and setting them to Fluorescence dataframe
-    # - Estimating the very first and the very last 'Seconds' value based on timestamps of the photometry software ('TimeStamp' column)
-    # - Applying default Pandas interpolation
-    # - based on https://github.com/neurogears/vestibular-vr/issues/76
-    # - FIXME relays on serious assumptions, do not use (or maybe for Cohort 0)?
-    
-    start_time = time()
-
-    fluorescence_df = copy.deepcopy(fluorescence_df)
-    
-    # Adding a new column
-    fluorescence_df['Seconds'] = np.nan
-    
-    # Setting the rows of Seconds column where there are events with HARP timestamp values from onix_digital
-    fluorescence_df.loc[fluorescence_df['Events'].notna(), 'Seconds'] = onixdigital_df['Seconds'].values
-    
-    # estimate the very first and very last values of Seconds column in Fluorescence to be able to interpolate between
-    first_val_to_insert = fluorescence_df[fluorescence_df['Events'].notna()].iloc[0]['Seconds'] - fluorescence_df[fluorescence_df['Events'].notna()].iloc[0]['TimeStamp'] / 1000
-    # first_val_to_insert = Seconds value of the first Event to occur - seconds elapsed since start of recording (converted from ms)
-    last_val_to_insert = fluorescence_df[fluorescence_df['Events'].notna()].iloc[-1]['Seconds'] + (fluorescence_df.iloc[-1]['TimeStamp'] / 1000 - fluorescence_df[fluorescence_df['Events'].notna()].iloc[-1]['TimeStamp'] / 1000)
-    # last_val_to_insert = Seconds value of the last Event to occur + seconds elapsed between the last row of Fluorescence and the last event to occur
-    
-    fluorescence_df.loc[0, 'Seconds'] = first_val_to_insert
-    fluorescence_df.loc[-1, 'Seconds'] = last_val_to_insert
-    
-    fluorescence_df[['Seconds']] = fluorescence_df[['Seconds']].interpolate()
-
-    print(f'Fluorescence alignment finished in {time() - start_time:.2f} seconds.')
-    
-    return fluorescence_df
 
 def convert_datetime_to_seconds(timestamp_input):
     if type(timestamp_input) == datetime or type(timestamp_input) == pd.DatetimeIndex:
@@ -658,7 +599,6 @@ def add_no_halt_column(data_dict, events_dict):
 
     return data_dict
 
-
 def add_block_columns(df, event_df):
     # Iterate through each index and event value in event_df
     prev_column = None  # Tracks the column currently being filled as True
@@ -708,7 +648,6 @@ def check_block_overlap(data_dict):
             print(f'Not all block columns contains True Values for {mouse}')
         elif not no_overlap and all_columns_true:
             print(f'There are some overlap between the blocks {mouse}')
-
 
 def downsample_data(df, time_col='Seconds', interval=0.001):
     '''
@@ -767,7 +706,6 @@ def downsample_data(df, time_col='Seconds', interval=0.001):
 
     return downsampled_df
 
-
 def test_event_numbers(downsampled_data, original_data, mouse):
     '''
     Counts number of True values in the No_halt columns in the original and the downsampled data
@@ -784,7 +722,6 @@ def test_event_numbers(downsampled_data, original_data, mouse):
     if nohalt_down == nohalt_original:
         print(f'mouse{mouse}')
         print(f'There are {nohalt_original} no-halts, and downsampled data contains {nohalt_down}\n')
-
 
 def load_h5_streams_to_dict(data_paths):
     '''
@@ -840,7 +777,6 @@ def load_h5_streams_to_dict(data_paths):
 
     return reconstructed_dict
 
-    
 def moving_average_smoothing(X,k): # X is input np array, k is the window size
     S = np.zeros(X.shape[0])
     for t in range(X.shape[0]):
@@ -913,7 +849,6 @@ def plot_dataset(dataset_path):
     for register, register_stream in h2_data_streams.items():
         plot_detail(register_stream, dataset_path.name, register=str(register))
 
-
 # def read_ExperimentEvents(path):
 #     filenames = os.listdir(path/'ExperimentEvents')
 #     filenames = [x for x in filenames if x[:16]=='ExperimentEvents'] # filter out other (hidden) files
@@ -931,5 +866,66 @@ def plot_dataset(dataset_path):
 #         print('Likely due to extra commas in the "Value" column of ExperimentEvents. Please manually remove and run again.')
 #         return None
 #     except Exception as e:
-        # print('Reading failed:', e)
-        # return None
+#         print('Reading failed:', e)
+#         return None
+
+# def resample_stream(data_stream_df, resampling_period='0.1ms', method='linear'):
+#     return data_stream_df.resample(resampling_period).last().interpolate(method=method)
+
+# def resample_index(index, freq):
+#     """Resamples each day in the daily `index` to the specified `freq`.
+
+#     Parameters
+#     ----------
+#     index : pd.DatetimeIndex
+#         The daily-frequency index to resample
+#     freq : str
+#         A pandas frequency string which should be higher than daily
+
+#     Returns
+#     -------
+#     pd.DatetimeIndex
+#         The resampled index
+
+#     """
+#     assert isinstance(index, pd.DatetimeIndex)
+#     start_date = index.min()
+#     end_date = index.max() + pd.DateOffset(days=1)
+#     resampled_index = pd.date_range(start_date, end_date, freq=freq)[:-1]
+#     series = pd.Series(resampled_index, resampled_index.floor('D'))
+#     return pd.DatetimeIndex(series.loc[index].values)
+
+#  def align_fluorescence_first_approach(fluorescence_df, onixdigital_df): #DEPRECATED, FIXME could be useful for Cohort0?
+#     # Aligns Fluorescence signal using the HARP timestamps from onix_digital and interpolation
+#     # Steps:
+#     # - Selecting the rows where there are photometry synchronisation events occurring
+#     # - Getting the values from 'Seconds' column of onix_digital and setting them to Fluorescence dataframe
+#     # - Estimating the very first and the very last 'Seconds' value based on timestamps of the photometry software ('TimeStamp' column)
+#     # - Applying default Pandas interpolation
+#     # - based on https://github.com/neurogears/vestibular-vr/issues/76
+#     # - FIXME relays on serious assumptions, do not use (or maybe for Cohort 0)?
+    
+#     start_time = time()
+
+#     fluorescence_df = copy.deepcopy(fluorescence_df)
+    
+#     # Adding a new column
+#     fluorescence_df['Seconds'] = np.nan
+    
+#     # Setting the rows of Seconds column where there are events with HARP timestamp values from onix_digital
+#     fluorescence_df.loc[fluorescence_df['Events'].notna(), 'Seconds'] = onixdigital_df['Seconds'].values
+    
+#     # estimate the very first and very last values of Seconds column in Fluorescence to be able to interpolate between
+#     first_val_to_insert = fluorescence_df[fluorescence_df['Events'].notna()].iloc[0]['Seconds'] - fluorescence_df[fluorescence_df['Events'].notna()].iloc[0]['TimeStamp'] / 1000
+#     # first_val_to_insert = Seconds value of the first Event to occur - seconds elapsed since start of recording (converted from ms)
+#     last_val_to_insert = fluorescence_df[fluorescence_df['Events'].notna()].iloc[-1]['Seconds'] + (fluorescence_df.iloc[-1]['TimeStamp'] / 1000 - fluorescence_df[fluorescence_df['Events'].notna()].iloc[-1]['TimeStamp'] / 1000)
+#     # last_val_to_insert = Seconds value of the last Event to occur + seconds elapsed between the last row of Fluorescence and the last event to occur
+    
+#     fluorescence_df.loc[0, 'Seconds'] = first_val_to_insert
+#     fluorescence_df.loc[-1, 'Seconds'] = last_val_to_insert
+    
+#     fluorescence_df[['Seconds']] = fluorescence_df[['Seconds']].interpolate()
+
+#     print(f'Fluorescence alignment finished in {time() - start_time:.2f} seconds.')
+    
+#     return fluorescence_df
