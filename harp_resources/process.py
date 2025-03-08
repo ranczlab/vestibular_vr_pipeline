@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 from time import time
 from datetime import datetime, timedelta
 from scipy.signal import correlate
+from scipy.interpolate import Akima1DInterpolator
 from scipy import signal  # for Lomb-Scargle PSD
 import re # for photometry alignment
 
@@ -33,6 +34,7 @@ def downsample_numpy(arr, factor, method="mean"):
         return arr[::factor]
     else:
         raise ValueError("Invalid method. Choose 'mean', 'median', or 'first'.")
+
 
 def running_unit_conversion(running_array): #for ball linear movement
     resolution = 12000 # counts per inch
@@ -364,45 +366,77 @@ def pad_dataframe_with_global_timestamps(df, global_min_datetime, global_max_dat
         
     return df_copy
 
-def resample_dataframe(df, target_freq_hz=1000):
+
+
+def upsample_photometry(df, target_freq=1000):
     """
-    Efficiently resample a large datetime-indexed DataFrame to a given frequency.
-
-    Args:
-        df (pd.DataFrame): The input DataFrame with a DatetimeIndex.
-        target_freq_hz (int): Target resampling frequency in Hz (default 1000 Hz).
-
+    Upsample photometry data to a target frequency while preserving high-frequency details.
+    
+    Parameters:
+        df (pd.DataFrame): Original dataframe with non-uniform timestamps.
+        target_freq (int): Target frequency in Hz (default 1000Hz).
+        
     Returns:
-        pd.DataFrame: The resampled DataFrame.
+        pd.DataFrame: Upsampled dataframe with uniform timestamps.
     """
-    # Ensure DatetimeIndex
-    if not isinstance(df.index, pd.DatetimeIndex):
-        raise ValueError("DataFrame index must be a DatetimeIndex.")
-    bool_cols = df.select_dtypes(include=['bool']).columns
+    # Extract time and data columns
+    time = df.index.values  # The index is the time
+    data = df.values  # All other columns are signal data
 
-    # Convert frequency in Hz to a pandas frequency string
-    target_freq = f'{int(1e6 / target_freq_hz)}us'  # Microseconds
+    # Generate new uniform time vector
+    new_time = np.arange(time[0], time[-1], 1 / target_freq)
 
-    # Resample using different methods for different data types
-    resampled = pd.DataFrame(index=pd.date_range(df.index.min(), df.index.max(), freq=target_freq))
+    # Perform Akima interpolation (more robust for unevenly spaced data)
+    interpolated_data = np.zeros((len(new_time), data.shape[1]))
+    for i in range(data.shape[1]):
+        interp_func = Akima1DInterpolator(time, data[:, i])
+        interpolated_data[:, i] = interp_func(new_time)
 
-    # Reindex to the new resampled index
-    df = df.reindex(resampled.index)
+    # Create new DataFrame with interpolated data and updated index
+    new_df = pd.DataFrame(interpolated_data, columns=df.columns, index=new_time)
 
-    # Handle float columns (interpolation for smooth transitions)
-    float_cols = df.select_dtypes(include=['float64']).columns
-    df[float_cols] = df[float_cols].interpolate(method='linear', limit_direction='both').fillna(method='bfill').fillna(method='ffill')
+    return new_df
 
-    # Handle integer columns (use nearest available value)
-    int_cols = df.select_dtypes(include=['Int64']).columns
-    df[int_cols] = df[int_cols].fillna(method='ffill').fillna(method='bfill').astype('Int64')
-
-    # Handle boolean columns (use ffill and bfill, then convert back to bool)
-    df[bool_cols] = df[bool_cols].fillna(method='ffill').fillna(method='bfill').astype(bool)
-
-    return df
+# Usage example:
+# df = pd.read_csv("Processed_fluorescence.csv")  # Load your CSV file
+# upsampled_df = upsample_photometry_fixed(df)  # Apply upsampling to 1 kHz
 
 
+
+
+
+def resample_dataframe(df, target_freq_Hz=1000):
+    """
+    Resample a DataFrame with:
+    - Forward fill (`ffill`) for Optical & Encoder signals.
+    - PCHIP interpolation for fluorescence signals.
+    - Handles edge cases where `ffill()` could leave missing values.
+    """
+    # Create a regular time grid
+    time_interval = f"{1/target_freq_Hz}s"
+    new_index = pd.date_range(start=df.index.min(), end=df.index.max(), freq=time_interval)
+
+    # Identify columns that should use only ffill (Optical & Encoder)
+    ffill_cols = [col for col in df.columns if "Optical" in col or "Encoder" in col]
+
+    # Identify fluorescence columns (all others)
+    fluorescence_cols = [col for col in df.columns if col not in ffill_cols]
+
+    # Create an empty DataFrame with the new index
+    resampled_df = pd.DataFrame(index=new_index)
+
+    # **Step 1: Handle resampling for ffill columns (Optical/Encoder)**
+    for col in ffill_cols:
+        resampled_df[col] = df[col].ffill().reindex(new_index, method='ffill').bfill()
+
+    # **Step 2: Handle fluorescence columns with cubic spline interpolation**
+    for col in fluorescence_cols:
+        temp_col = df[col].bfill().ffill().reindex(new_index, method='nearest')  # Nearest to reduce NaNs
+        #temp_col = temp_col.interpolate(method='spline', order=3, limit_direction='both')  # Smooth interpolation
+        resampled_df[col] = temp_col
+
+
+    return resampled_df
 
 
 def compute_Lomb_Scargle_psd(data_df, freq_min=0.001, freq_max=10**6, num_freqs=1000, normalise=True):
