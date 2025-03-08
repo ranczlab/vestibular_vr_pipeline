@@ -8,8 +8,15 @@ from time import time
 from datetime import datetime, timedelta
 from scipy.signal import correlate
 from scipy.interpolate import Akima1DInterpolator
+from scipy.interpolate import interp1d
+from scipy.signal import butter, filtfilt
 from scipy import signal  # for Lomb-Scargle PSD
+from concurrent.futures import ProcessPoolExecutor
+import multiprocessing
 import re # for photometry alignment
+
+import time
+import logging
 
 from . import utils
 import aeon.io.api as api
@@ -366,8 +373,6 @@ def pad_dataframe_with_global_timestamps(df, global_min_datetime, global_max_dat
         
     return df_copy
 
-
-
 def upsample_photometry(df, target_freq=1000):
     """
     Upsample photometry data to a target frequency while preserving high-frequency details.
@@ -397,44 +402,120 @@ def upsample_photometry(df, target_freq=1000):
 
     return new_df
 
-# Usage example:
-# df = pd.read_csv("Processed_fluorescence.csv")  # Load your CSV file
-# upsampled_df = upsample_photometry_fixed(df)  # Apply upsampling to 1 kHz
+# Low-pass filter function
+def low_pass_filter(data, cutoff_freq, sample_rate, order=2):
+    nyquist_freq = 0.5 * sample_rate
+    if cutoff_freq >= nyquist_freq:
+        raise ValueError(f"cutoff_freq must be less than the Nyquist frequency ({nyquist_freq} Hz)")
+    normal_cutoff = cutoff_freq / nyquist_freq
+    b, a = butter(order, normal_cutoff, btype='low', analog=False)
+    return filtfilt(b, a, data)
 
+# Make index strictly monotonic
+def make_index_monotonic(index, min_diff_threshold=pd.Timedelta('1us')):
+    index_diff = index.to_series().diff().fillna(pd.Timedelta('0ns'))
+    adjusted_index = index.to_series().copy()
+    
+    for i in range(1, len(adjusted_index)):
+        if index_diff.iloc[i] < min_diff_threshold:
+            adjusted_index.iloc[i] = adjusted_index.iloc[i-1] + min_diff_threshold
 
+    return adjusted_index.astype(index.dtype)
 
+# Circular interpolation for encoder values
+def circular_interpolation(x, y, new_x):
+    """ Interpolates circular data (angles in degrees, modulo 360). """
+    interp_func = interp1d(x, np.unwrap(np.radians(y)), kind='linear', fill_value="extrapolate")
+    interpolated = np.degrees(np.mod(interp_func(new_x), 2 * np.pi))  # Re-wrap after interpolation
+    return interpolated
 
+# Filter angular velocity, then reintegrate to get smooth angles
+def filter_angular_velocity(angles, time, cutoff_freq, sample_rate):
+    """ Filters the angular velocity, then reintegrates to get smooth angles. """
+    velocity = np.gradient(np.unwrap(np.radians(angles)), time)  # Compute angular velocity
+    velocity_filtered = low_pass_filter(velocity, cutoff_freq, sample_rate)  # Filter velocity
+    smoothed_angles = np.degrees(np.cumsum(velocity_filtered) * np.mean(np.diff(time)))  # Reintegrate
+    return smoothed_angles % 360  # Re-wrap angles
 
-def resample_dataframe(df, target_freq_Hz=1000):
+# Resampling function
+def resample_column(column, new_index, method, optical_filter_Hz, sample_rate):
+    logging.info(f"Resampling column: {column.name}")
+    
+    # Ensure the index is strictly monotonic
+    column.index = make_index_monotonic(column.index)
+
+    if "Encoder" in column.name:  # Special handling for encoder signals
+        temp_col = column.ffill().bfill()  # Handle missing values
+        interpolated_col = circular_interpolation(
+            column.index.astype(np.int64) / 10**9, temp_col, new_index.astype(np.int64) / 10**9
+        )
+        # Apply velocity filtering & reintegrate
+        smoothed_angles = filter_angular_velocity(interpolated_col, new_index.astype(np.int64) / 10**9, optical_filter_Hz, sample_rate)
+        return smoothed_angles
+
+    elif method == 'linear':
+        temp_col = column.ffill().bfill()  # Ensure forward fill and back fill to avoid NaNs
+        if temp_col.isnull().any():
+            logging.warning(f"Column {column.name} still has NaNs after forward and backward fill.")
+        interpolated_col = np.interp(new_index.astype(np.int64) / 10**9, column.index.astype(np.int64) / 10**9, temp_col)
+        # Apply low-pass filter
+        filtered_col = low_pass_filter(interpolated_col, optical_filter_Hz, sample_rate)
+        return filtered_col
+
+    elif method == 'fluor':
+        return column.bfill().reindex(new_index, method='nearest')  # For fluorescence data
+
+# Resampling function for entire DataFrame
+def resample_dataframe(df, target_freq_Hz=1000, optical_filter_Hz=33):
     """
     Resample a DataFrame with:
-    - Forward fill (`ffill`) for Optical & Encoder signals.
-    - PCHIP interpolation for fluorescence signals.
-    - Handles edge cases where `ffill()` could leave missing values.
+    - Circular interpolation & velocity filtering for Encoder signals.
+    - Linear interpolation for Optical & Position signals.
+    - No interpolation for fluorescence signals (already upsampled).
+    - Ensures strict monotonicity and prevents artifacts.
     """
+    start_time = time.time()
+
+    # Ensure the index is strictly increasing
+    df.index = make_index_monotonic(df.index)
+
+    logging.info(f"Index adjustment took {time.time() - start_time:.2f} seconds")
+
     # Create a regular time grid
     time_interval = f"{1/target_freq_Hz}s"
     new_index = pd.date_range(start=df.index.min(), end=df.index.max(), freq=time_interval)
 
-    # Identify columns that should use only ffill (Optical & Encoder)
-    ffill_cols = [col for col in df.columns if "Optical" in col or "Encoder" in col]
+    logging.info(f"Time grid creation took {time.time() - start_time:.2f} seconds")
 
-    # Identify fluorescence columns (all others)
-    fluorescence_cols = [col for col in df.columns if col not in ffill_cols]
+    # Identify column types
+    encoder_cols = [col for col in df.columns if "Encoder" in col]
+    linear_cols = [col for col in df.columns if "Position" in col and col not in encoder_cols]
+    fluorescence_cols = [col for col in df.columns if col not in encoder_cols + linear_cols]
 
-    # Create an empty DataFrame with the new index
+    # Create an empty DataFrame
     resampled_df = pd.DataFrame(index=new_index)
 
-    # **Step 1: Handle resampling for ffill columns (Optical/Encoder)**
-    for col in ffill_cols:
-        resampled_df[col] = df[col].ffill().reindex(new_index, method='ffill').bfill()
+    logging.info(f"Empty DataFrame creation took {time.time() - start_time:.2f} seconds")
 
-    # **Step 2: Handle fluorescence columns with cubic spline interpolation**
-    for col in fluorescence_cols:
-        temp_col = df[col].bfill().ffill().reindex(new_index, method='nearest')  # Nearest to reduce NaNs
-        #temp_col = temp_col.interpolate(method='spline', order=3, limit_direction='both')  # Smooth interpolation
-        resampled_df[col] = temp_col
+    # Resample in parallel
+    with ProcessPoolExecutor(max_workers=multiprocessing.cpu_count()) as executor:
+        encoder_futures = {executor.submit(resample_column, df[col], new_index, 'encoder', optical_filter_Hz, target_freq_Hz): col for col in encoder_cols}
+        linear_futures = {executor.submit(resample_column, df[col], new_index, 'linear', optical_filter_Hz, target_freq_Hz): col for col in linear_cols}
+        fluor_futures = {executor.submit(resample_column, df[col], new_index, 'fluor', optical_filter_Hz, target_freq_Hz): col for col in fluorescence_cols}
 
+        for future in encoder_futures:
+            col = encoder_futures[future]
+            resampled_df[col] = future.result()
+
+        for future in linear_futures:
+            col = linear_futures[future]
+            resampled_df[col] = future.result()
+
+        for future in fluor_futures:
+            col = fluor_futures[future]
+            resampled_df[col] = future.result()
+
+    logging.info(f"Resampling took {time.time() - start_time:.2f} seconds")
 
     return resampled_df
 
