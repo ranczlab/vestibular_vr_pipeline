@@ -238,8 +238,8 @@ def read_OnixAnalogData(dataset_path, channels=[0], binarise=False, method='adap
         
         if method == 'adaptive':
             try:
-                threshold = np.percentile(photo_diode, 1)
-                threshold = threshold * 1.2
+                threshold = np.percentile(photo_diode[120*100000:], 80) #excludes the first 120 seconds at 100kHz from the adaptive threshold calculation 
+                threshold = threshold * 0.5
                 if verbose:
                     print(f"Adaptive threshold: {threshold}")
             except:
@@ -269,7 +269,7 @@ def read_OnixAnalogData(dataset_path, channels=[0], binarise=False, method='adap
         last_fall = -300  # Initialize before first possible transition
         
         for idx in fall_indices:
-            if idx - last_fall > refractory:  # Check refractory period
+            if idx - last_fall > (refractory*100000):  # Check refractory period, assumes 100 kHz sampling rate
                 valid_falls.append(idx)
                 last_fall = idx
         

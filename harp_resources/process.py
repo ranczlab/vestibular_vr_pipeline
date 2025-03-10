@@ -15,6 +15,11 @@ from concurrent.futures import ProcessPoolExecutor
 import multiprocessing
 import re # for photometry alignment
 
+import plotly.graph_objects as go
+import plotly.io as pio
+import plotly.express as px
+from plotly.subplots import make_subplots
+
 import time
 import logging
 
@@ -41,7 +46,6 @@ def downsample_numpy(arr, factor, method="mean"):
         return arr[::factor]
     else:
         raise ValueError("Invalid method. Choose 'mean', 'median', or 'first'.")
-
 
 def running_unit_conversion(running_array): #for ball linear movement
     resolution = 12000 # counts per inch
@@ -362,6 +366,11 @@ def pad_dataframe_with_global_timestamps(df, global_min_datetime, global_max_dat
                                      index=[global_max_datetime]))
     
     # If we have rows to add, concatenate them with the original dataframe
+    # for i, row in enumerate(rows_to_add): #FIXME DEBUG this as it gives future warning, suggestive that some columns are all NaNs which should not be the case
+    #     print(f"Row {i}: Empty={row.empty}, All-NA={row.isna().all().all()}, Shape={row.shape}")
+    # for i, row in enumerate(rows_to_add):
+    #     print(f"Row {i} Columns: {row.columns.tolist()}")
+
     if rows_to_add:
         df_copy = pd.concat([df_copy] + rows_to_add)
         df_copy = df_copy.sort_index()
@@ -402,7 +411,7 @@ def upsample_photometry(df, target_freq=1000):
 
     return new_df
 
-# Low-pass filter function
+# Low-pass filter function 
 def low_pass_filter(data, cutoff_freq, sample_rate, order=2):
     nyquist_freq = 0.5 * sample_rate
     if cutoff_freq >= nyquist_freq:
@@ -519,6 +528,105 @@ def resample_dataframe(df, target_freq_Hz=1000, optical_filter_Hz=33):
 
     return resampled_df
 
+def plot_figure_1(df, session_name, save_path, common_resampled_rate, show_figure, downsample_factor=20):
+    """
+    Plot specific time series data from the DataFrame in a browser window.
+    Fixes missing X-axis and Y-axis movement plots by correctly assigning y-axes per subplot.
+    """
+
+    # Unwrap the position and encoder data to handle wrapping around 360 degrees
+    position_unwrapped = np.unwrap(df['Position_0Y'].values * np.pi / 180) * 180 / np.pi
+    encoder_unwrapped = np.unwrap(df['Encoder'].values * np.pi / 180) * 180 / np.pi
+
+    # Compute cross-correlation efficiently
+    cross_corr = correlate(
+        position_unwrapped, 
+        encoder_unwrapped, 
+        mode='full', method='fft'
+    )
+
+    # Find negative peak
+    negative_peak_index = np.argmin(cross_corr)
+    negative_peak_position = negative_peak_index - len(position_unwrapped) + 1
+
+    # Convert the position of the negative peak to microseconds
+    negative_peak_position_ms = negative_peak_position * (1e3 / common_resampled_rate)
+
+    # Downsample data for plotting efficiency
+    df_downsampled = df.iloc[::downsample_factor].copy()
+    
+    # Create subplots
+    fig = make_subplots(
+        rows=4, cols=1, shared_xaxes=True, 
+        vertical_spacing=0.1, subplot_titles=(
+            'X Position (m)', 'Y position (degrees)', 
+            f"Encoder Data (degrees, neg corr peak with posY: {negative_peak_position_ms:.2f} ms)", 'Photometry Data (z-score)'),
+        specs=[[{"secondary_y": True}],  # Allow second y-axis for X movement
+               [{"secondary_y": True}],  # Allow second y-axis for Y movement
+               [{}], [{}]]  # Single y-axis for Encoder & Photometry
+    )
+
+    # Colors for the different metrics
+    colors = {'Position': 'blue', 'Velocity': 'green', 'Acceleration': 'red'}
+
+    # 1. Plot X-axis movement (Now with properly assigned y-axes)
+    fig.add_trace(go.Scatter(x=df_downsampled.index, y=df_downsampled['Position_0X'], 
+                             mode='lines', name='Position_0X', line=dict(color=colors['Position'])), 
+                  row=1, col=1, secondary_y=False)
+
+    fig.add_trace(go.Scatter(x=df_downsampled.index, y=df_downsampled['Velocity_0X'], 
+                             mode='lines', name='Velocity_0X', line=dict(color=colors['Velocity'], width=1, dash='solid')), 
+                  row=1, col=1, secondary_y=True)
+
+    fig.add_trace(go.Scatter(x=df_downsampled.index, y=df_downsampled['Acceleration_0X'], 
+                             mode='lines', name='Acceleration_0X', line=dict(color=colors['Acceleration'], width=1, dash='solid')), 
+                  row=1, col=1, secondary_y=True)
+
+    # 2. Plot Y-axis movement (Fixed missing data)
+    fig.add_trace(go.Scatter(x=df_downsampled.index, y=df_downsampled['Position_0Y'], 
+                             mode='lines', name='Position_0Y', line=dict(color=colors['Position'])), 
+                  row=2, col=1, secondary_y=False)
+
+    fig.add_trace(go.Scatter(x=df_downsampled.index, y=df_downsampled['Velocity_0Y'], 
+                             mode='lines', name='Velocity_0Y', line=dict(color=colors['Velocity'], width=1, dash='solid')), 
+                  row=2, col=1, secondary_y=True)
+
+    fig.add_trace(go.Scatter(x=df_downsampled.index, y=df_downsampled['Acceleration_0Y'], 
+                             mode='lines', name='Acceleration_0Y', line=dict(color=colors['Acceleration'], width=1, dash='solid')), 
+                  row=2, col=1, secondary_y=True)
+
+    # Adjust transparency by setting the opacity of the traces
+    fig.update_traces(opacity=0.5, selector=dict(name='Velocity_0X'))
+    fig.update_traces(opacity=0.5, selector=dict(name='Acceleration_0X'))
+    fig.update_traces(opacity=0.5, selector=dict(name='Velocity_0Y'))
+    fig.update_traces(opacity=0.5, selector=dict(name='Acceleration_0Y'))
+
+    # 3. Plot Encoder data
+    encoder_cols = [col for col in df.columns if 'Encoder' in col]
+    for col in encoder_cols:
+        if col in df_downsampled.columns:
+            fig.add_trace(go.Scatter(x=df_downsampled.index, y=df_downsampled[col], 
+                                     mode='lines', name=col), row=3, col=1)
+
+    # 4. Plot Photometry data (z_470, z_560)
+    photometry_cols = ['z_470', 'z_560']
+    for col in photometry_cols:
+        if col in df_downsampled.columns:
+            fig.add_trace(go.Scatter(x=df_downsampled.index, y=df_downsampled[col], 
+                                     mode='lines', name=col, line=dict(width=1)), row=4, col=1)
+
+    # Shade regions where Photodiode is True FIXME 
+
+    # Update layout
+    fig.update_layout(
+        height=800, width=1000, 
+        title_text=f'Position, Velocity, Acceleration, Encoder and Photometry Data - {session_name}'
+    )
+
+    fig.write_image(save_path / "figure1.png", scale=3)  # Adjust scale for higher resolution
+
+    if show_figure:
+        fig.show()
 
 def compute_Lomb_Scargle_psd(data_df, freq_min=0.001, freq_max=10**6, num_freqs=1000, normalise=True):
     freqs = np.linspace(freq_min, freq_max, num_freqs)
