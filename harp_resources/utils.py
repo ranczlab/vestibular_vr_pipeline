@@ -260,7 +260,7 @@ def read_OnixAnalogData(dataset_path, channels=[0], binarise=False, method='adap
             photo_diode = ~photo_diode
         
         # Convert to int for transition detection
-        signal_int = photo_diode.astype(int)
+        signal_int = photo_diode[120*100000:].astype(int)
         diff_signal = np.diff(signal_int)
         
         # Find falling edges with refractory period
@@ -277,12 +277,10 @@ def read_OnixAnalogData(dataset_path, channels=[0], binarise=False, method='adap
 
         if falling_edges == 0:
             print("❗Warning: No falling edges detected. Check threshold value and signal.")
-            return photo_diode
 
-        if verbose:
-            print(f"Number of falling edges detected: {falling_edges}")
-            #if falling_edges > 0:
-               # print(f"First 5 falling edge indices: {valid_falls[:5]}")
+        if falling_edges > 500:
+            print(f"❗Warning: Unexpectedly large number of falling edges detected: {falling_edges}. Check threshold value and signal.")
+ 
     
     return photo_diode
 
