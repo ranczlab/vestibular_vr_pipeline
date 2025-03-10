@@ -133,7 +133,8 @@ def photometry_harp_onix_synchronisation(
     onix_digital, 
     onix_harp,
     photometry_events,
-    photometry_data, 
+    photometry_data,
+    photodiode_df, 
     verbose=True
 ):
     output = {}
@@ -146,7 +147,7 @@ def photometry_harp_onix_synchronisation(
     clock = onix_harp["Clock"]
     harp = onix_harp["HarpTime"]
     o_m, o_b = np.polyfit(clock, harp, 1)
-    onix_to_harp_seconds = lambda x: x * o_m + o_b#FIXME used???
+    onix_to_harp_seconds = lambda x: x * o_m + o_b
     onix_to_harp = lambda x: api.aeon(onix_to_harp_seconds(x))
     harp_to_onix = lambda x: (x - o_b) / o_m
      
@@ -209,14 +210,19 @@ def photometry_harp_onix_synchronisation(
     # Align photometry_data  
     #---------------------   
 
-    # Align photometry_data, photometry_sync_events and onix_digital events to harp
+    # Align photometry_data, photodiode_df, photometry_sync_events and onix_digital events to harp
     photometry_aligned = photometry_data.copy()
     photometry_aligned.index = photometry_to_harp(photometry_data.index)
     photometry_aligned.index = photometry_aligned.index.round("us")  # Convert to microseconds
     photometry_aligned.index.name = 'Time'  # Rename the index to 'Time'
+
+    photodiode_aligned = photodiode_df.copy()
+    photodiode_aligned.index = onix_to_harp(photodiode_aligned.index)
+    photodiode_aligned.index = photodiode_aligned.index.round("us")  # Convert to microseconds
+    photodiode_aligned.index.name = 'Time'  # Rename the index to 'Time'
+
     photometry_sync_aligned = photometry_to_harp(photometry_sync_events.index) #for plotting only 
     onix_digital_aligned = onix_to_harp(onix_digital["Clock"]) #for plotting only
-
 
     # Plotting
     if verbose:
@@ -264,7 +270,7 @@ def photometry_harp_onix_synchronisation(
         else:
             print(f"❗Something's wrong, short recording? Found only {len(photometry_sync_events)} sync events.")
     
-    return onix_to_harp, harp_to_onix, photometry_to_onix, photometry_to_harp, output, photometry_aligned #FIXME probably only need returning
+    return output, photometry_aligned, photodiode_aligned
 
 def get_global_minmax_timestamps(stream_dict, print_all=False, verbose = False):
     # Finding the very first and very last timestamp across all streams
@@ -615,7 +621,7 @@ def plot_figure_1(df, session_name, save_path, common_resampled_rate, show_figur
             fig.add_trace(go.Scatter(x=df_downsampled.index, y=df_downsampled[col], 
                                      mode='lines', name=col, line=dict(width=1)), row=4, col=1)
 
-    # Shade regions where Photodiode is True FIXME 
+    # Shade regions where Photodiode is False FIXME 
 
     # Update layout
     fig.update_layout(
