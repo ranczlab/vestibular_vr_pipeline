@@ -14,6 +14,8 @@ from scipy import signal  # for Lomb-Scargle PSD
 from concurrent.futures import ProcessPoolExecutor
 import multiprocessing
 import re # for photometry alignment
+from dotmap import DotMap
+import json
 
 import plotly.graph_objects as go
 import plotly.io as pio
@@ -534,7 +536,7 @@ def resample_dataframe(df, target_freq_Hz=1000, optical_filter_Hz=33):
 
     return resampled_df
 
-def plot_figure_1(df, session_name, save_path, common_resampled_rate, show_figure, downsample_factor=20):
+def plot_figure_1(df, session_name, save_path, common_resampled_rate, photodiode_halts, save_figure = False, show_figure = False, downsample_factor=20):
     """
     Plot specific time series data from the DataFrame in a browser window.
     Fixes missing X-axis and Y-axis movement plots by correctly assigning y-axes per subplot.
@@ -621,18 +623,70 @@ def plot_figure_1(df, session_name, save_path, common_resampled_rate, show_figur
             fig.add_trace(go.Scatter(x=df_downsampled.index, y=df_downsampled[col], 
                                      mode='lines', name=col, line=dict(width=1)), row=4, col=1)
 
-    # Shade regions where Photodiode is False FIXME 
+    max_z_470 = df['z_560'].max()
+    first_edge = True
+    for edge in photodiode_halts:
+        if edge in df.index:
+            fig.add_trace(go.Scatter(
+                x=[edge], 
+                y=[max_z_470],  # Use the max value of the z_470 signal
+                mode='markers', 
+                name='Photodiode Halt' if first_edge else '',  # Show legend once
+                marker=dict(color='black', size=5, symbol='circle-open'),
+                showlegend=first_edge  # Hide legend for subsequent traces
+            ), row=4, col=1)
+            first_edge = False  # Disable legend for subsequent traces
 
     # Update layout
     fig.update_layout(
         height=800, width=1000, 
         title_text=f'Position, Velocity, Acceleration, Encoder and Photometry Data - {session_name}'
     )
-
-    fig.write_image(save_path / "figure1.png", scale=3)  # Adjust scale for higher resolution
+    if save_figure:
+        fig.write_image(save_path / "figure1.png", scale=3)  # Adjust scale for higher resolution
 
     if show_figure:
         fig.show()
+
+def calculate_photodiode_falling_edges(df, experiment_events, event_name):
+    # Calculate the difference in the photodiode signal
+    photodiode_diff = df['Photodiode'].astype(int).diff()
+
+    # Identify the falling edges (True to False transitions)
+    falling_edges = photodiode_diff[photodiode_diff == -1].index.to_numpy()
+
+    # Apply a refractory period of 0.5s using numpy
+    if falling_edges.size > 0:
+        refractory_period = pd.Timedelta(seconds=0.5)
+        valid_falling_edges = falling_edges[np.insert(np.diff(falling_edges) >= refractory_period, 0, True)]
+
+        # Remove last falling edge if necessary
+        if len(valid_falling_edges) > 0:
+            valid_falling_edges = valid_falling_edges[:-1]
+    else:
+        valid_falling_edges = np.array([])
+
+    # Count events
+    falling_edges_count = len(valid_falling_edges)
+    halt_count = (experiment_events["Event"] == event_name).sum()
+    if falling_edges_count == halt_count:
+        print(f"✅ Matching number of photodiode falling edges and ''{event_name}'' events: {halt_count}")
+    if falling_edges_count != halt_count:
+        print(f"❗ Warning: Falling edges ({falling_edges_count}) and {event_name} events ({halt_count}) do not match. Number of events: {falling_edges_count}. Is the event type the right event?")
+
+    return valid_falling_edges
+
+def safe_to_json(x): # for session_settings saving
+    if isinstance(x, DotMap):
+        return json.dumps(x.toDict())  # Convert DotMap to JSON string
+    elif isinstance(x, dict):  
+        return json.dumps(x)  # Convert plain dictionaries to JSON
+    return x  # Leave strings unchanged
+
+def safe_from_json(x): # for session_settings  loading 
+    if isinstance(x, str):  # Only attempt to decode if it's a string
+        return DotMap(json.loads(x))  
+    return x  # If it's already a dictionary or DotMap, keep it as is
 
 def compute_Lomb_Scargle_psd(data_df, freq_min=0.001, freq_max=10**6, num_freqs=1000, normalise=True):
     freqs = np.linspace(freq_min, freq_max, num_freqs)

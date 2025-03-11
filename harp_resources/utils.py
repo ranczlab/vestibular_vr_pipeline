@@ -28,7 +28,7 @@ class SessionData(Reader):
     def __init__(self, pattern):
         super().__init__(pattern, columns=["metadata"], extension="jsonl")
 
-    def read(self, file, print_contents=True):
+    def read(self, file, print_contents=False):
         """Returns metadata for the specified epoch."""
         with open(file) as fp:
             metadata = [json.loads(line) for line in fp] 
@@ -38,12 +38,14 @@ class SessionData(Reader):
         }
         timestamps = [api.aeon(entry['seconds']) for entry in metadata]
 
-        return pd.DataFrame(data, index=timestamps, columns=self.columns)
+        df = pd.DataFrame(data, index=timestamps, columns=self.columns)
+        
         # Pretty print if needed
         if print_contents:
             print(json.dumps(data, indent=4))
+        
+        return df
     
-
 class VideoReader(Csv):
     def __init__(self, pattern):
         #super().__init__(pattern, columns = ["HardwareCounter", "HardwareTimestamp", "FrameIndex", "Path", "Epoch"], extension="csv")
