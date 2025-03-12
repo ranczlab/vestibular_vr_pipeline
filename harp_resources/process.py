@@ -357,7 +357,9 @@ def pad_dataframe_with_global_timestamps(df, global_min_datetime, global_max_dat
     # Function to get appropriate padding value based on column dtype
     def get_padding_value(col_name):
         if pd.api.types.is_bool_dtype(df_copy[col_name].dtype):
-            return False  # Use False for boolean columns
+            if col_name == 'Photodiode':
+                return True  # Use True for 'Photodiode' boolean column
+            return False  # Use False for other boolean columns
         else:
             return pd.NA  # Use pd.NA for other columns
     
@@ -648,34 +650,6 @@ def plot_figure_1(df, session_name, save_path, common_resampled_rate, photodiode
     if show_figure:
         fig.show()
 
-def calculate_photodiode_falling_edges(df, experiment_events, event_name):
-    # Calculate the difference in the photodiode signal
-    photodiode_diff = df['Photodiode'].astype(int).diff()
-
-    # Identify the falling edges (True to False transitions)
-    falling_edges = photodiode_diff[photodiode_diff == -1].index.to_numpy()
-
-    # Apply a refractory period of 0.5s using numpy
-    if falling_edges.size > 0:
-        refractory_period = pd.Timedelta(seconds=0.5)
-        valid_falling_edges = falling_edges[np.insert(np.diff(falling_edges) >= refractory_period, 0, True)]
-
-        # Remove last falling edge if necessary
-        if len(valid_falling_edges) > 0:
-            valid_falling_edges = valid_falling_edges[:-1]
-    else:
-        valid_falling_edges = np.array([])
-
-    # Count events
-    falling_edges_count = len(valid_falling_edges)
-    halt_count = (experiment_events["Event"] == event_name).sum()
-    if falling_edges_count == halt_count:
-        print(f"✅ Matching number of photodiode falling edges and ''{event_name}'' events: {halt_count}")
-    if falling_edges_count != halt_count:
-        print(f"❗ Warning: Falling edges ({falling_edges_count}) and {event_name} events ({halt_count}) do not match. Number of events: {falling_edges_count}. Is the event type the right event?")
-
-    return valid_falling_edges
-
 def safe_to_json(x): # for session_settings saving
     if isinstance(x, DotMap):
         return json.dumps(x.toDict())  # Convert DotMap to JSON string
@@ -687,6 +661,58 @@ def safe_from_json(x): # for session_settings  loading
     if isinstance(x, str):  # Only attempt to decode if it's a string
         return DotMap(json.loads(x))  
     return x  # If it's already a dictionary or DotMap, keep it as is
+
+def analyze_photodiode(photodiode_aligned, experiment_events, event_name, plot = True):
+    # Calculate the difference in the photodiode signal (no need for ['Photodiode'])
+    photodiode_diff = photodiode_aligned.astype(int).diff()
+
+    # Identify the falling edges (True to False transitions)
+    falling_edges = photodiode_diff[photodiode_diff == -1].index
+
+    # Implement a refractory period of 0.5 seconds
+    refractory_period = pd.Timedelta(seconds=0.5)
+    valid_falling_edges = []
+    last_edge_time = falling_edges[0] - refractory_period  # Initialize before first edge
+
+    for edge_time in falling_edges:
+        if edge_time - last_edge_time >= refractory_period:
+            valid_falling_edges.append(edge_time)
+            last_edge_time = edge_time
+
+    falling_edges_count = len(valid_falling_edges)
+    halt_count = experiment_events[experiment_events["Event"] == event_name].shape[0]
+
+    if falling_edges_count == halt_count:
+        print(f"✅ Matching number of photodiode falling edges and '{event_name}' events: {halt_count}")
+    if falling_edges_count != halt_count:
+        print(f"❗ Warning: Falling edges ({falling_edges_count}) and {event_name} events ({halt_count}) do not match. Number of events: {falling_edges_count}. Is the event type the right event?")
+
+    if plot:
+        # Plot the falling edges and the events
+        plt.figure(figsize=(12, 6))
+
+        # Plot the photodiode signal
+        plt.plot(photodiode_aligned.index, photodiode_aligned, label='Photodiode Signal')
+
+        # Plot the falling edges
+        for edge_time in valid_falling_edges:
+            plt.axvline(x=edge_time, color='red', linestyle='--', linewidth=0.5, label='Falling Edge' if edge_time == valid_falling_edges[0] else '')
+
+        # Plot the events
+        halt_events = experiment_events[experiment_events["Event"] == event_name].index
+        for event_time in halt_events:
+            nearest_time = photodiode_aligned.index.asof(event_time)
+            plt.plot(nearest_time, photodiode_aligned.loc[nearest_time], 'o', color='red', markersize=8, fillstyle='none', label=event_name if event_time == halt_events[0] else '')
+
+        plt.title('Photodiode Signal with Falling Edges and Halt Events')
+        plt.xlabel('Time')
+        plt.ylabel('Photodiode Signal')
+        plt.legend(loc='lower left')
+        plt.show()
+
+
+
+
 
 def compute_Lomb_Scargle_psd(data_df, freq_min=0.001, freq_max=10**6, num_freqs=1000, normalise=True):
     freqs = np.linspace(freq_min, freq_max, num_freqs)
@@ -1212,3 +1238,31 @@ def plot_dataset(dataset_path):
 #     print(f'Fluorescence alignment finished in {time() - start_time:.2f} seconds.')
     
 #     return fluorescence_df
+
+# def calculate_photodiode_falling_edges(df, experiment_events, event_name):
+#     # Calculate the difference in the photodiode signal
+#     photodiode_diff = df['Photodiode'].astype(int).diff()
+
+#     # Identify the falling edges (True to False transitions)
+#     falling_edges = photodiode_diff[photodiode_diff == -1].index.to_numpy()
+
+#     # Apply a refractory period of 0.5s using numpy
+#     if falling_edges.size > 0:
+#         refractory_period = pd.Timedelta(seconds=0.5)
+#         valid_falling_edges = falling_edges[np.insert(np.diff(falling_edges) >= refractory_period, 0, True)]
+
+#         # Remove last falling edge if necessary
+#         if len(valid_falling_edges) > 0:
+#             valid_falling_edges = valid_falling_edges[:-1]
+#     else:
+#         valid_falling_edges = np.array([])
+
+#     # Count events
+#     falling_edges_count = len(valid_falling_edges)
+#     halt_count = (experiment_events["Event"] == event_name).sum()
+#     if falling_edges_count == halt_count:
+#         print(f"✅ Matching number of photodiode falling edges and ''{event_name}'' events: {halt_count}")
+#     if falling_edges_count != halt_count:
+#         print(f"❗ Warning: Falling edges ({falling_edges_count}) and {event_name} events ({halt_count}) do not match. Number of events: {falling_edges_count}. Is the event type the right event?")
+
+#     return valid_falling_edges
