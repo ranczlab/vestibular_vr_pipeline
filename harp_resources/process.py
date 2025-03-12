@@ -685,7 +685,7 @@ def analyze_photodiode(photodiode_aligned, experiment_events, event_name, plot=T
     if falling_edges_count == halt_count:
         print(f"✅ {halt_count} events found. Matching number of photodiode falling edges and '{event_name}' events.")
     if falling_edges_count != halt_count:
-        print(f"❗ Warning: Falling edges ({falling_edges_count}) and {event_name} events ({halt_count}) do not match. Number of events: {falling_edges_count}. Is the event type the right event?")
+        print(f"❗❗❗ WARNING: Falling edges ({falling_edges_count}) and {event_name} events ({halt_count}) do not match. Number of events: {falling_edges_count}. Is the event type the right event?")
 
     # Calculate the minimum, average, and maximum time differences
     time_differences = []
