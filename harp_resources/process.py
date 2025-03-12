@@ -662,7 +662,7 @@ def safe_from_json(x): # for session_settings  loading
         return DotMap(json.loads(x))  
     return x  # If it's already a dictionary or DotMap, keep it as is
 
-def analyze_photodiode(photodiode_aligned, experiment_events, event_name, plot = True):
+def analyze_photodiode(photodiode_aligned, experiment_events, event_name, plot=True):
     # Calculate the difference in the photodiode signal (no need for ['Photodiode'])
     photodiode_diff = photodiode_aligned.astype(int).diff()
 
@@ -683,34 +683,72 @@ def analyze_photodiode(photodiode_aligned, experiment_events, event_name, plot =
     halt_count = experiment_events[experiment_events["Event"] == event_name].shape[0]
 
     if falling_edges_count == halt_count:
-        print(f"✅ Matching number of photodiode falling edges and '{event_name}' events: {halt_count}")
+        print(f"✅ {halt_count} events found. Matching number of photodiode falling edges and '{event_name}' events.")
     if falling_edges_count != halt_count:
         print(f"❗ Warning: Falling edges ({falling_edges_count}) and {event_name} events ({halt_count}) do not match. Number of events: {falling_edges_count}. Is the event type the right event?")
 
+    # Calculate the minimum, average, and maximum time differences
+    time_differences = []
+    halt_events = experiment_events[experiment_events["Event"] == event_name].index
+    for event_time in halt_events:
+        start_time = event_time - pd.Timedelta(seconds=0.5)
+        end_time = event_time + pd.Timedelta(seconds=2.5)
+        subset = photodiode_aligned[start_time:end_time]
+        relative_time = (subset.index - event_time).total_seconds()
+
+        # Determine the time difference between the event_time and the first 0 value following it
+        zero_crossings = relative_time[subset == 0]
+        if not zero_crossings.empty:
+            time_difference = zero_crossings[0]
+            time_differences.append(time_difference)
+
+    if time_differences:
+        min_diff = min(time_differences) * 1000  # Convert to milliseconds
+        avg_diff = (sum(time_differences) / len(time_differences)) * 1000  # Convert to milliseconds
+        max_diff = max(time_differences) * 1000  # Convert to milliseconds
+    else:
+        min_diff = avg_diff = max_diff = None
+
+    # Print the minimum, average, and maximum time differences
+    if time_differences:
+        print(f"time difference between photodiode and experimenet events:")
+        print(f"min {min_diff:.1f} ms. avg {avg_diff:.1f} ms. max {max_diff:.1f} ms.")
+    else:
+        print("No zero crossings found following the events.")
+
     if plot:
-        # Plot the falling edges and the events
-        plt.figure(figsize=(12, 6))
+        # Create a figure with two subplots side by side
+        fig, (ax1, ax2) = plt.subplots(ncols=2, figsize=(14, 6))
 
-        # Plot the photodiode signal
-        plt.plot(photodiode_aligned.index, photodiode_aligned, label='Photodiode Signal')
-
-        # Plot the falling edges
+        # Plot the falling edges and the events on the first subplot
+        ax1.plot(photodiode_aligned.index, photodiode_aligned, label='Photodiode Signal')
         for edge_time in valid_falling_edges:
-            plt.axvline(x=edge_time, color='red', linestyle='--', linewidth=0.5, label='Falling Edge' if edge_time == valid_falling_edges[0] else '')
-
-        # Plot the events
-        halt_events = experiment_events[experiment_events["Event"] == event_name].index
+            ax1.axvline(x=edge_time, color='red', linestyle='--', linewidth=0.5, label='Falling Edge' if edge_time == valid_falling_edges[0] else '')
         for event_time in halt_events:
             nearest_time = photodiode_aligned.index.asof(event_time)
-            plt.plot(nearest_time, photodiode_aligned.loc[nearest_time], 'o', color='red', markersize=8, fillstyle='none', label=event_name if event_time == halt_events[0] else '')
+            ax1.plot(nearest_time, photodiode_aligned.loc[nearest_time], 'o', color='red', markersize=8, fillstyle='none')
+        ax1.set_title('Photodiode Signal with Falling Edges and Halt Events')
+        ax1.set_xlabel('Time')
+        ax1.set_ylabel('Photodiode Signal')
+        ax1.legend(loc='lower left')
 
-        plt.title('Photodiode Signal with Falling Edges and Halt Events')
-        plt.xlabel('Time')
-        plt.ylabel('Photodiode Signal')
-        plt.legend(loc='lower left')
+        # Plot the triggered data on the second subplot
+        for event_time in halt_events:
+            start_time = event_time - pd.Timedelta(seconds=0.5)
+            end_time = event_time + pd.Timedelta(seconds=2.5)
+            subset = photodiode_aligned[start_time:end_time]
+            relative_time = (subset.index - event_time).total_seconds()
+            ax2.plot(relative_time, subset, label='Photodiode Signal' if event_time == halt_events[0] else '')
+            ax2.axvline(x=0, color='red', linestyle='--', linewidth=1, label='Event Trigger' if event_time == halt_events[0] else '')
+        ax2.set_title(f'{event_name} Triggered Plot')
+        ax2.set_xlabel('Time (s)')
+        ax2.set_ylabel('Photodiode Signal')
+        ax2.legend(loc='lower left')
+
+        plt.tight_layout()
         plt.show()
 
-
+    return valid_falling_edges, min_diff, avg_diff, max_diff
 
 
 
