@@ -717,7 +717,7 @@ def analyze_photodiode(photodiode_aligned, experiment_events, event_name, plot=T
         print(f"✅ {halt_count} events found. Matching number of photodiode falling edges and '{event_name}' events.")
     if falling_edges_count != halt_count:
         print(f"❗ WARNING: Falling edges ({falling_edges_count}) and {event_name} events ({halt_count}) do not match. Number of events: {falling_edges_count}.")
-        print(f"ℹ️ This is happens occasionally. The following section prints the extra falling edges and their durations and report of if they were removed.")
+        print(f"ℹ️ This happens occasionally. The following section prints the extra falling edges and their durations and report of if they were removed.")
  
         # Step 1: Detect Falling and Rising Edges
         #already done above 
@@ -929,7 +929,25 @@ def analyze_photodiode(photodiode_aligned, experiment_events, event_name, plot=T
     # Return filtered falling edges
     return filtered_valid_falling_edges, min_diff, avg_diff, max_diff
 
+def check_exp_events(experiment_events, photometry_info, verbose = True):
+    mouse_name = photometry_info.loc[photometry_info["Parameter"] == "mousename", "Value"].values[0]
+    if verbose:
+        print (f"ℹ️ Mousename: {mouse_name}")
 
+    event_counts = experiment_events["Event"].value_counts()
+    if verbose:
+        print("ℹ️ Unique events and their counts:")
+        print(event_counts)
+
+    block_events = experiment_events[
+        experiment_events["Event"].str.contains("block started|Block timer elapsed", case=False, na=False)
+    ].copy()  # Use .copy() to avoid SettingWithCopyWarning
+    block_events["Time Difference"] = block_events.index.to_series().diff().dt.total_seconds()
+    block_events = block_events.drop(columns=['Seconds'])
+
+    if verbose:
+        print("ℹ️ block events")
+        print(block_events)
 
 
 def compute_Lomb_Scargle_psd(data_df, freq_min=0.001, freq_max=10**6, num_freqs=1000, normalise=True):
