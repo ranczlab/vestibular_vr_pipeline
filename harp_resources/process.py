@@ -20,7 +20,8 @@ import json
 import plotly.graph_objects as go
 import plotly.io as pio
 import plotly.express as px
-from plotly.subplots import make_subplots
+import plotly.subplots as sp  # Keep sp for other parts of your code
+make_subplots = sp.make_subplots  # Explicitly define make_subplots
 
 import time
 import logging
@@ -691,18 +692,20 @@ def safe_from_json(x): # for session_settings  loading
     return x  # If it's already a dictionary or DotMap, keep it as is
 
 def analyze_photodiode(photodiode_aligned, experiment_events, event_name, plot=True):
+
     # Calculate the difference in the photodiode signal (no need for ['Photodiode'])
     photodiode_diff = photodiode_aligned.astype(int).diff()
 
-    # Identify the falling edges (True to False transitions)
-    falling_edges = photodiode_diff[photodiode_diff == -1].index
+    # Identify the falling and rising edges
+    falling_edge_timestamps = photodiode_diff[photodiode_diff == -1].index
+    rising_edge_timestamps = photodiode_diff[photodiode_diff == 1].index
 
-    # Implement a refractory period of 0.5 seconds
-    refractory_period = pd.Timedelta(seconds=0.5)
+    # Implement a refractory period of X seconds; #this is some old remnant code and I just made the refractory period super small, so it does not throuw out any edges
     valid_falling_edges = []
-    last_edge_time = falling_edges[0] - refractory_period  # Initialize before first edge
+    refractory_period = pd.Timedelta(seconds=0.0005) 
+    last_edge_time = falling_edge_timestamps[0] - refractory_period  # Initialize before first edge
 
-    for edge_time in falling_edges:
+    for edge_time in falling_edge_timestamps:
         if edge_time - last_edge_time >= refractory_period:
             valid_falling_edges.append(edge_time)
             last_edge_time = edge_time
@@ -713,7 +716,131 @@ def analyze_photodiode(photodiode_aligned, experiment_events, event_name, plot=T
     if falling_edges_count == halt_count:
         print(f"✅ {halt_count} events found. Matching number of photodiode falling edges and '{event_name}' events.")
     if falling_edges_count != halt_count:
-        print(f"❗❗❗ WARNING: Falling edges ({falling_edges_count}) and {event_name} events ({halt_count}) do not match. Number of events: {falling_edges_count}. Is the event type the right event?")
+        print(f"❗ WARNING: Falling edges ({falling_edges_count}) and {event_name} events ({halt_count}) do not match. Number of events: {falling_edges_count}.")
+        print(f"ℹ️ This is happens occasionally. The following section prints the extra falling edges and their durations and report of if they were removed.")
+ 
+        # Step 1: Detect Falling and Rising Edges
+        #already done above 
+
+        # Step 2: Find Extra Falling Edges (No Corresponding Event)
+        if "Time" in experiment_events.columns and not isinstance(experiment_events.index, pd.DatetimeIndex):
+            experiment_events["Time"] = pd.to_datetime(experiment_events["Time"])
+            experiment_events = experiment_events.set_index("Time")
+
+        halt_timestamps = experiment_events.loc[experiment_events["Event"] == event_name].index
+        if halt_timestamps.empty:
+            print("❗ Warning: No halt events found. Skipping extra falling edge detection.")
+            extra_falling_edges = falling_edge_timestamps  # Skip filtering
+        else:
+            extra_falling_edges = falling_edge_timestamps[~falling_edge_timestamps.isin(halt_timestamps)]
+
+        # Step 3: Match Falling Edges to Next Rising Edge and Find Duration
+        falling_rising_data = []
+
+        for falling_edge in falling_edge_timestamps:
+            next_rising_edges = rising_edge_timestamps[rising_edge_timestamps > falling_edge]
+            if not next_rising_edges.empty:
+                rising_edge = next_rising_edges.min()  # ✅ Select the nearest rising edge
+                duration = (rising_edge - falling_edge).total_seconds()
+            else:
+                print(f"⚠️ No rising edge found after {falling_edge}. Setting duration to NaN.")
+                rising_edge = None
+                duration = None
+      
+            # Append data
+            falling_rising_data.append({
+                "Falling Edge Time": falling_edge,
+                "Rising Edge Time": rising_edge,
+                "Duration (s)": duration
+            })
+
+        # Convert list to DataFrame
+        falling_rising_df = pd.DataFrame(falling_rising_data)
+
+        # Step 4: Find Preceding Experiment Events for Each Falling Edge
+        falling_rising_df["Preceding Event"] = None
+        falling_rising_df["Event Time Difference (s)"] = None
+
+        for i, row in falling_rising_df.iterrows():
+            falling_edge_time = row["Falling Edge Time"]
+            preceding_events = experiment_events[experiment_events.index < falling_edge_time]
+            if not preceding_events.empty:
+                last_event_time = preceding_events.index[-1]
+                last_event_name = preceding_events.iloc[-1]["Event"]
+                time_difference = (falling_edge_time - last_event_time).total_seconds()
+                
+                # Update DataFrame
+                falling_rising_df.at[i, "Preceding Event"] = last_event_name
+                falling_rising_df.at[i, "Event Time Difference (s)"] = time_difference
+
+        # Step 5: Print Only Rows Where Preceding Event is Not event_name
+
+        filtered_df = falling_rising_df[falling_rising_df["Preceding Event"] != event_name]
+        print(filtered_df[["Falling Edge Time", "Duration (s)", "Preceding Event", "Event Time Difference (s)"]].to_string(index=False))
+
+        # Step 6: Plot Only Traces Where Preceding Event is Not event_name
+        filtered_falling_edges = filtered_df["Falling Edge Time"]
+
+        # Define the number of traces per row
+        traces_per_row = 5
+
+        # Correct time window: -1s to +5s relative to the falling edge
+        time_before = pd.Timedelta(seconds=1)
+        time_after = pd.Timedelta(seconds=5)
+
+        # Calculate the number of rows needed
+        num_rows = -(-len(filtered_falling_edges) // traces_per_row)  # Equivalent to math.ceil
+
+        # Create a subplot figure with multiple rows
+        fig = make_subplots(rows=num_rows, cols=traces_per_row, shared_xaxes=True, shared_yaxes=True,
+                            subplot_titles=[f"Falling Edge {i+1}" for i in range(len(filtered_falling_edges))])
+
+        # Determine a global x-axis range (ensuring uniform scale)
+        x_min = -0.2
+        x_max = 0.5
+
+        # Loop through the filtered falling edges and plot them in subplots
+        for i, edge_time in enumerate(filtered_falling_edges):
+            row = (i // traces_per_row) + 1
+            col = (i % traces_per_row) + 1
+
+            start_time = edge_time - time_before
+            end_time = edge_time + time_after
+            
+            window_df = pd.DataFrame(photodiode_aligned.loc[start_time:end_time]).copy()
+
+            # Convert timestamps to relative time (seconds from falling edge)
+            window_df["Relative Time"] = (window_df.index - edge_time).total_seconds()
+
+            # Add trace to subplot
+            fig.add_trace(
+                go.Scatter(x=window_df["Relative Time"], y=window_df["Photodiode_int"], 
+                        mode="lines", line=dict(color="blue"), name=f"Trace {i+1}"),
+                row=row, col=col
+            )
+
+            # Mark the falling edge (always at time 0)
+            fig.add_trace(
+                go.Scatter(x=[0], y=[0], mode="markers",
+                        marker=dict(size=8, color="red"), name="Falling Edge"),
+                row=row, col=col
+            )
+
+        # Update layout
+        fig.update_layout(
+            title="Photodiode Signal Traces Around Extra Falling Edges",
+            height=num_rows * 250,
+            showlegend=False,
+            xaxis=dict(range=[x_min, x_max], title="Time (s) relative to Falling Edge"),
+            yaxis=dict(title="Photodiode Signal"),
+        )
+
+        # Apply consistent x-axis range to all subplots
+        for i in range(1, num_rows * traces_per_row + 1):
+            fig.update_xaxes(range=[x_min, x_max], row=((i-1) // traces_per_row) + 1, col=(i-1) % traces_per_row + 1)
+
+        # Show the figure
+        fig.show()
 
     # Calculate the minimum, average, and maximum time differences
     time_differences = []
@@ -776,7 +903,32 @@ def analyze_photodiode(photodiode_aligned, experiment_events, event_name, plot=T
         plt.tight_layout()
         plt.show()
 
-    return valid_falling_edges, min_diff, avg_diff, max_diff
+    # Ensure extra_falling_edges is always defined
+    if 'extra_falling_edges' not in locals():
+        extra_falling_edges = pd.DatetimeIndex([])  # Ensure it's a valid DatetimeIndex
+
+    # Convert min_diff and max_diff from ms to Timedelta
+    min_tolerance = pd.Timedelta(milliseconds=min_diff)
+    max_tolerance = pd.Timedelta(milliseconds=max_diff)
+
+    # Identify extra falling edges that are NOT within the expected tolerance window
+    refined_extra_falling_edges = []
+    for edge in valid_falling_edges:
+        within_window = any((halt_time + min_tolerance) <= edge <= (halt_time + max_tolerance) for halt_time in halt_events)
+        if not within_window:
+            refined_extra_falling_edges.append(edge)
+
+    refined_extra_falling_edges = pd.DatetimeIndex(refined_extra_falling_edges)
+
+    # Remove refined extra falling edges from valid_falling_edges
+    filtered_valid_falling_edges = [edge for edge in valid_falling_edges if edge not in refined_extra_falling_edges]
+    removed_count = len(valid_falling_edges) - len(filtered_valid_falling_edges)
+
+    print(f"✅ {removed_count} extra falling edges (outside {min_diff:.1f}ms - {max_diff:.1f}ms delay window) were removed before returning.")
+  
+    # Return filtered falling edges
+    return filtered_valid_falling_edges, min_diff, avg_diff, max_diff
+
 
 
 
