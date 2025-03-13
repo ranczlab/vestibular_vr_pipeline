@@ -2,7 +2,7 @@ import papermill as pm
 from pathlib import Path
 
 notebook_path = Path("1_Loading_and_Sync_Cohort1.ipynb")
-output_dir = notebook_path.parent.parent / "output"  # One level up from notebook's location
+output_dir = notebook_path.parent.parent / "temp_output"  # One level up from notebook's location
 
 # Ensure the output directory exists
 output_dir.mkdir(parents=True, exist_ok=True)

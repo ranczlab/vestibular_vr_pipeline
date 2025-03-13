@@ -1,3 +1,6 @@
+# temp folders with potentially large data
+temp_output/
+
 # macOS
 .DS_Store
 .AppleDouble
