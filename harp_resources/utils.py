@@ -54,7 +54,7 @@ class VideoReader(Csv):
 
     def read(self, file):
         data = pd.read_csv(file, header=0, names=self._rawcolumns)
-        #data["FrameIndex"] = data.index 
+        data["FrameIndex"] = data.index 
         #we don't need the path and epoch
         #data["Path"] = os.path.splitext(file)[0] + ".avi" #we d
         #data["Epoch"] = file.parts[-3]

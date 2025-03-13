@@ -274,56 +274,88 @@ def photometry_harp_onix_synchronisation(
     
     return output, photometry_aligned, photodiode_aligned
 
-def get_global_minmax_timestamps(stream_dict, print_all=False, verbose = False):
-    # Finding the very first and very last timestamp across all streams
+def get_global_minmax_timestamps(stream_dict, print_all=False, verbose=False):
     first_timestamps, last_timestamps = {}, {}
+
+    # Check and fix all DataFrames in stream_dict for non-monotonic datetime indices
+    for source_name, stream_source in stream_dict.items():
+        for register, df in stream_source.items():
+            if not isinstance(df.index, pd.DatetimeIndex):
+                print(f"❗❗❗ Warning: Index in {source_name}/{register} is not a DatetimeIndex. This shouldn't happen. Skipping.")
+                continue  # Skip non-datetime indexed DataFrames
+            
+            # Detect non-consecutive datetime indices
+            incorrect_rows = df.index.to_series().diff().lt(pd.Timedelta(0))
+            if incorrect_rows.any():
+                print(f"❗❗❗ Warning: Non-consecutive datetime index in {source_name}/{register} at time {df.index[incorrect_rows].tolist()}.")
+                print("❗ If in video_data1 or 2, then deleting first row which should fix it.") 
+                print("❗ Otherwise, we are in trouble and need to explore. See https://github.com/neurogears/vestibular-vr/issues/120") 
+                
+                # ✅ Fix: Drop the first row and explicitly replace the original DataFrame
+                df_fixed = df.iloc[1:].copy()
+
+                # ✅ Fix: Adjust the FrameIndex column by subtracting 1
+                if 'FrameIndex' in df_fixed.columns:
+                    df_fixed['FrameIndex'] -= 1
+                
+                # ✅ Explicitly update stream_dict
+                stream_dict[source_name][register] = df_fixed
+
+                # ✅ Confirm fix (for debugging)
+                if verbose:
+                    print(f"✅ Successfully corrected {source_name}/{register}: First timestamp is now {df_fixed.index[0]}.")
+
+    # Extract first and last timestamps from corrected DataFrames
     for source_name, stream_source in stream_dict.items():
         first_timestamps[source_name] = {k: v.index[0] for k, v in stream_source.items()}
         last_timestamps[source_name] = {k: v.index[-1] for k, v in stream_source.items()}
-    
-    # Saving global first and last timestamps across the sources and the registers
+
     joint_first_timestamps, joint_last_timestamps = [], []
     first_dfs, last_dfs = {}, {}
-    first_df_names, last_df_names = {}, {}  # Add dictionaries to track DF names
-    
+    first_df_names, last_df_names = {}, {}
+
     for source_name, stream_source in first_timestamps.items():
         for register, timestamp in stream_source.items():
             joint_first_timestamps.append(timestamp)
             first_dfs[timestamp] = stream_dict[source_name][register]
-            first_df_names[timestamp] = f"{source_name}/{register}"  # Store the df name
-    
+            first_df_names[timestamp] = f"{source_name}/{register}"
+
     for source_name, stream_source in last_timestamps.items():
         for register, timestamp in stream_source.items():
             joint_last_timestamps.append(timestamp)
             last_dfs[timestamp] = stream_dict[source_name][register]
-            last_df_names[timestamp] = f"{source_name}/{register}"  # Store the df name
-    
+            last_df_names[timestamp] = f"{source_name}/{register}"
+
     joint_first_timestamps = pd.DataFrame(joint_first_timestamps)
     joint_last_timestamps = pd.DataFrame(joint_last_timestamps)
-    
-    global_first_timestamp = joint_first_timestamps.iloc[joint_first_timestamps[0].argmin()][0]
-    global_last_timestamp = joint_last_timestamps.iloc[joint_last_timestamps[0].argmax()][0]
-    
+
+    # ✅ Ensure the true minimum is selected
+    global_first_timestamp = min(joint_first_timestamps[0])  
+    global_last_timestamp = max(joint_last_timestamps[0])  
+
+    # ✅ Ensure correct mapping to the first and last timestamps
+    correct_first_entry = {ts: df_name for ts, df_name in first_df_names.items() if ts == global_first_timestamp}
+    global_first_df_name = correct_first_entry[global_first_timestamp]
     global_first_whichdf = first_dfs[global_first_timestamp]
+
+    correct_last_entry = {ts: df_name for ts, df_name in last_df_names.items() if ts == global_last_timestamp}
+    global_last_df_name = correct_last_entry[global_last_timestamp]
     global_last_whichdf = last_dfs[global_last_timestamp]
-    
-    global_first_df_name = first_df_names[global_first_timestamp]  # Get the df name
-    global_last_df_name = last_df_names[global_last_timestamp]  # Get the df name
-    
+
     if verbose:
         print(f'Global first timestamp: {global_first_timestamp}')
         print(f'Global first timestamp from: {global_first_df_name}')
         print(f'Global last timestamp: {global_last_timestamp}')
         print(f'Global last timestamp from: {global_last_df_name}')
         print(f'Global length: {global_last_timestamp - global_first_timestamp}')
-    
+
     if print_all:
         for source_name in stream_dict.keys():
             print(f'\n{source_name}')
             for key in first_timestamps[source_name].keys():
                 print(f'{key}: \n\tfirst  {first_timestamps[source_name][key]} \n\tlast   {last_timestamps[source_name][key]} \n\tlength {last_timestamps[source_name][key] - first_timestamps[source_name][key]} \n\tmean difference between timestamps {stream_dict[source_name][key].index.to_series().diff().mean()}')
-    
-    return global_first_timestamp, global_last_timestamp, global_first_df_name, global_last_df_name
+
+    return global_first_timestamp, global_last_timestamp, stream_dict  # ✅ Return updated stream_dict
 
 def pad_dataframe_with_global_timestamps(df, global_min_datetime, global_max_datetime):
     """
@@ -376,11 +408,7 @@ def pad_dataframe_with_global_timestamps(df, global_min_datetime, global_max_dat
                                      index=[global_max_datetime]))
     
     # If we have rows to add, concatenate them with the original dataframe
-    # for i, row in enumerate(rows_to_add): #FIXME DEBUG this as it gives future warning, suggestive that some columns are all NaNs which should not be the case
-    #     print(f"Row {i}: Empty={row.empty}, All-NA={row.isna().all().all()}, Shape={row.shape}")
-    # for i, row in enumerate(rows_to_add):
-    #     print(f"Row {i} Columns: {row.columns.tolist()}")
-
+    #FIXME DEBUG this as it gives future warning, suggestive that some columns are all NaNs which should not be the case
     if rows_to_add:
         df_copy = pd.concat([df_copy] + rows_to_add)
         df_copy = df_copy.sort_index()
