@@ -50,11 +50,9 @@ def downsample_numpy(arr, factor, method="mean"):
     else:
         raise ValueError("Invalid method. Choose 'mean', 'median', or 'first'.")
 
-def running_unit_conversion(running_array): #for ball linear movement
-    resolution = 12000 # counts per inch
-    inches_per_count = 1 / resolution
-    meters_per_count = 0.0254 * inches_per_count #inch to meter conversion 
-    #dt = 0.01 # for OpticalTrackingRead0Y(46) -this is sensor specific. current sensor samples at 100 hz 
+def running_unit_conversion(running_array, resolution): #for ball linear movement
+    meters_per_count = 0.0254 / resolution  # conversion from inches to meters
+    #dt = 0.01 # sensor specific 100 hz rate
     #linear_velocity = meters_per_count / dt # meters per second per count; this makes no sense as array will go back to datetime indexed harp_streams df
     return running_array * meters_per_count
 
@@ -119,17 +117,10 @@ def get_encoder_home_position(experiment_events, harp_streams, event="Homing pla
 
     return encoder_value_event, encoder_value_next_event
 
-def turning_unit_conversion(turning_array): # for ball rotation
-    resolution = 12000 # counts per inch
-    inches_per_count = 1 / resolution
-    meters_per_count = 0.0254 * inches_per_count
-    #dt = 0.01 # for OpticalTrackingRead0Y(46) -this is sensor specific. current sensor samples at 100 hz 
-    turning_array = turning_array * meters_per_count #/ dt # meters per second per count 
-    
-    ball_radius = 0.1 # meters 
-    turning_array = turning_array / ball_radius # radians per second per count
-    turning_array = turning_array * (180 / np.pi) # degrees per second per count
-    
+def turning_unit_conversion(turning_array, resolution, ball_radius): # for ball rotation
+    deg_per_count = 1/((((ball_radius * 2 * np.pi)/0.0254) * resolution)/360)
+    #dt = 0.01 # sensor specific 100 hz rate, w are not using it, see running_unit_conversion 
+    turning_array = turning_array * deg_per_count
     return turning_array
 
 def photometry_harp_onix_synchronisation(
