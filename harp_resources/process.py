@@ -558,6 +558,7 @@ def resample_dataframe(df, target_freq_Hz=1000, optical_filter_Hz=33):
 
     return resampled_df
 
+
 def plot_figure_1(df, session_name, save_path, common_resampled_rate, photodiode_halts, save_figure = False, show_figure = False, downsample_factor=20):
     """
     Plot specific time series data from the DataFrame in a browser window.
@@ -653,7 +654,7 @@ def plot_figure_1(df, session_name, save_path, common_resampled_rate, photodiode
                 x=[edge], 
                 y=[max_z_470],  # Use the max value of the z_470 signal
                 mode='markers', 
-                name='Photodiode Halt' if first_edge else '',  # Show legend once
+                name='Photodiode Halt or MM event' if first_edge else '',  # Show legend once
                 marker=dict(color='black', size=5, symbol='circle-open'),
                 showlegend=first_edge  # Hide legend for subsequent traces
             ), row=4, col=1)
@@ -939,6 +940,8 @@ def check_exp_events(experiment_events, photometry_info, verbose = True):
     if verbose:
         print("ℹ️ block events")
         print(block_events)
+    
+    return (mouse_name)
 
 
 def compute_Lomb_Scargle_psd(data_df, freq_min=0.001, freq_max=10**6, num_freqs=1000, normalise=True):

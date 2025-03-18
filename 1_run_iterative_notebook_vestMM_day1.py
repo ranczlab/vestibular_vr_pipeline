@@ -1,3 +1,6 @@
+# script to run analysis on a whole folder of recordings of the same type 
+# it moans it does not find a cell tagged parameters when running, but that is only cosmetic and it is a drag to do it in VS Code, needs to be tagged manually in Jupyter
+
 import papermill as pm
 from pathlib import Path
 
