@@ -20,14 +20,12 @@ def fill_with_empty_rows_based_on_index(df, new_index_column_name='frame_idx'):
 
 def load_videography_data(path):
     
-    print('INFO:')
-    print('load_and_process.load_videography_data() function expects the following format of SLEAP outputs:')
-    print('"VideoData1_1904-01-01T00-00-00.sleap.csv"')
-    print('"VideoData1_1904-01-01T23-59-59.sleap.csv"')
-    print('"..."')
-    print('Please make sure to rename SLEAP files if they are not already following this convention.')
-    print('\n')
-    print('RESULTS:')
+    #print('ℹ️ Load_and_process.load_videography_data() function expects the following format of SLEAP outputs:')
+    #print('"VideoData1_1904-01-01T23-59-59.sleap.csv"')
+    #print('"..."')
+    print('ℹ️ Make sure the SLEAP files follow this convention: VideoData1_1904-01-01T00-00-00.sleap.csv')
+    #print('\n')
+    #print('RESULTS:')
     
     # Listing filenames in the folders
     vd1_files, read_vd1_dfs, read_vd1_sleap_dfs = [], [], []
@@ -45,12 +43,17 @@ def load_videography_data(path):
         if '.sleap' in e: vd1_has_sleap = True
     for e in os.listdir(path/'VideoData2'):
         if '.sleap' in e : vd2_has_sleap = True
-    print(f'Outputs of SLEAP found in VideoData1: {vd1_has_sleap}')
+    print(f'\nOutputs of SLEAP found in VideoData1: {vd1_has_sleap}')
     print(f'Outputs of SLEAP found in VideoData2: {vd2_has_sleap}')
-    
+    # Remove '.DS_Store' if found in the lists
+    vd1_files = [f for f in vd1_files if f != '.DS_Store']
+    vd2_files = [f for f in vd2_files if f != '.DS_Store']
+
     # Sorting filenames chronologically
-    sorted_vd1_files = pd.to_datetime(pd.Series([x.split('_')[1].split('.')[0] for x in vd1_files])).sort_values()
-    sorted_vd2_files = pd.to_datetime(pd.Series([x.split('_')[1].split('.')[0] for x in vd2_files])).sort_values()
+    #sorted_vd1_files = pd.to_datetime(pd.Series([x.split('_')[1].split('.')[0] for x in vd1_files])).sort_values()
+    #sorted_vd2_files = pd.to_datetime(pd.Series([x.split('_')[1].split('.')[0] for x in vd2_files])).sort_values()
+    sorted_vd1_files = pd.to_datetime(pd.Series([x.split('_')[1].split('.')[0] for x in vd1_files]), format='%Y-%m-%dT%H-%M-%S').sort_values()
+    sorted_vd2_files = pd.to_datetime(pd.Series([x.split('_')[1].split('.')[0] for x in vd2_files]), format='%Y-%m-%dT%H-%M-%S').sort_values()
     
     print(f'Found .csv VideoData logs timestamped at:')
     for ts in sorted_vd1_files.values:
@@ -80,7 +83,7 @@ def load_videography_data(path):
     if vd1_has_sleap: read_vd1_sleap_dfs = pd.concat(read_vd1_sleap_dfs).reset_index().drop(columns='index')
     if vd2_has_sleap: read_vd2_sleap_dfs = pd.concat(read_vd2_sleap_dfs).reset_index().drop(columns='index')
         
-    print('Reading dataframes finished.')
+    #print('Reading dataframes finished.')
     
     read_vd1_dfs = read_vd1_dfs.rename(columns={"Value.ChunkData.FrameID": "frame_idx"})
     read_vd2_dfs = read_vd2_dfs.rename(columns={"Value.ChunkData.FrameID": "frame_idx"})
@@ -95,18 +98,16 @@ def load_videography_data(path):
             #print(f'VideoData1 SLEAP output: {read_vd1_sleap_dfs['frame_idx'].iloc[-1] + 1} frames registered, but {read_vd1_sleap_dfs.index[-1] + 1} rows found inside file. Filling with empty rows.')
             frame_count = read_vd1_sleap_dfs['frame_idx'].iloc[-1] + 1
             row_count = read_vd1_sleap_dfs.index[-1] + 1
-            print(
-                f"VideoData1 SLEAP output: {frame_count} frames registered, but {row_count} rows found inside file. Filling with empty rows."
-            )
+            dropped_frames_vd1 = frame_count - row_count
+            print(f"ℹ️ VideoData1 has {dropped_frames_vd1} dropped frames. Filling missing frames with empty rows.")
             read_vd1_sleap_dfs = fill_with_empty_rows_based_on_index(read_vd1_sleap_dfs)
     if vd2_has_sleap:
         if read_vd2_sleap_dfs.index[-1] != read_vd2_sleap_dfs['frame_idx'].iloc[-1]:
             #print(f'VideoData2 SLEAP output: {read_vd2_sleap_dfs['frame_idx'].iloc[-1] + 1} frames registered, but {read_vd2_sleap_dfs.index[-1] + 1} rows found inside file. Filling with empty rows.')
-            frame_count_vd2 = read_vd2_sleap_dfs['frame_idx'].iloc[-1] + 1
-            row_count_vd2 = read_vd2_sleap_dfs.index[-1] + 1
-            print(
-                f"VideoData2 SLEAP output: {frame_count_vd2} frames registered, but {row_count_vd2} rows found inside file. Filling with empty rows."
-            )
+            frame_count = read_vd2_sleap_dfs['frame_idx'].iloc[-1] + 1
+            row_count = read_vd2_sleap_dfs.index[-1] + 1
+            dropped_frames_vd2 = frame_count - row_count
+            print(f"ℹ️ VideoData2 has {dropped_frames_vd2} dropped frames. Filling missing frames with empty rows.")
             read_vd2_sleap_dfs = fill_with_empty_rows_based_on_index(read_vd2_sleap_dfs)
     
     # Merging VideoData csv files and sleap outputs to get access to the HARP timestamps

@@ -14,6 +14,7 @@ output_dir.mkdir(parents=True, exist_ok=True) # Ensure the output directory exis
 # data path (recording day directory)
 data_dir = Path('/Users/rancze/Documents/Data/vestVR/Cohort1/VestibularMismatch_day1')
 data_paths = [Path(p) for p in data_dir.iterdir() if p.is_dir() and not p.name.endswith('_processedData')]
+data_paths.sort()
 # static variables 
 vestibular_mismatch = True # if it is vestibular or visual MM, can be improved later with different experiment types, vestibular here means that the MM events are taken from the experiment_events instead of the photodiode
 event_name = "DrumWithReverseflow block started" # event name to be used for the MM events

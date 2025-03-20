@@ -20,10 +20,9 @@ import json
 import plotly.graph_objects as go
 import plotly.io as pio
 import plotly.express as px
-import plotly.subplots as sp  # Keep sp for other parts of your code
-make_subplots = sp.make_subplots  # Explicitly define make_subplots
+from plotly.subplots import make_subplots
 
-from time import time
+import time
 import logging
 
 from . import utils
@@ -50,9 +49,11 @@ def downsample_numpy(arr, factor, method="mean"):
     else:
         raise ValueError("Invalid method. Choose 'mean', 'median', or 'first'.")
 
-def running_unit_conversion(running_array, resolution = 12000): #for ball linear movement
-    meters_per_count = 0.0254 / resolution  # conversion from inches to meters
-    #dt = 0.01 # sensor specific 100 hz rate
+def running_unit_conversion(running_array): #for ball linear movement
+    resolution = 12000 # counts per inch
+    inches_per_count = 1 / resolution
+    meters_per_count = 0.0254 * inches_per_count #inch to meter conversion 
+    #dt = 0.01 # for OpticalTrackingRead0Y(46) -this is sensor specific. current sensor samples at 100 hz 
     #linear_velocity = meters_per_count / dt # meters per second per count; this makes no sense as array will go back to datetime indexed harp_streams df
     return running_array * meters_per_count
 
@@ -117,10 +118,17 @@ def get_encoder_home_position(experiment_events, harp_streams, event="Homing pla
 
     return encoder_value_event, encoder_value_next_event
 
-def turning_unit_conversion(turning_array, resolution, ball_radius): # for ball rotation
-    deg_per_count = 1/((((ball_radius * 2 * np.pi)/0.0254) * resolution)/360)
-    #dt = 0.01 # sensor specific 100 hz rate, w are not using it, see running_unit_conversion 
-    turning_array = turning_array * deg_per_count
+def turning_unit_conversion(turning_array): # for ball rotation
+    resolution = 12000 # counts per inch
+    inches_per_count = 1 / resolution
+    meters_per_count = 0.0254 * inches_per_count
+    #dt = 0.01 # for OpticalTrackingRead0Y(46) -this is sensor specific. current sensor samples at 100 hz 
+    turning_array = turning_array * meters_per_count #/ dt # meters per second per count 
+    
+    ball_radius = 0.1 # meters 
+    turning_array = turning_array / ball_radius # radians per second per count
+    turning_array = turning_array * (180 / np.pi) # degrees per second per count
+    
     return turning_array
 
 def photometry_harp_onix_synchronisation(
@@ -266,117 +274,56 @@ def photometry_harp_onix_synchronisation(
     
     return output, photometry_aligned, photodiode_aligned
 
-def get_global_minmax_timestamps(stream_dict, print_all=False, verbose=False):
+def get_global_minmax_timestamps(stream_dict, print_all=False, verbose = False):
+    # Finding the very first and very last timestamp across all streams
     first_timestamps, last_timestamps = {}, {}
-
-    # Check and fix all DataFrames in stream_dict for non-monotonic datetime indices
-    for source_name, stream_source in stream_dict.items():
-        for register, df in stream_source.items():
-            if not isinstance(df.index, pd.DatetimeIndex):
-                print(f"❗❗❗ Warning: Index in {source_name}/{register} is not a DatetimeIndex. This shouldn't happen. Skipping.")
-                continue  # Skip non-datetime indexed DataFrames
-            
-            # Only proceed if there are at least two rows
-            if len(df) >= 2:
-                # Check if the second timestamp is greater than the first
-                if df.index[1] <= df.index[0]:
-                    print(f"⚠️ in source {source_name}: first two rows non-consecutive. Dropping first row.")
-                    df_fixed = df.iloc[1:].copy()
-                    # Adjust the FrameIndex column if present
-                    if 'FrameIndex' in df_fixed.columns:
-                        df_fixed['FrameIndex'] = df_fixed['FrameIndex'].apply(
-                            lambda x: (x[0] - 1) if isinstance(x, tuple) else (x - 1)
-                        )
-                    # Replace the DataFrame with the fixed version
-                    stream_source[register] = df_fixed
-                    if verbose:
-                        print(f"✅ Successfully corrected {source_name}: First timestamp is now {df_fixed.index[0]}.")
-                else:
-                    # If the first two rows are consecutive, leave the DataFrame as is.
-                    pass
-            
-            # # Detect non-consecutive datetime indices
-            # incorrect_rows = df.index.to_series().diff().lt(pd.Timedelta(0))
-            # num_incorrect_rows = incorrect_rows.sum()
-            # if incorrect_rows.any():
-            #     print(f'❗in source {source_name}') 
-            #     print(f'there are {num_incorrect_rows} non-consecutive rows.')
-            #     #print(f"⚠️ Warning: There is(are) {num_incorrect_rows} non-consecutive datetime index(es) in {source_name}/{register} at time {df.index[incorrect_rows].tolist()}.")
-            #     if num_incorrect_rows != 1:
-            #         #raise ValueError(f"❗ This is unexpected and will cause issues.")                      
-            #         pass #FIXME uncomment line above fter debug 
-            #     print("     If in video_data1 or 2, then deleting first row which should fix it. See: See https://github.com/neurogears/vestibular-vr/issues/120") 
-                
-            #     # ✅ Fix: Drop the first row and explicitly replace the original DataFrame
-            #     df_fixed = df.iloc[1:].copy()
-              
-            #     # ✅ Fix: Adjust the FrameIndex column by subtracting 1
-            #     if 'FrameIndex' in df_fixed.columns:
-            #         print ("one") #DEBUG
-            #         print(df_fixed['FrameIndex'].apply(type).unique()) #DEBUG
-            #         print ("two") #DEBUG
-            #         print(df_fixed['FrameIndex'].head(10)) #DEBUG
-            #         df_fixed['FrameIndex'] -= 1
-            #     print(f' ℹ️ First FrameIndex is removed from {source_name}.') 
-                
-            #     # ✅ Explicitly update stream_dict
-            #     stream_dict[source_name][register] = df_fixed
-
-            #     # ✅ Confirm fix (for debugging)
-            #     if verbose:
-            #         print(f"✅ Successfully corrected {source_name}/{register}: First timestamp is now {df_fixed.index[0]}.")
-
-    # Extract first and last timestamps from corrected DataFrames
     for source_name, stream_source in stream_dict.items():
         first_timestamps[source_name] = {k: v.index[0] for k, v in stream_source.items()}
         last_timestamps[source_name] = {k: v.index[-1] for k, v in stream_source.items()}
-
+    
+    # Saving global first and last timestamps across the sources and the registers
     joint_first_timestamps, joint_last_timestamps = [], []
     first_dfs, last_dfs = {}, {}
-    first_df_names, last_df_names = {}, {}
-
+    first_df_names, last_df_names = {}, {}  # Add dictionaries to track DF names
+    
     for source_name, stream_source in first_timestamps.items():
         for register, timestamp in stream_source.items():
             joint_first_timestamps.append(timestamp)
             first_dfs[timestamp] = stream_dict[source_name][register]
-            first_df_names[timestamp] = f"{source_name}/{register}"
-
+            first_df_names[timestamp] = f"{source_name}/{register}"  # Store the df name
+    
     for source_name, stream_source in last_timestamps.items():
         for register, timestamp in stream_source.items():
             joint_last_timestamps.append(timestamp)
             last_dfs[timestamp] = stream_dict[source_name][register]
-            last_df_names[timestamp] = f"{source_name}/{register}"
-
+            last_df_names[timestamp] = f"{source_name}/{register}"  # Store the df name
+    
     joint_first_timestamps = pd.DataFrame(joint_first_timestamps)
     joint_last_timestamps = pd.DataFrame(joint_last_timestamps)
-
-    # ✅ Ensure the true minimum is selected
-    global_first_timestamp = min(joint_first_timestamps[0])  
-    global_last_timestamp = max(joint_last_timestamps[0])  
-
-    # ✅ Ensure correct mapping to the first and last timestamps
-    correct_first_entry = {ts: df_name for ts, df_name in first_df_names.items() if ts == global_first_timestamp}
-    global_first_df_name = correct_first_entry[global_first_timestamp]
+    
+    global_first_timestamp = joint_first_timestamps.iloc[joint_first_timestamps[0].argmin()][0]
+    global_last_timestamp = joint_last_timestamps.iloc[joint_last_timestamps[0].argmax()][0]
+    
     global_first_whichdf = first_dfs[global_first_timestamp]
-
-    correct_last_entry = {ts: df_name for ts, df_name in last_df_names.items() if ts == global_last_timestamp}
-    global_last_df_name = correct_last_entry[global_last_timestamp]
     global_last_whichdf = last_dfs[global_last_timestamp]
-
+    
+    global_first_df_name = first_df_names[global_first_timestamp]  # Get the df name
+    global_last_df_name = last_df_names[global_last_timestamp]  # Get the df name
+    
     if verbose:
         print(f'Global first timestamp: {global_first_timestamp}')
         print(f'Global first timestamp from: {global_first_df_name}')
         print(f'Global last timestamp: {global_last_timestamp}')
         print(f'Global last timestamp from: {global_last_df_name}')
         print(f'Global length: {global_last_timestamp - global_first_timestamp}')
-
+    
     if print_all:
         for source_name in stream_dict.keys():
             print(f'\n{source_name}')
             for key in first_timestamps[source_name].keys():
                 print(f'{key}: \n\tfirst  {first_timestamps[source_name][key]} \n\tlast   {last_timestamps[source_name][key]} \n\tlength {last_timestamps[source_name][key] - first_timestamps[source_name][key]} \n\tmean difference between timestamps {stream_dict[source_name][key].index.to_series().diff().mean()}')
-
-    return global_first_timestamp, global_last_timestamp, stream_dict  # ✅ Return updated stream_dict
+    
+    return global_first_timestamp, global_last_timestamp, global_first_df_name, global_last_df_name
 
 def pad_dataframe_with_global_timestamps(df, global_min_datetime, global_max_datetime):
     """
@@ -410,9 +357,7 @@ def pad_dataframe_with_global_timestamps(df, global_min_datetime, global_max_dat
     # Function to get appropriate padding value based on column dtype
     def get_padding_value(col_name):
         if pd.api.types.is_bool_dtype(df_copy[col_name].dtype):
-            if col_name == 'Photodiode':
-                return True  # Use True for 'Photodiode' boolean column
-            return False  # Use False for other boolean columns
+            return False  # Use False for boolean columns
         else:
             return pd.NA  # Use pd.NA for other columns
     
@@ -429,7 +374,11 @@ def pad_dataframe_with_global_timestamps(df, global_min_datetime, global_max_dat
                                      index=[global_max_datetime]))
     
     # If we have rows to add, concatenate them with the original dataframe
-    #FIXME DEBUG this as it gives future warning, suggestive that some columns are all NaNs which should not be the case
+    # for i, row in enumerate(rows_to_add): #FIXME DEBUG this as it gives future warning, suggestive that some columns are all NaNs which should not be the case
+    #     print(f"Row {i}: Empty={row.empty}, All-NA={row.isna().all().all()}, Shape={row.shape}")
+    # for i, row in enumerate(rows_to_add):
+    #     print(f"Row {i} Columns: {row.columns.tolist()}")
+
     if rows_to_add:
         df_copy = pd.concat([df_copy] + rows_to_add)
         df_copy = df_copy.sort_index()
@@ -587,7 +536,6 @@ def resample_dataframe(df, target_freq_Hz=1000, optical_filter_Hz=33):
 
     return resampled_df
 
-
 def plot_figure_1(df, session_name, save_path, common_resampled_rate, photodiode_halts, save_figure = False, show_figure = False, downsample_factor=20):
     """
     Plot specific time series data from the DataFrame in a browser window.
@@ -683,7 +631,7 @@ def plot_figure_1(df, session_name, save_path, common_resampled_rate, photodiode
                 x=[edge], 
                 y=[max_z_470],  # Use the max value of the z_470 signal
                 mode='markers', 
-                name='Photodiode Halt or MM event' if first_edge else '',  # Show legend once
+                name='Photodiode Halt' if first_edge else '',  # Show legend once
                 marker=dict(color='black', size=5, symbol='circle-open'),
                 showlegend=first_edge  # Hide legend for subsequent traces
             ), row=4, col=1)
@@ -700,6 +648,34 @@ def plot_figure_1(df, session_name, save_path, common_resampled_rate, photodiode
     if show_figure:
         fig.show()
 
+def calculate_photodiode_falling_edges(df, experiment_events, event_name):
+    # Calculate the difference in the photodiode signal
+    photodiode_diff = df['Photodiode'].astype(int).diff()
+
+    # Identify the falling edges (True to False transitions)
+    falling_edges = photodiode_diff[photodiode_diff == -1].index.to_numpy()
+
+    # Apply a refractory period of 0.5s using numpy
+    if falling_edges.size > 0:
+        refractory_period = pd.Timedelta(seconds=0.5)
+        valid_falling_edges = falling_edges[np.insert(np.diff(falling_edges) >= refractory_period, 0, True)]
+
+        # Remove last falling edge if necessary
+        if len(valid_falling_edges) > 0:
+            valid_falling_edges = valid_falling_edges[:-1]
+    else:
+        valid_falling_edges = np.array([])
+
+    # Count events
+    falling_edges_count = len(valid_falling_edges)
+    halt_count = (experiment_events["Event"] == event_name).sum()
+    if falling_edges_count == halt_count:
+        print(f"✅ Matching number of photodiode falling edges and ''{event_name}'' events: {halt_count}")
+    if falling_edges_count != halt_count:
+        print(f"❗ Warning: Falling edges ({falling_edges_count}) and {event_name} events ({halt_count}) do not match. Number of events: {falling_edges_count}. Is the event type the right event?")
+
+    return valid_falling_edges
+
 def safe_to_json(x): # for session_settings saving
     if isinstance(x, DotMap):
         return json.dumps(x.toDict())  # Convert DotMap to JSON string
@@ -711,457 +687,6 @@ def safe_from_json(x): # for session_settings  loading
     if isinstance(x, str):  # Only attempt to decode if it's a string
         return DotMap(json.loads(x))  
     return x  # If it's already a dictionary or DotMap, keep it as is
-
-def analyze_photodiode(photodiode_aligned, experiment_events, event_name, plot=True):
-
-    # Calculate the difference in the photodiode signal (no need for ['Photodiode'])
-    photodiode_diff = photodiode_aligned.astype(int).diff()
-
-    # Identify the falling and rising edges
-    falling_edge_timestamps = photodiode_diff[photodiode_diff == -1].index
-    rising_edge_timestamps = photodiode_diff[photodiode_diff == 1].index
-
-    # Implement a refractory period of X seconds; #this is some old remnant code and I just made the refractory period super small, so it does not throuw out any edges
-    valid_falling_edges = []
-    refractory_period = pd.Timedelta(seconds=0.0005) 
-    last_edge_time = falling_edge_timestamps[0] - refractory_period  # Initialize before first edge
-
-    for edge_time in falling_edge_timestamps:
-        if edge_time - last_edge_time >= refractory_period:
-            valid_falling_edges.append(edge_time)
-            last_edge_time = edge_time
-
-    falling_edges_count = len(valid_falling_edges)
-    halt_count = experiment_events[experiment_events["Event"] == event_name].shape[0]
-
-    if falling_edges_count == halt_count:
-        print(f"✅ {halt_count} events found. Matching number of photodiode falling edges and '{event_name}' events.")
-    if falling_edges_count != halt_count:
-        print(f"⚠️ WARNING: Falling edges ({falling_edges_count}) and {event_name} events ({halt_count}) do not match. Number of events: {falling_edges_count}.")
-        print(f"ℹ️ This happens occasionally. The following section prints the extra falling edges and their durations and report of if they were removed.")
- 
-        # Step 1: Detect Falling and Rising Edges
-        #already done above 
-
-        # Step 2: Find Extra Falling Edges (No Corresponding Event)
-        if "Time" in experiment_events.columns and not isinstance(experiment_events.index, pd.DatetimeIndex):
-            experiment_events["Time"] = pd.to_datetime(experiment_events["Time"])
-            experiment_events = experiment_events.set_index("Time")
-
-        halt_timestamps = experiment_events.loc[experiment_events["Event"] == event_name].index
-        if halt_timestamps.empty:
-            print("⚠️ Warning: No halt events found. Skipping extra falling edge detection.")
-            extra_falling_edges = falling_edge_timestamps  # Skip filtering
-        else:
-            extra_falling_edges = falling_edge_timestamps[~falling_edge_timestamps.isin(halt_timestamps)]
-
-        # Step 3: Match Falling Edges to Next Rising Edge and Find Duration
-        falling_rising_data = []
-
-        for falling_edge in falling_edge_timestamps:
-            next_rising_edges = rising_edge_timestamps[rising_edge_timestamps > falling_edge]
-            if not next_rising_edges.empty:
-                rising_edge = next_rising_edges.min()  # ✅ Select the nearest rising edge
-                duration = (rising_edge - falling_edge).total_seconds()
-            else:
-                print(f"⚠️ No rising edge found after {falling_edge}. Setting duration to NaN.")
-                rising_edge = None
-                duration = None
-      
-            # Append data
-            falling_rising_data.append({
-                "Falling Edge Time": falling_edge,
-                "Rising Edge Time": rising_edge,
-                "Duration (s)": duration
-            })
-
-        # Convert list to DataFrame
-        falling_rising_df = pd.DataFrame(falling_rising_data)
-
-        # Step 4: Find Preceding Experiment Events for Each Falling Edge
-        falling_rising_df["Preceding Event"] = None
-        falling_rising_df["Event Time Difference (s)"] = None
-
-        for i, row in falling_rising_df.iterrows():
-            falling_edge_time = row["Falling Edge Time"]
-            preceding_events = experiment_events[experiment_events.index < falling_edge_time]
-            if not preceding_events.empty:
-                last_event_time = preceding_events.index[-1]
-                last_event_name = preceding_events.iloc[-1]["Event"]
-                time_difference = (falling_edge_time - last_event_time).total_seconds()
-                
-                # Update DataFrame
-                falling_rising_df.at[i, "Preceding Event"] = last_event_name
-                falling_rising_df.at[i, "Event Time Difference (s)"] = time_difference
-
-        # Step 5: Print Only Rows Where Preceding Event is Not event_name
-
-        filtered_df = falling_rising_df[falling_rising_df["Preceding Event"] != event_name]
-        print(filtered_df[["Falling Edge Time", "Duration (s)", "Preceding Event", "Event Time Difference (s)"]].to_string(index=False))
-
-        # Step 6: Plot Only Traces Where Preceding Event is Not event_name
-        filtered_falling_edges = filtered_df["Falling Edge Time"]
-
-        # Define the number of traces per row
-        traces_per_row = 5
-
-        # Correct time window: -1s to +5s relative to the falling edge
-        time_before = pd.Timedelta(seconds=1)
-        time_after = pd.Timedelta(seconds=5)
-
-        # Calculate the number of rows needed
-        num_rows = -(-len(filtered_falling_edges) // traces_per_row)  # Equivalent to math.ceil
-
-        # Create a subplot figure with multiple rows
-        fig = make_subplots(rows=num_rows, cols=traces_per_row, shared_xaxes=True, shared_yaxes=True,
-                            subplot_titles=[f"Falling Edge {i+1}" for i in range(len(filtered_falling_edges))])
-
-        # Determine a global x-axis range (ensuring uniform scale)
-        x_min = -0.2
-        x_max = 0.5
-
-        # Loop through the filtered falling edges and plot them in subplots
-        for i, edge_time in enumerate(filtered_falling_edges):
-            row = (i // traces_per_row) + 1
-            col = (i % traces_per_row) + 1
-
-            start_time = edge_time - time_before
-            end_time = edge_time + time_after
-            
-            window_df = pd.DataFrame(photodiode_aligned.loc[start_time:end_time]).copy()
-
-            # Convert timestamps to relative time (seconds from falling edge)
-            window_df["Relative Time"] = (window_df.index - edge_time).total_seconds()
-
-            # Add trace to subplot
-            fig.add_trace(
-                go.Scatter(x=window_df["Relative Time"], y=window_df["Photodiode_int"], 
-                        mode="lines", line=dict(color="blue"), name=f"Trace {i+1}"),
-                row=row, col=col
-            )
-
-            # Mark the falling edge (always at time 0)
-            fig.add_trace(
-                go.Scatter(x=[0], y=[0], mode="markers",
-                        marker=dict(size=8, color="red"), name="Falling Edge"),
-                row=row, col=col
-            )
-
-        # Update layout
-        fig.update_layout(
-            title="Photodiode Signal Traces Around Extra Falling Edges",
-            height=num_rows * 250,
-            showlegend=False,
-            xaxis=dict(range=[x_min, x_max], title="Time (s) relative to Falling Edge"),
-            yaxis=dict(title="Photodiode Signal"),
-        )
-
-        # Apply consistent x-axis range to all subplots
-        for i in range(1, num_rows * traces_per_row + 1):
-            fig.update_xaxes(range=[x_min, x_max], row=((i-1) // traces_per_row) + 1, col=(i-1) % traces_per_row + 1)
-
-        # Show the figure
-        fig.show()
-
-    # Calculate the minimum, average, and maximum time differences
-    time_differences = []
-    halt_events = experiment_events[experiment_events["Event"] == event_name].index
-    for event_time in halt_events:
-        start_time = event_time - pd.Timedelta(seconds=0.5)
-        end_time = event_time + pd.Timedelta(seconds=2.5)
-        subset = photodiode_aligned[start_time:end_time]
-        relative_time = (subset.index - event_time).total_seconds()
-
-        # Determine the time difference between the event_time and the first 0 value following it
-        zero_crossings = relative_time[subset == 0]
-        if not zero_crossings.empty:
-            time_difference = zero_crossings[0]
-            time_differences.append(time_difference)
-
-    if time_differences:
-        min_diff = min(time_differences) * 1000  # Convert to milliseconds
-        avg_diff = (sum(time_differences) / len(time_differences)) * 1000  # Convert to milliseconds
-        max_diff = max(time_differences) * 1000  # Convert to milliseconds
-    else:
-        min_diff = avg_diff = max_diff = None
-
-    # Print the minimum, average, and maximum time differences
-    if time_differences:
-        print(f"time difference between photodiode and experimenet events:")
-        print(f"min {min_diff:.1f} ms. avg {avg_diff:.1f} ms. max {max_diff:.1f} ms.")
-    else:
-        print("No zero crossings found following the events.")
-
-    if plot:
-        # Create a figure with two subplots side by side
-        fig, (ax1, ax2) = plt.subplots(ncols=2, figsize=(14, 6))
-
-        # Plot the falling edges and the events on the first subplot
-        ax1.plot(photodiode_aligned.index, photodiode_aligned, label='Photodiode Signal')
-        for edge_time in valid_falling_edges:
-            ax1.axvline(x=edge_time, color='red', linestyle='--', linewidth=0.5, label='Falling Edge' if edge_time == valid_falling_edges[0] else '')
-        for event_time in halt_events:
-            nearest_time = photodiode_aligned.index.asof(event_time)
-            ax1.plot(nearest_time, photodiode_aligned.loc[nearest_time], 'o', color='red', markersize=8, fillstyle='none')
-        ax1.set_title('Photodiode Signal with Falling Edges and Halt Events')
-        ax1.set_xlabel('Time')
-        ax1.set_ylabel('Photodiode Signal')
-        ax1.legend(loc='lower left')
-
-        # Plot the triggered data on the second subplot
-        for event_time in halt_events:
-            start_time = event_time - pd.Timedelta(seconds=0.5)
-            end_time = event_time + pd.Timedelta(seconds=2.5)
-            subset = photodiode_aligned[start_time:end_time]
-            relative_time = (subset.index - event_time).total_seconds()
-            ax2.plot(relative_time, subset, label='Photodiode Signal' if event_time == halt_events[0] else '')
-            ax2.axvline(x=0, color='red', linestyle='--', linewidth=1, label='Event Trigger' if event_time == halt_events[0] else '')
-        ax2.set_title(f'{event_name} Triggered Plot')
-        ax2.set_xlabel('Time (s)')
-        ax2.set_ylabel('Photodiode Signal')
-        ax2.legend(loc='lower left')
-
-        plt.tight_layout()
-        plt.show()
-
-    # Ensure extra_falling_edges is always defined
-    if 'extra_falling_edges' not in locals():
-        extra_falling_edges = pd.DatetimeIndex([])  # Ensure it's a valid DatetimeIndex
-
-    # Convert min_diff and max_diff from ms to Timedelta
-    min_tolerance = pd.Timedelta(milliseconds=min_diff)
-    max_tolerance = pd.Timedelta(milliseconds=max_diff)
-
-    # Identify extra falling edges that are NOT within the expected tolerance window
-    refined_extra_falling_edges = []
-    for edge in valid_falling_edges:
-        within_window = any((halt_time + min_tolerance) <= edge <= (halt_time + max_tolerance) for halt_time in halt_events)
-        if not within_window:
-            refined_extra_falling_edges.append(edge)
-
-    refined_extra_falling_edges = pd.DatetimeIndex(refined_extra_falling_edges)
-
-    # Remove refined extra falling edges from valid_falling_edges
-    filtered_valid_falling_edges = [edge for edge in valid_falling_edges if edge not in refined_extra_falling_edges]
-    removed_count = len(valid_falling_edges) - len(filtered_valid_falling_edges)
-
-    print(f"✅ {removed_count} extra falling edges (outside {min_diff:.1f}ms - {max_diff:.1f}ms delay window) were removed before returning.")
-  
-    # Return filtered falling edges
-    return filtered_valid_falling_edges, min_diff, avg_diff, max_diff
-
-def check_exp_events(experiment_events, photometry_info, verbose = True):
-    mouse_name = photometry_info.loc[photometry_info["Parameter"] == "mousename", "Value"].values[0]
-    if verbose:
-        print (f"ℹ️ Mousename: {mouse_name}")
-
-    event_counts = experiment_events["Event"].value_counts()
-    if verbose:
-        print("ℹ️ Unique events and their counts:")
-        print(event_counts)
-
-    block_events = experiment_events[
-        experiment_events["Event"].str.contains("block started|Block timer elapsed", case=False, na=False)
-    ].copy()  # Use .copy() to avoid SettingWithCopyWarning
-    block_events["Time Difference"] = block_events.index.to_series().diff().dt.total_seconds()
-    block_events = block_events.drop(columns=['Seconds'])
-
-    if verbose:
-        print("ℹ️ block events")
-        print(block_events)
-    
-    return (mouse_name)
-
-#######
-#old functions not used in 2025 since refactoring by Ede but may be useful in the future
-#######
-
-def rotation_unit_conversion(rotation_array): # for ball rotation
-    resolution = 12000 # counts per inch
-    inches_per_count = 1 / resolution
-    meters_per_count = 0.0254 * inches_per_count
-    dt = 0.01 # for OpticalTrackingRead0Y(46) -this is sensor specific. current sensor samples at 100 hz 
-    linear_velocity = meters_per_count / dt # meters per second per count
-    
-    ball_radius = 0.1 # meters 
-    angular_velocity = linear_velocity / ball_radius # radians per second per count
-    angular_velocity = angular_velocity * (180 / np.pi) # degrees per second per count
-    
-    return rotation_array * angular_velocity
-
-def pad_and_resample(streams_dict, resampling_period='0.1ms', method='linear'):
-
-    start_time = time()
-    
-    streams_dict = copy.deepcopy(streams_dict)
-    
-    # Padding: Getting the global first/last timepoints, adding them to every stream that starts/ends later/earler
-    # Resampling + linear interpolation between points
-    
-    first_timestamp, last_timestamp, _, _ = get_timepoint_info(streams_dict)
-    
-    for source_name, source_element in streams_dict.items():
-        for stream_name, stream in source_element.items():
-            if stream.dtype==bool:
-                dummy_value = 1
-            else:
-                dummy_value = 0
-            # Check if global first and last timestamps already exist in a given stream
-            if stream.index[0] != first_timestamp:
-                # Create new element with the earliest timestamp
-                new_start = pd.Series([dummy_value], index=[first_timestamp]).astype(stream.dtype)
-                # Append the new element to the Series
-                stream = pd.concat([new_start, stream])
-                stream = stream.sort_index()
-            if stream.index[-1] != last_timestamp:
-                # Create new element with the latest timestamp
-                new_end = pd.Series([dummy_value], index=[last_timestamp]).astype(stream.dtype)
-                # Append the new element to the Series
-                stream = pd.concat([stream, new_end])
-                stream = stream.sort_index()
-
-            # Resampling and interpolation
-            if stream.dtype==bool:
-                streams_dict[source_name][stream_name] = resample_stream(stream, resampling_period=resampling_period, method='nearest').astype(bool)
-            else:
-                streams_dict[source_name][stream_name] = resample_stream(stream, resampling_period=resampling_period, method=method)
-    
-    print(f'Padding and resampling finished in {time() - start_time:.2f} seconds.')
-
-    return streams_dict
-
-def get_timepoint_info(registers_dict, print_all=False):
-    
-    # Finding the very first and very last timestamp across all streams
-    first_timestamps, last_timestamps = {}, {}
-    for source_name, register_source in registers_dict.items():
-        first_timestamps[source_name] = {k:v.index[0] for k,v in register_source.items()}
-        last_timestamps[source_name] = {k:v.index[-1] for k,v in register_source.items()}
-    
-    # Saving global first and last timestamps across the sources and the registers
-    joint_first_timestamps, joint_last_timestamps = [], []
-    
-    for register_source in first_timestamps.values():
-        for register in register_source.values():
-            joint_first_timestamps = joint_first_timestamps + [register]
-    joint_first_timestamps = pd.DataFrame(joint_first_timestamps)
-    
-    for register_source in last_timestamps.values():
-        for register in register_source.values():
-            joint_last_timestamps = joint_last_timestamps + [register]
-    joint_last_timestamps = pd.DataFrame(joint_last_timestamps)
-    
-    global_first_timestamp = joint_first_timestamps.iloc[joint_first_timestamps[0].argmin()][0]
-    global_last_timestamp = joint_last_timestamps.iloc[joint_last_timestamps[0].argmax()][0]
-    
-    if print_all:
-        print(f'Global first timestamp: {global_first_timestamp}')
-        print(f'Global last timestamp: {global_last_timestamp}')
-        print(f'Global length: {global_last_timestamp - global_first_timestamp}')
-        
-        for source_name in registers_dict.keys():
-            print(f'\n{source_name}')
-            for key in first_timestamps[source_name].keys():
-                print(f'{key}: \n\tfirst  {first_timestamps[source_name][key]} \n\tlast   {last_timestamps[source_name][key]} \n\tlength {last_timestamps[source_name][key] - first_timestamps[source_name][key]} \n\tmean difference between timestamps {registers_dict[source_name][key].index.diff().mean()}')
-    
-    return global_first_timestamp, global_last_timestamp, first_timestamps, last_timestamps
-
-def calculate_conversions_second_approach(data_path, photometry_path=None, verbose=True):
-
-    start_time = time()
-    output = {}
-
-    OnixAnalogClock, OnixAnalogFrameCount = utils.read_OnixAnalogClock(data_path), utils.read_OnixAnalogFrameCount(data_path)
-
-    # find time mapping/warping between onix and harp clock
-    upsample = np.array(OnixAnalogFrameCount["Seconds"]).repeat(100, axis=0)[0:-100]
-
-    # Handling the mismatching lenghts error
-    if upsample.shape[0] != OnixAnalogClock.shape[0]:
-        print('\n ⚠️ WARNING: "Unlucky" dataset with delayed subscription to OnixAnalogClock in Bonsai. As a consequence, the starting part of photodiode data is not counted. See https://github.com/neurogears/vestibular-vr/issues/81 for more information.')
-        print(f'Shape of OnixAnalogClock == [{OnixAnalogClock.shape[0]}] shape of OnixAnalogFrameCount == [{upsample.shape[0]}].')
-        print(f'Cutting {upsample.shape[0] - OnixAnalogClock.shape[0]} values from the beginning of OnixAnalogFrameCount. Data considered to be MISSING.\n')
-
-        offset = upsample.shape[0] - OnixAnalogClock.shape[0]
-        upsample = upsample[offset:]
-
-    # define conversion functions between timestamps (onix to harp)
-    o_m, o_b = np.polyfit(OnixAnalogClock, upsample, 1)
-    onix_to_harp_seconds = lambda x: x*o_m + o_b
-    onix_to_harp_timestamp = lambda x: api.aeon(onix_to_harp_seconds(x))
-    harp_to_onix_clock = lambda x: (x - o_b) / o_m
-
-    output["onix_to_harp_timestamp"] = onix_to_harp_timestamp
-    output["harp_to_onix_clock"] = harp_to_onix_clock
-
-    if photometry_path:
-        OnixDigital = utils.read_OnixDigital(data_path)
-        PhotometryEvents = utils.read_fluorescence_events(photometry_path)
-    
-        onix_digital_array = OnixDigital["Value.Clock"].values
-        photometry_events_array = PhotometryEvents.index.values
-        #photometry_events_array = PhotometryEvents['TimeStamp'].values
-
-    
-        # Calculate time differences (to make the signals stationary for cross-correlation)
-        time_series_1 = np.diff(onix_digital_array)
-        time_series_2 = np.diff(photometry_events_array)
-    
-        # Cross-correlation
-        correlation = correlate(time_series_1, time_series_2, mode='full')
-        offset = np.argmax(correlation) - (len(time_series_2) - 1)
-    
-        print(f"Calculated offset between OnixDigital and PhotometryEvents: {offset}")
-    
-        # Adjust arrays based on the calculated offset
-        if offset < 0:  # PhotometryEvents starts after OnixDigital
-            print(f"PhotometryEvents starts later by {abs(offset)} indices. Adjusting...")
-            photometry_events_array = photometry_events_array[abs(offset):]
-        elif offset > 0:  # OnixDigital starts after PhotometryEvents
-            print(f"OnixDigital starts later by {offset} indices. Adjusting...")
-            onix_digital_array = onix_digital_array[offset:]
-    
-        # Align lengths after applying offset
-        min_length = min(len(onix_digital_array), len(photometry_events_array))
-        onix_digital_array = onix_digital_array[:min_length]
-        photometry_events_array = photometry_events_array[:min_length]
-    
-        # Define conversion functions between timestamps (photometry to onix and harp)
-        m, b = np.polyfit(photometry_events_array, onix_digital_array, 1)
-        photometry_to_onix_time = lambda x: x * m + b
-        photometry_to_harp_time = lambda x: onix_to_harp_timestamp(photometry_to_onix_time(x))
-        onix_time_to_photometry = lambda x: (x - b) / m
-    
-        output["photometry_to_harp_time"] = photometry_to_harp_time
-        output["onix_time_to_photometry"] = onix_time_to_photometry
-
-
-    if verbose:
-        print('Following conversion functions calculated:')
-        for k in output.keys(): print(f'\t{k}')
-        print('\nUsage example 1: plotting photodiode signal for three halts')
-        print('\n\t# Loading data')
-        print('\tOnixAnalogClock = utils.read_OnixAnalogClock(data_path)\n\tOnixAnalogData = utils.read_OnixAnalogData(data_path)\n\tExperimentEvents = utils.read_ExperimentEvents(data_path)')
-        print('\n\t# Selecting desired HARP times, applying conversion to ONIX time')
-        print("\tstart_harp_time_of_halt_one = ExperimentEvents[ExperimentEvents.Value=='Apply halt: 1s'].iloc[0].Seconds\n\tstart_harp_time_of_halt_four = ExperimentEvents[ExperimentEvents.Value=='Apply halt: 1s'].iloc[3].Seconds")
-        print("\tstart_onix_time = conversions['harp_to_onix_clock'](start_harp_time_of_halt_one - 1)\n\tend_onix_time = conversions['harp_to_onix_clock'](start_harp_time_of_halt_four)")
-        print('\n\t# Selecting photodiode times and data within the range, converting back to HARP and plotting')
-        print('\tindices = np.where(np.logical_and(OnixAnalogClock >= start_onix_time, OnixAnalogClock <= end_onix_time))')
-        print("\tselected_harp_times = conversions['onix_to_harp_timestamp'](OnixAnalogClock[indices])\n\tselected_photodiode_data = OnixAnalogData[indices]")
-        print('\tplt.plot(selected_harp_times, selected_photodiode_data[:, 0])')
-        print('\nUsage example 2: plot photometry in the same time range')
-        print('\n\tPhotometry = utils.read_fluorescence(photometry_path)')
-        print("\n\tstart_photometry_time = conversions['onix_time_to_photometry'](start_onix_time)")
-        print("\tend_photometry_time = conversions['onix_time_to_photometry'](end_onix_time)")
-        print("\n\tselected_photometry_data = Photometry[Photometry['TimeStamp'].between(start_photometry_time, end_photometry_time)]['CH1-470'].values")
-        print("\tselected_harp_times = conversions['photometry_to_harp_time'](Photometry[Photometry['TimeStamp'].between(start_photometry_time, end_photometry_time)]['TimeStamp'])")
-        print('\tplt.plot(selected_harp_times, selected_photometry_data)')
-        print("\nIt is best not to convert the whole OnixAnalogClock array to HARP timestamps at once (e.g. conversions['onix_to_harp_timestamp'](OnixAnalogClock)). It's faster to first find the necessary timestamps and indices in ONIX format as shown above.")
-
-
-    print(f'Calculation of conversions finished in {time() - start_time:.2f} seconds.')
-
-    return output
 
 def compute_Lomb_Scargle_psd(data_df, freq_min=0.001, freq_max=10**6, num_freqs=1000, normalise=True):
     freqs = np.linspace(freq_min, freq_max, num_freqs)
@@ -1687,31 +1212,3 @@ def plot_dataset(dataset_path):
 #     print(f'Fluorescence alignment finished in {time() - start_time:.2f} seconds.')
     
 #     return fluorescence_df
-
-# def calculate_photodiode_falling_edges(df, experiment_events, event_name):
-#     # Calculate the difference in the photodiode signal
-#     photodiode_diff = df['Photodiode'].astype(int).diff()
-
-#     # Identify the falling edges (True to False transitions)
-#     falling_edges = photodiode_diff[photodiode_diff == -1].index.to_numpy()
-
-#     # Apply a refractory period of 0.5s using numpy
-#     if falling_edges.size > 0:
-#         refractory_period = pd.Timedelta(seconds=0.5)
-#         valid_falling_edges = falling_edges[np.insert(np.diff(falling_edges) >= refractory_period, 0, True)]
-
-#         # Remove last falling edge if necessary
-#         if len(valid_falling_edges) > 0:
-#             valid_falling_edges = valid_falling_edges[:-1]
-#     else:
-#         valid_falling_edges = np.array([])
-
-#     # Count events
-#     falling_edges_count = len(valid_falling_edges)
-#     halt_count = (experiment_events["Event"] == event_name).sum()
-#     if falling_edges_count == halt_count:
-#         print(f"✅ Matching number of photodiode falling edges and ''{event_name}'' events: {halt_count}")
-#     if falling_edges_count != halt_count:
-#         print(f"❗ Warning: Falling edges ({falling_edges_count}) and {event_name} events ({halt_count}) do not match. Number of events: {falling_edges_count}. Is the event type the right event?")
-
-#     return valid_falling_edges
