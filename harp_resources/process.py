@@ -23,7 +23,7 @@ import plotly.express as px
 import plotly.subplots as sp  # Keep sp for other parts of your code
 make_subplots = sp.make_subplots  # Explicitly define make_subplots
 
-import time
+from time import time
 import logging
 
 from . import utils
@@ -50,7 +50,7 @@ def downsample_numpy(arr, factor, method="mean"):
     else:
         raise ValueError("Invalid method. Choose 'mean', 'median', or 'first'.")
 
-def running_unit_conversion(running_array, resolution): #for ball linear movement
+def running_unit_conversion(running_array, resolution = 12000): #for ball linear movement
     meters_per_count = 0.0254 / resolution  # conversion from inches to meters
     #dt = 0.01 # sensor specific 100 hz rate
     #linear_velocity = meters_per_count / dt # meters per second per count; this makes no sense as array will go back to datetime indexed harp_streams df
@@ -943,6 +943,196 @@ def check_exp_events(experiment_events, photometry_info, verbose = True):
     
     return (mouse_name)
 
+#######
+#old functions not used in 2025 since refactoring by Ede but may be useful in the future
+#######
+
+def rotation_unit_conversion(rotation_array): # for ball rotation
+    resolution = 12000 # counts per inch
+    inches_per_count = 1 / resolution
+    meters_per_count = 0.0254 * inches_per_count
+    dt = 0.01 # for OpticalTrackingRead0Y(46) -this is sensor specific. current sensor samples at 100 hz 
+    linear_velocity = meters_per_count / dt # meters per second per count
+    
+    ball_radius = 0.1 # meters 
+    angular_velocity = linear_velocity / ball_radius # radians per second per count
+    angular_velocity = angular_velocity * (180 / np.pi) # degrees per second per count
+    
+    return rotation_array * angular_velocity
+
+def pad_and_resample(streams_dict, resampling_period='0.1ms', method='linear'):
+
+    start_time = time()
+    
+    streams_dict = copy.deepcopy(streams_dict)
+    
+    # Padding: Getting the global first/last timepoints, adding them to every stream that starts/ends later/earler
+    # Resampling + linear interpolation between points
+    
+    first_timestamp, last_timestamp, _, _ = get_timepoint_info(streams_dict)
+    
+    for source_name, source_element in streams_dict.items():
+        for stream_name, stream in source_element.items():
+            if stream.dtype==bool:
+                dummy_value = 1
+            else:
+                dummy_value = 0
+            # Check if global first and last timestamps already exist in a given stream
+            if stream.index[0] != first_timestamp:
+                # Create new element with the earliest timestamp
+                new_start = pd.Series([dummy_value], index=[first_timestamp]).astype(stream.dtype)
+                # Append the new element to the Series
+                stream = pd.concat([new_start, stream])
+                stream = stream.sort_index()
+            if stream.index[-1] != last_timestamp:
+                # Create new element with the latest timestamp
+                new_end = pd.Series([dummy_value], index=[last_timestamp]).astype(stream.dtype)
+                # Append the new element to the Series
+                stream = pd.concat([stream, new_end])
+                stream = stream.sort_index()
+
+            # Resampling and interpolation
+            if stream.dtype==bool:
+                streams_dict[source_name][stream_name] = resample_stream(stream, resampling_period=resampling_period, method='nearest').astype(bool)
+            else:
+                streams_dict[source_name][stream_name] = resample_stream(stream, resampling_period=resampling_period, method=method)
+    
+    print(f'Padding and resampling finished in {time() - start_time:.2f} seconds.')
+
+    return streams_dict
+
+def get_timepoint_info(registers_dict, print_all=False):
+    
+    # Finding the very first and very last timestamp across all streams
+    first_timestamps, last_timestamps = {}, {}
+    for source_name, register_source in registers_dict.items():
+        first_timestamps[source_name] = {k:v.index[0] for k,v in register_source.items()}
+        last_timestamps[source_name] = {k:v.index[-1] for k,v in register_source.items()}
+    
+    # Saving global first and last timestamps across the sources and the registers
+    joint_first_timestamps, joint_last_timestamps = [], []
+    
+    for register_source in first_timestamps.values():
+        for register in register_source.values():
+            joint_first_timestamps = joint_first_timestamps + [register]
+    joint_first_timestamps = pd.DataFrame(joint_first_timestamps)
+    
+    for register_source in last_timestamps.values():
+        for register in register_source.values():
+            joint_last_timestamps = joint_last_timestamps + [register]
+    joint_last_timestamps = pd.DataFrame(joint_last_timestamps)
+    
+    global_first_timestamp = joint_first_timestamps.iloc[joint_first_timestamps[0].argmin()][0]
+    global_last_timestamp = joint_last_timestamps.iloc[joint_last_timestamps[0].argmax()][0]
+    
+    if print_all:
+        print(f'Global first timestamp: {global_first_timestamp}')
+        print(f'Global last timestamp: {global_last_timestamp}')
+        print(f'Global length: {global_last_timestamp - global_first_timestamp}')
+        
+        for source_name in registers_dict.keys():
+            print(f'\n{source_name}')
+            for key in first_timestamps[source_name].keys():
+                print(f'{key}: \n\tfirst  {first_timestamps[source_name][key]} \n\tlast   {last_timestamps[source_name][key]} \n\tlength {last_timestamps[source_name][key] - first_timestamps[source_name][key]} \n\tmean difference between timestamps {registers_dict[source_name][key].index.diff().mean()}')
+    
+    return global_first_timestamp, global_last_timestamp, first_timestamps, last_timestamps
+
+def calculate_conversions_second_approach(data_path, photometry_path=None, verbose=True):
+
+    start_time = time()
+    output = {}
+
+    OnixAnalogClock, OnixAnalogFrameCount = utils.read_OnixAnalogClock(data_path), utils.read_OnixAnalogFrameCount(data_path)
+
+    # find time mapping/warping between onix and harp clock
+    upsample = np.array(OnixAnalogFrameCount["Seconds"]).repeat(100, axis=0)[0:-100]
+
+    # Handling the mismatching lenghts error
+    if upsample.shape[0] != OnixAnalogClock.shape[0]:
+        print('\nWARNING: "Unlucky" dataset with delayed subscription to OnixAnalogClock in Bonsai. As a consequence, the starting part of photodiode data is not counted. See https://github.com/neurogears/vestibular-vr/issues/81 for more information.')
+        print(f'Shape of OnixAnalogClock == [{OnixAnalogClock.shape[0]}] shape of OnixAnalogFrameCount == [{upsample.shape[0]}].')
+        print(f'Cutting {upsample.shape[0] - OnixAnalogClock.shape[0]} values from the beginning of OnixAnalogFrameCount. Data considered to be MISSING.\n')
+
+        offset = upsample.shape[0] - OnixAnalogClock.shape[0]
+        upsample = upsample[offset:]
+
+    # define conversion functions between timestamps (onix to harp)
+    o_m, o_b = np.polyfit(OnixAnalogClock, upsample, 1)
+    onix_to_harp_seconds = lambda x: x*o_m + o_b
+    onix_to_harp_timestamp = lambda x: api.aeon(onix_to_harp_seconds(x))
+    harp_to_onix_clock = lambda x: (x - o_b) / o_m
+
+    output["onix_to_harp_timestamp"] = onix_to_harp_timestamp
+    output["harp_to_onix_clock"] = harp_to_onix_clock
+
+    if photometry_path:
+        OnixDigital = utils.read_OnixDigital(data_path)
+        PhotometryEvents = utils.read_fluorescence_events(photometry_path)
+    
+        onix_digital_array = OnixDigital["Value.Clock"].values
+        photometry_events_array = PhotometryEvents.index.values
+        #photometry_events_array = PhotometryEvents['TimeStamp'].values
+
+    
+        # Calculate time differences (to make the signals stationary for cross-correlation)
+        time_series_1 = np.diff(onix_digital_array)
+        time_series_2 = np.diff(photometry_events_array)
+    
+        # Cross-correlation
+        correlation = correlate(time_series_1, time_series_2, mode='full')
+        offset = np.argmax(correlation) - (len(time_series_2) - 1)
+    
+        print(f"Calculated offset between OnixDigital and PhotometryEvents: {offset}")
+    
+        # Adjust arrays based on the calculated offset
+        if offset < 0:  # PhotometryEvents starts after OnixDigital
+            print(f"PhotometryEvents starts later by {abs(offset)} indices. Adjusting...")
+            photometry_events_array = photometry_events_array[abs(offset):]
+        elif offset > 0:  # OnixDigital starts after PhotometryEvents
+            print(f"OnixDigital starts later by {offset} indices. Adjusting...")
+            onix_digital_array = onix_digital_array[offset:]
+    
+        # Align lengths after applying offset
+        min_length = min(len(onix_digital_array), len(photometry_events_array))
+        onix_digital_array = onix_digital_array[:min_length]
+        photometry_events_array = photometry_events_array[:min_length]
+    
+        # Define conversion functions between timestamps (photometry to onix and harp)
+        m, b = np.polyfit(photometry_events_array, onix_digital_array, 1)
+        photometry_to_onix_time = lambda x: x * m + b
+        photometry_to_harp_time = lambda x: onix_to_harp_timestamp(photometry_to_onix_time(x))
+        onix_time_to_photometry = lambda x: (x - b) / m
+    
+        output["photometry_to_harp_time"] = photometry_to_harp_time
+        output["onix_time_to_photometry"] = onix_time_to_photometry
+
+
+    if verbose:
+        print('Following conversion functions calculated:')
+        for k in output.keys(): print(f'\t{k}')
+        print('\nUsage example 1: plotting photodiode signal for three halts')
+        print('\n\t# Loading data')
+        print('\tOnixAnalogClock = utils.read_OnixAnalogClock(data_path)\n\tOnixAnalogData = utils.read_OnixAnalogData(data_path)\n\tExperimentEvents = utils.read_ExperimentEvents(data_path)')
+        print('\n\t# Selecting desired HARP times, applying conversion to ONIX time')
+        print("\tstart_harp_time_of_halt_one = ExperimentEvents[ExperimentEvents.Value=='Apply halt: 1s'].iloc[0].Seconds\n\tstart_harp_time_of_halt_four = ExperimentEvents[ExperimentEvents.Value=='Apply halt: 1s'].iloc[3].Seconds")
+        print("\tstart_onix_time = conversions['harp_to_onix_clock'](start_harp_time_of_halt_one - 1)\n\tend_onix_time = conversions['harp_to_onix_clock'](start_harp_time_of_halt_four)")
+        print('\n\t# Selecting photodiode times and data within the range, converting back to HARP and plotting')
+        print('\tindices = np.where(np.logical_and(OnixAnalogClock >= start_onix_time, OnixAnalogClock <= end_onix_time))')
+        print("\tselected_harp_times = conversions['onix_to_harp_timestamp'](OnixAnalogClock[indices])\n\tselected_photodiode_data = OnixAnalogData[indices]")
+        print('\tplt.plot(selected_harp_times, selected_photodiode_data[:, 0])')
+        print('\nUsage example 2: plot photometry in the same time range')
+        print('\n\tPhotometry = utils.read_fluorescence(photometry_path)')
+        print("\n\tstart_photometry_time = conversions['onix_time_to_photometry'](start_onix_time)")
+        print("\tend_photometry_time = conversions['onix_time_to_photometry'](end_onix_time)")
+        print("\n\tselected_photometry_data = Photometry[Photometry['TimeStamp'].between(start_photometry_time, end_photometry_time)]['CH1-470'].values")
+        print("\tselected_harp_times = conversions['photometry_to_harp_time'](Photometry[Photometry['TimeStamp'].between(start_photometry_time, end_photometry_time)]['TimeStamp'])")
+        print('\tplt.plot(selected_harp_times, selected_photometry_data)')
+        print("\nIt is best not to convert the whole OnixAnalogClock array to HARP timestamps at once (e.g. conversions['onix_to_harp_timestamp'](OnixAnalogClock)). It's faster to first find the necessary timestamps and indices in ONIX format as shown above.")
+
+
+    print(f'Calculation of conversions finished in {time() - start_time:.2f} seconds.')
+
+    return output
 
 def compute_Lomb_Scargle_psd(data_df, freq_min=0.001, freq_max=10**6, num_freqs=1000, normalise=True):
     freqs = np.linspace(freq_min, freq_max, num_freqs)

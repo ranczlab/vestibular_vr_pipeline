@@ -650,51 +650,58 @@ def get_pympler_memory_usage(top_n=12):
     return df
 
 
-#not used 
-# class PhotometryReader(Csv):
-#     def __init__(self, pattern):
-#         #super().__init__(pattern, columns=["Time", "Events", "CH1-410", "CH1-470", "CH1-560", "U"], extension="csv")
-#         super().__init__(pattern, columns=["TimeStamp", "dfF_470", "dfF_560", "dfF_410"], extension="csv")
-#         self._rawcolumns = self.columns
+#not used after Ede's refactrogin in Feb 2025 
+class PhotometryReader(Csv):
+    def __init__(self, pattern):
+        #super().__init__(pattern, columns=["Time", "Events", "CH1-410", "CH1-470", "CH1-560", "U"], extension="csv")
+        super().__init__(pattern, columns=["TimeStamp", "dfF_470", "dfF_560", "dfF_410"], extension="csv")
+        self._rawcolumns = self.columns
 
-#     def read(self, file):
-#         data = pd.read_csv(file, header=1, names=self._rawcolumns)
-#         data.set_index("Time", inplace=True)
-#         return data
+    def read(self, file):
+        data = pd.read_csv(file, header=1, names=self._rawcolumns)
+        data.set_index("Time", inplace=True)
+        return data
 
-# def read_fluorescence(photometry_data_path):
-#     try:
-#         Fluorescence = pd.read_csv(photometry_data_path/'Processed_Fluorescence.csv', skiprows=1, index_col=False)
-#     except FileNotFoundError:
-#         Fluorescence = pd.read_csv(photometry_data_path/'Fluorescence.csv', skiprows=1, index_col=False)
+def read_fluorescence(photometry_data_path):
+    try:
+        Fluorescence = pd.read_csv(photometry_data_path/'Processed_Fluorescence.csv', skiprows=1, index_col=False)
+    except FileNotFoundError:
+        Fluorescence = pd.read_csv(photometry_data_path/'Fluorescence.csv', skiprows=1, index_col=False)
         
-#     if 'Unnamed: 5' in Fluorescence.columns: Fluorescence = Fluorescence.drop(columns='Unnamed: 5')
-#     return Fluorescence
+    if 'Unnamed: 5' in Fluorescence.columns: Fluorescence = Fluorescence.drop(columns='Unnamed: 5')
+    return Fluorescence
 
-# def read_fluorescence_events(photometry_data_path):
-#     Events = pd.read_csv(photometry_data_path/'Events.csv', skiprows=0, index_col=False)
-#     return Events
+def read_fluorescence_events(photometry_data_path):
+    Events = pd.read_csv(photometry_data_path/'Events.csv', skiprows=0, index_col=False)
+    return Events
 
+def read_OnixAnalogFrameCount(path): #multiple files aware, but we use load_2 instead
+    filenames = os.listdir(path/'OnixAnalogFrameCount')
+    filenames = [x for x in filenames if x[:20]=='OnixAnalogFrameCount'] # filter out other (hidden) files
+    sorted_filenames = pd.to_datetime(pd.Series([x.split('_')[1].split('.')[0] for x in filenames])).sort_values()
+    read_dfs = []
+    for row in sorted_filenames:
+        read_dfs.append(pd.read_csv(path/'OnixAnalogFrameCount'/f"OnixAnalogFrameCount_{row.strftime('%Y-%m-%dT%H-%M-%S')}.csv"))
+    return pd.concat(read_dfs).reset_index().drop(columns='index')
 
-# def read_OnixAnalogFrameCount(path): #multiple files aware, but we use load_2 instead
-#     filenames = os.listdir(path/'OnixAnalogFrameCount')
-#     filenames = [x for x in filenames if x[:20]=='OnixAnalogFrameCount'] # filter out other (hidden) files
-#     sorted_filenames = pd.to_datetime(pd.Series([x.split('_')[1].split('.')[0] for x in filenames])).sort_values()
-#     read_dfs = []
-#     for row in sorted_filenames:
-#         read_dfs.append(pd.read_csv(path/'OnixAnalogFrameCount'/f"OnixAnalogFrameCount_{row.strftime('%Y-%m-%dT%H-%M-%S')}.csv"))
-#     return pd.concat(read_dfs).reset_index().drop(columns='index')
+def concat_digi_events(series_low: pd.DataFrame, series_high: pd.DataFrame) -> pd.DataFrame:
+    """Concatenate seperate high and low dataframes to produce on/off vector"""
+    data_off = ~series_low[series_low==True]
+    data_on = series_high[series_high==True]
+    return pd.concat([data_off, data_on]).sort_index()
 
-# def concat_digi_events(series_low: pd.DataFrame, series_high: pd.DataFrame) -> pd.DataFrame:
-#     """Concatenate seperate high and low dataframes to produce on/off vector"""
-#     data_off = ~series_low[series_low==True]
-#     data_on = series_high[series_high==True]
-#     return pd.concat([data_off, data_on]).sort_index()
+def load_harp(reader: Harp, root: Path) -> pd.DataFrame: #multiple files aware, but not used (we use load_regiters instead)
+    root = Path(root)
+    pattern = f"{root.joinpath(root.name)}_{reader.register.address}_*.bin"
+    print(pattern)
+    data = [reader.read(file) for file in glob(pattern)]
+    return pd.concat(data)
 
-# def load_harp(reader: Harp, root: Path) -> pd.DataFrame: #multiple files aware, but not used (we use load_regiters instead)
-#     root = Path(root)
-#     pattern = f"{root.joinpath(root.name)}_{reader.register.address}_*.bin"
-#     print(pattern)
-#     data = [reader.read(file) for file in glob(pattern)]
-#     return pd.concat(data)
-
+def read_OnixDigital(path):
+    filenames = os.listdir(path/'OnixDigital')
+    filenames = [x for x in filenames if x[:11]=='OnixDigital'] # filter out other (hidden) files
+    sorted_filenames = pd.to_datetime(pd.Series([x.split('_')[1].split('.')[0] for x in filenames])).sort_values()
+    read_dfs = []
+    for row in sorted_filenames:
+        read_dfs.append(pd.read_csv(path/'OnixDigital'/f"OnixDigital_{row.strftime('%Y-%m-%dT%H-%M-%S')}.csv"))
+    return pd.concat(read_dfs).reset_index().drop(columns='index')
