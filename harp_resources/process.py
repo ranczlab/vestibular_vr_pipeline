@@ -542,18 +542,13 @@ def resample_dataframe(df, target_freq_Hz=1000, optical_filter_Hz=33):
     - No interpolation for fluorescence signals (already upsampled).
     - Ensures strict monotonicity and prevents artifacts.
     """
-    start_time = time.time()
 
     # Ensure the index is strictly increasing
     df.index = make_index_monotonic(df.index)
 
-    logging.info(f"Index adjustment took {time.time() - start_time:.2f} seconds")
-
     # Create a regular time grid
     time_interval = f"{1/target_freq_Hz}s"
     new_index = pd.date_range(start=df.index.min(), end=df.index.max(), freq=time_interval)
-
-    logging.info(f"Time grid creation took {time.time() - start_time:.2f} seconds")
 
     # Identify column types
     encoder_cols = [col for col in df.columns if "Encoder" in col]
@@ -562,8 +557,6 @@ def resample_dataframe(df, target_freq_Hz=1000, optical_filter_Hz=33):
 
     # Create an empty DataFrame
     resampled_df = pd.DataFrame(index=new_index)
-
-    logging.info(f"Empty DataFrame creation took {time.time() - start_time:.2f} seconds")
 
     # Resample in parallel
     with ProcessPoolExecutor(max_workers=multiprocessing.cpu_count()) as executor:
@@ -583,16 +576,18 @@ def resample_dataframe(df, target_freq_Hz=1000, optical_filter_Hz=33):
             col = fluor_futures[future]
             resampled_df[col] = future.result()
 
-    logging.info(f"Resampling took {time.time() - start_time:.2f} seconds")
-
     return resampled_df
 
 
-def plot_figure_1(df, session_name, save_path, common_resampled_rate, photodiode_halts, save_figure = False, show_figure = False, downsample_factor=20):
+def plot_figure_1(df, session_name, save_path, common_resampled_rate, photodiode_halts, save_figure=False, show_figure=False, downsample_factor=20):
     """
     Plot specific time series data from the DataFrame in a browser window.
     Fixes missing X-axis and Y-axis movement plots by correctly assigning y-axes per subplot.
     """
+    import numpy as np
+    from scipy.signal import correlate
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
 
     # Unwrap the position and encoder data to handle wrapping around 360 degrees
     position_unwrapped = np.unwrap(df['Position_0Y'].values * np.pi / 180) * 180 / np.pi
@@ -615,21 +610,32 @@ def plot_figure_1(df, session_name, save_path, common_resampled_rate, photodiode
     # Downsample data for plotting efficiency
     df_downsampled = df.iloc[::downsample_factor].copy()
     
-    # Create subplots
+    # Create subplots: now 6 rows (adding Ellipse Center and Ellipse Diameter)
     fig = make_subplots(
-        rows=4, cols=1, shared_xaxes=True, 
-        vertical_spacing=0.1, subplot_titles=(
-            'X Position (m)', 'Y position (degrees)', 
-            f"Encoder Data (degrees, neg corr peak with posY: {negative_peak_position_ms:.2f} ms)", 'Photometry Data (z-score)'),
-        specs=[[{"secondary_y": True}],  # Allow second y-axis for X movement
-               [{"secondary_y": True}],  # Allow second y-axis for Y movement
-               [{}], [{}]]  # Single y-axis for Encoder & Photometry
+        rows=6, cols=1, shared_xaxes=True, 
+        vertical_spacing=0.02, 
+        subplot_titles=(
+            'X Position (m)', 
+            'Y Position (degrees)', 
+            f"Encoder Data (degrees, neg corr peak with posY: {negative_peak_position_ms:.2f} ms)", 
+            'Photometry Data (z-score)',
+            'Ellipse Center (X, Y)',
+            'Ellipse Diameter'
+        ),
+        specs=[
+            [{"secondary_y": True}],  # Row 1: X movement (with secondary y-axis)
+            [{"secondary_y": True}],  # Row 2: Y movement (with secondary y-axis)
+            [{}],                    # Row 3: Encoder data
+            [{}],                    # Row 4: Photometry data
+            [{}],                    # Row 5: Ellipse Center data
+            [{}]                     # Row 6: Ellipse Diameter data
+        ]
     )
 
     # Colors for the different metrics
     colors = {'Position': 'blue', 'Velocity': 'green', 'Acceleration': 'red'}
 
-    # 1. Plot X-axis movement (Now with properly assigned y-axes)
+    # 1. Plot X-axis movement (with secondary y-axis for velocity and acceleration)
     fig.add_trace(go.Scatter(x=df_downsampled.index, y=df_downsampled['Position_0X'], 
                              mode='lines', name='Position_0X', line=dict(color=colors['Position'])), 
                   row=1, col=1, secondary_y=False)
@@ -642,7 +648,7 @@ def plot_figure_1(df, session_name, save_path, common_resampled_rate, photodiode
                              mode='lines', name='Acceleration_0X', line=dict(color=colors['Acceleration'], width=1, dash='solid')), 
                   row=1, col=1, secondary_y=True)
 
-    # 2. Plot Y-axis movement (Fixed missing data)
+    # 2. Plot Y-axis movement (with secondary y-axis for velocity and acceleration)
     fig.add_trace(go.Scatter(x=df_downsampled.index, y=df_downsampled['Position_0Y'], 
                              mode='lines', name='Position_0Y', line=dict(color=colors['Position'])), 
                   row=2, col=1, secondary_y=False)
@@ -655,7 +661,7 @@ def plot_figure_1(df, session_name, save_path, common_resampled_rate, photodiode
                              mode='lines', name='Acceleration_0Y', line=dict(color=colors['Acceleration'], width=1, dash='solid')), 
                   row=2, col=1, secondary_y=True)
 
-    # Adjust transparency by setting the opacity of the traces
+    # Adjust transparency for velocity and acceleration traces
     fig.update_traces(opacity=0.5, selector=dict(name='Velocity_0X'))
     fig.update_traces(opacity=0.5, selector=dict(name='Acceleration_0X'))
     fig.update_traces(opacity=0.5, selector=dict(name='Velocity_0Y'))
@@ -683,22 +689,38 @@ def plot_figure_1(df, session_name, save_path, common_resampled_rate, photodiode
                 x=[edge], 
                 y=[max_z_470],  # Use the max value of the z_470 signal
                 mode='markers', 
-                name='Photodiode Halt or MM event' if first_edge else '',  # Show legend once
+                name='Photodiode Halt or MM event' if first_edge else '',  # Show legend only once
                 marker=dict(color='black', size=5, symbol='circle-open'),
-                showlegend=first_edge  # Hide legend for subsequent traces
+                showlegend=first_edge  # Hide legend for subsequent markers
             ), row=4, col=1)
-            first_edge = False  # Disable legend for subsequent traces
+            first_edge = False
+
+    ######## NEEDS UPDATING TO PLOT WHICHEVER EYE DATA _1 and/or _2 IS AVAILABLE ########
+
+    # 5. Plot Ellipse Center data (Ellipse.Center.X, Ellipse.Center.Y)
+    ellipse_center_cols = ['Ellipse.Center.X_1', 'Ellipse.Center.Y_1']
+    for col in ellipse_center_cols:
+        if col in df_downsampled.columns:
+            fig.add_trace(go.Scatter(x=df_downsampled.index, y=df_downsampled[col], 
+                                     mode='lines', name=col, line=dict(width=1)), row=5, col=1)
+
+    # 6. Plot Ellipse Diameter data
+    if 'Ellipse.Diameter_1' in df_downsampled.columns:
+        fig.add_trace(go.Scatter(x=df_downsampled.index, y=df_downsampled['Ellipse.Diameter_1'], 
+                                 mode='lines', name='Ellipse.Diameter', line=dict(width=1)), row=6, col=1)
 
     # Update layout
     fig.update_layout(
-        height=800, width=1000, 
-        title_text=f'Position, Velocity, Acceleration, Encoder and Photometry Data - {session_name}'
+        height=1200, width=1000, 
+        title_text=f'Position, Velocity, Acceleration, Encoder, Photometry, and Pupil Data<br>{session_name}'
     )
     if save_figure:
         fig.write_image(save_path / "figure1.png", scale=3)  # Adjust scale for higher resolution
 
     if show_figure:
         fig.show()
+
+
 
 def safe_to_json(x): # for session_settings saving
     if isinstance(x, DotMap):
