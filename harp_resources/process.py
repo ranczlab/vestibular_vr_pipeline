@@ -521,7 +521,7 @@ def resample_column(column, new_index, method, optical_filter_Hz, sample_rate):
         smoothed_angles = filter_angular_velocity(interpolated_col, new_index.astype(np.int64) / 10**9, optical_filter_Hz, sample_rate)
         return smoothed_angles
 
-    elif method == 'linear':
+    elif method == 'position':
         temp_col = column.ffill().bfill()  # Ensure forward fill and back fill to avoid NaNs
         if temp_col.isnull().any():
             logging.warning(f"Column {column.name} still has NaNs after forward and backward fill.")
@@ -533,12 +533,18 @@ def resample_column(column, new_index, method, optical_filter_Hz, sample_rate):
     elif method == 'fluor':
         return column.bfill().reindex(new_index, method='nearest')  # For fluorescence data
 
+    elif method == 'eye':
+        temp_col = column  # no foward fill and back fill as we will inteprolate
+        interpolated_col = np.interp(new_index.astype(np.int64) / 10**9, column.index.astype(np.int64) / 10**9, temp_col)
+        return interpolated_col
+
 # Resampling function for entire DataFrame
 def resample_dataframe(df, target_freq_Hz=1000, optical_filter_Hz=33):
     """
     Resample a DataFrame with:
     - Circular interpolation & velocity filtering for Encoder signals.
-    - Linear interpolation for Optical & Position signals.
+    - Linear interpolation for Optical & Position signals with filtering 
+    - linear interpolation for eyetracking signals 
     - No interpolation for fluorescence signals (already upsampled).
     - Ensures strict monotonicity and prevents artifacts.
     """
@@ -552,30 +558,36 @@ def resample_dataframe(df, target_freq_Hz=1000, optical_filter_Hz=33):
 
     # Identify column types
     encoder_cols = [col for col in df.columns if "Encoder" in col]
-    linear_cols = [col for col in df.columns if "Position" in col and col not in encoder_cols]
-    fluorescence_cols = [col for col in df.columns if col not in encoder_cols + linear_cols]
-
+    position_cols = [col for col in df.columns if "Position" in col and col not in encoder_cols]
+    eye_cols = [col for col in df.columns if "_eye" in col and "frame_idx" not in col and "Seconds" not in col]
+    fluorescence_cols = [col for col in df.columns if col not in (encoder_cols + position_cols + eye_cols) and "frame_idx" not in col and "Seconds" not in col] #FIXME a bit ugly to call e.g. photodiode fluorescence and if we include more columns, we will be in trouble 
+    print (f"EYE col s=  {eye_cols}")
     # Create an empty DataFrame
     resampled_df = pd.DataFrame(index=new_index)
 
     # Resample in parallel
     with ProcessPoolExecutor(max_workers=multiprocessing.cpu_count()) as executor:
         encoder_futures = {executor.submit(resample_column, df[col], new_index, 'encoder', optical_filter_Hz, target_freq_Hz): col for col in encoder_cols}
-        linear_futures = {executor.submit(resample_column, df[col], new_index, 'linear', optical_filter_Hz, target_freq_Hz): col for col in linear_cols}
+        position_futures = {executor.submit(resample_column, df[col], new_index, 'position', optical_filter_Hz, target_freq_Hz): col for col in position_cols}
         fluor_futures = {executor.submit(resample_column, df[col], new_index, 'fluor', optical_filter_Hz, target_freq_Hz): col for col in fluorescence_cols}
+        eye_futures = {executor.submit(resample_column, df[col], new_index, 'eye', optical_filter_Hz, target_freq_Hz): col for col in eye_cols} # but no filtering in resample_column for eye data anyway
 
         for future in encoder_futures:
             col = encoder_futures[future]
             resampled_df[col] = future.result()
 
-        for future in linear_futures:
-            col = linear_futures[future]
+        for future in position_futures:
+            col = position_futures[future]
+            resampled_df[col] = future.result()
+
+        for future in eye_futures:
+            col = eye_futures[future]
             resampled_df[col] = future.result()
 
         for future in fluor_futures:
             col = fluor_futures[future]
             resampled_df[col] = future.result()
-
+    
     return resampled_df
 
 
@@ -695,19 +707,19 @@ def plot_figure_1(df, session_name, save_path, common_resampled_rate, photodiode
             ), row=4, col=1)
             first_edge = False
 
-    ######## NEEDS UPDATING TO PLOT WHICHEVER EYE DATA _1 and/or _2 IS AVAILABLE ########
+    ######## NEEDS UPDATING TO PLOT WHICHEVER EYE DATA _eye1 and/or _2 IS AVAILABLE ########
 
     # 5. Plot Ellipse Center data (Ellipse.Center.X, Ellipse.Center.Y)
-    ellipse_center_cols = ['Ellipse.Center.X_1', 'Ellipse.Center.Y_1']
+    ellipse_center_cols = ['Ellipse.Center.X_eye1', 'Ellipse.Center.Y_eye1']
     for col in ellipse_center_cols:
         if col in df_downsampled.columns:
             fig.add_trace(go.Scatter(x=df_downsampled.index, y=df_downsampled[col], 
                                      mode='lines', name=col, line=dict(width=1)), row=5, col=1)
 
     # 6. Plot Ellipse Diameter data
-    if 'Ellipse.Diameter_1' in df_downsampled.columns:
-        fig.add_trace(go.Scatter(x=df_downsampled.index, y=df_downsampled['Ellipse.Diameter_1'], 
-                                 mode='lines', name='Ellipse.Diameter', line=dict(width=1)), row=6, col=1)
+    if 'Ellipse.Diameter_eye1' in df_downsampled.columns:
+        fig.add_trace(go.Scatter(x=df_downsampled.index, y=df_downsampled['Ellipse.Diameter_eye1'], 
+                                 mode='lines', name='Ellipse.Diameter', line=dict(width=1)), row=6, col=1) 
 
     # Update layout
     fig.update_layout(
