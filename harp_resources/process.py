@@ -727,7 +727,9 @@ def plot_figure_1(df, session_name, save_path, common_resampled_rate, photodiode
         title_text=f'Position, Velocity, Acceleration, Encoder, Photometry, and Pupil Data<br>{session_name}'
     )
     if save_figure:
-        fig.write_image(save_path / "figure1.png", scale=3)  # Adjust scale for higher resolution
+        #fig.write_image(save_path / "figure1.png", scale=3)  # Adjust scale for higher resolution
+        pio.write_image(fig, save_path / f"figure1.pdf", format="pdf", scale=1)
+
 
     if show_figure:
         fig.show()
