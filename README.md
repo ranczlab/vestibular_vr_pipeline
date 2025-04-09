@@ -13,7 +13,7 @@ conda env create -f environment_macOS.yml
 ```
 
 ## THE OTHER WAY
-### Create anaconda environment and add it to jupyter
+#### Create anaconda environment and add it to jupyter
 
 ```python
 conda create -n aeon
@@ -22,7 +22,7 @@ conda install -c anaconda ipykernel
 python3 -m ipykernel install --user --name=aeon
 ```
 
-### Install _aeon\_mecha_
+#### Install _aeon\_mecha_
 As of 2025/01, aeon\_mecha only works with python 3.11 and not later python versions. 
 
 ```python
@@ -34,19 +34,19 @@ python -m pip install -e .
 In macOS if you get an error message, use 
 `conda install pip` before the last line
 
-### Install _harp-python_
+#### Install _harp-python_
 
 ```python
 pip install harp-python
 ```
 
-### Install SLEAP
+#### Install SLEAP
 
 ```python
 pip install sleap
 ```
 
-### Install other packages
+#### Install other packages
 
 ```python
 pip install lsq-ellipse
