@@ -2,6 +2,9 @@
 
 This is the general pipeline for loading, preprocessing, aligning, quality checking and applying basic analysis to the data recorded on the <a href=https://ranczlab.github.io/RPM/>RPM</a> (e.g. running) using <a href=https://harp-tech.org/index.html>HARP devices</a>, eye movements data derived from <a href=https://sleap.ai/>SLEAP</a> and neural data (fiber photometry, Neuropixels).
 
+The definitions and parameters of the data streams are here: 
+https://docs.google.com/spreadsheets/d/1P-x9D8tPEta5BiX8FPnXMCIhDHmawuJMk9X9icllRH0/edit?usp=drive_link
+
 ## Installation
 
 The code mainly relies on <a href=https://github.com/harp-tech/harp-python>harp-python</a> and <a href=https://github.com/SainsburyWellcomeCentre/aeon_mecha>aeon_mecha</a> packages. The proposed setup is to first create an Anaconda environment for _aeon\_mecha_, install it and then install _harp-python_ inside of this same environment. Optional packages required by some of the example Jupyter notebooks, but not essential for the main pipeline, are cv2, ffmpeg.
