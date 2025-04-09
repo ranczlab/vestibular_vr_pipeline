@@ -7,22 +7,13 @@ This is the general pipeline for loading, preprocessing, aligning, quality check
 The code mainly relies on <a href=https://github.com/harp-tech/harp-python>harp-python</a> and <a href=https://github.com/SainsburyWellcomeCentre/aeon_mecha>aeon_mecha</a> packages. The proposed setup is to first create an Anaconda environment for _aeon\_mecha_, install it and then install _harp-python_ inside of this same environment. Optional packages required by some of the example Jupyter notebooks, but not essential for the main pipeline, are cv2, ffmpeg.
 
 ## EASY WAY
+
+#### 1. Set up the environment
 Use the environment_macOS.yml file to create a new anaconda environment (will be named **aeon**). This file will set up all packages currently used on macOS for processing (but should work on Linux as well, not tested).
 ```
 conda env create -f environment_macOS.yml
 ```
-
-## THE OTHER WAY
-#### Create anaconda environment and add it to jupyter
-
-```python
-conda create -n aeon
-conda activate aeon
-conda install -c anaconda ipykernel
-python3 -m ipykernel install --user --name=aeon
-```
-
-#### Install _aeon\_mecha_
+#### 2. Install _aeon\_mecha_ (if it failed from the yml file) 
 As of 2025/01, aeon\_mecha only works with python 3.11 and not later python versions. 
 
 ```python
@@ -34,19 +25,42 @@ python -m pip install -e .
 In macOS if you get an error message, use 
 `conda install pip` before the last line
 
-#### Install _harp-python_
+
+## THE OTHER WAY
+#### 1. Create anaconda environment and add it to jupyter
+
+```python
+conda create -n aeon
+conda activate aeon
+conda install -c anaconda ipykernel
+python3 -m ipykernel install --user --name=aeon
+```
+
+#### 2. Install _aeon\_mecha_
+As of 2025/01, aeon\_mecha only works with python 3.11 and not later python versions. 
+
+```python
+conda install python=3.11
+git clone https://github.com/SainsburyWellcomeCentre/aeon_mecha.git
+cd aeon_mecha
+python -m pip install -e .
+```
+In macOS if you get an error message, use 
+`conda install pip` before the last line
+
+#### 3. Install _harp-python_
 
 ```python
 pip install harp-python
 ```
 
-#### Install SLEAP
+#### 4. Install SLEAP
 
 ```python
 pip install sleap
 ```
 
-#### Install other packages
+#### 5. Install other packages
 
 ```python
 pip install lsq-ellipse
