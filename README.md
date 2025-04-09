@@ -6,6 +6,13 @@ This is the general pipeline for loading, preprocessing, aligning, quality check
 
 The code mainly relies on <a href=https://github.com/harp-tech/harp-python>harp-python</a> and <a href=https://github.com/SainsburyWellcomeCentre/aeon_mecha>aeon_mecha</a> packages. The proposed setup is to first create an Anaconda environment for _aeon\_mecha_, install it and then install _harp-python_ inside of this same environment. Optional packages required by some of the example Jupyter notebooks, but not essential for the main pipeline, are cv2, ffmpeg.
 
+## EASY WAY
+Use the environment_macOS.yml file to create a new anaconda environment (will be named **aeon**). This file will set up all packages currently used on macOS for processing. 
+```
+conda env create -f environment.yml
+```
+
+## THE OTHER WAY
 ### Create anaconda environment and add it to jupyter
 
 ```python
