@@ -71,8 +71,21 @@ pip install pympler # usefull for monitoring memory during dev
 ```
 
 
+## Folder structure conventions at acquisition 
+- CohortX (numbered cohort of animals) 
+  - experimentType_day (e.g. VestibularMismatch_day1)
+    - root_data directory (`animalID_yyyy-mm-ddThh-mm-ss`)
+      - all folders for Bonsai acquired data (`HarpData, ONIX, ExperimentEvents, SessionSettings, VideoData`)
+      - photometry folder (containing `fluorescence_unaligned.csv`, etc...)
+    - root_results directory (`animalID_yyyy-mm-ddThh-mm-ss_processedData`)
+      - `Video_Sleap_Data1` and 2 folders (csv output file from SLEAP inference, naming as `Video_Sleap_Data1_1904-01-01T00-00-00.csv`) <- currently this needs to be copied manually
+      - `photometry` folder (output of photometry processing, `Processed_fluorescence.csv` and `info.csv`)
+      - `donwnsampled_data` folder (parquet files for downsampled data streams) 
+      - figures
+      - `alldata_asynchronous.parquet` (non-downsampled, processed data) 
 
-
+The root_data folder can be compressed into a single file after processing and QC.
+For compression commands and details, see [#11.](https://github.com/ranczlab/vestibular_vr_pipeline/issues/11) 
 
 # Deprecated / to be updated as of 2025 April
 ## Repository contents
