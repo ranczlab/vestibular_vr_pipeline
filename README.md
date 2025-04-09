@@ -6,25 +6,25 @@ This is the general pipeline for loading, preprocessing, aligning, quality check
 
 The code mainly relies on <a href=https://github.com/harp-tech/harp-python>harp-python</a> and <a href=https://github.com/SainsburyWellcomeCentre/aeon_mecha>aeon_mecha</a> packages. The proposed setup is to first create an Anaconda environment for _aeon\_mecha_, install it and then install _harp-python_ inside of this same environment. Optional packages required by some of the example Jupyter notebooks, but not essential for the main pipeline, are cv2, ffmpeg.
 
-## EASY WAY
+## EASY WAY 
+### using the macOS environment file (not tested on Linux)
 
-#### 1. Set up the environment
-Use the environment_macOS.yml file to create a new anaconda environment (will be named **aeon**). This file will set up all packages currently used on macOS for processing (but should work on Linux as well, not tested).
-```
-conda env create -f environment_macOS.yml
-```
-#### 2. Install _aeon\_mecha_ (if it failed from the yml file) 
-As of 2025/01, aeon\_mecha only works with python 3.11 and not later python versions. 
+In terminal, navigate to the GIT repo directory 
+e.g. `cd ~/Documents/GitHub/vestibular_vr_pipeline`, then run the following commands: 
 
-```python
-conda install python=3.11
+```
+conda create --name aeon python=3.11
+conda activate aeon
+conda install pip
+```
+```
 git clone https://github.com/SainsburyWellcomeCentre/aeon_mecha.git
 cd aeon_mecha
 python -m pip install -e .
+conda env update --name aeon --file environment_macOS.yml
 ```
 
-
-## THE OTHER WAY
+## THE OTHER WAY if the easy fails 
 #### 1. Create anaconda environment and add it to jupyter
 
 ```python
