@@ -53,7 +53,6 @@ dependencies:
   - zeromq=4.3.5=hcec6c5f_0
   - zlib=1.2.13=h4b97444_1
   - pip:
-      - aeon-mecha==0.1.0
       - annotated-types==0.7.0
       - anyio==4.8.0
       - appdirs==1.4.4
