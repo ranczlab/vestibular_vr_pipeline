@@ -22,8 +22,6 @@ git clone https://github.com/SainsburyWellcomeCentre/aeon_mecha.git
 cd aeon_mecha
 python -m pip install -e .
 ```
-In macOS if you get an error message, use 
-`conda install pip` before the last line
 
 
 ## THE OTHER WAY
