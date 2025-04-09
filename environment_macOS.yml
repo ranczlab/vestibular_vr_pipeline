@@ -156,7 +156,6 @@ dependencies:
       - pynwb==2.8.3
       - pyparsing==3.2.1
       - python-dotenv==1.0.1
-      - python-graphviz==0.20.3
       - python-json-logger==3.2.1
       - pytz==2024.2
       - pyyaml==6.0.2
