@@ -67,6 +67,11 @@ pip install opencv-python
 pip install pympler # usefull for monitoring memory during dev
 ```
 
+
+
+
+
+# Deprecated / to be updated as of 2025 April
 ## Repository contents
 
 ```
