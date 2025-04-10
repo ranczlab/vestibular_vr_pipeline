@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import h5py
+#import h5py
 from dotmap import DotMap
 from sklearn.linear_model import LinearRegression
 
