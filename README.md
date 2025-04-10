@@ -92,6 +92,9 @@ Some required packages will need to be installed manually when you run into pack
 The root_data folder can be compressed into a single file after processing and QC.
 For compression commands and details, see [#11.](https://github.com/ranczlab/vestibular_vr_pipeline/issues/11) 
 
+## Experiment pipeline 
+[**Experimental pipeline and methods**](https://docs.google.com/document/d/1UkOBx3uZtbhCc5_yBhKBODSrCfPjAb2A0im_NPJ_L8U/edit?pli=1&tab=t.0)
+
 # Deprecated / to be updated as of 2025 April
 ## Repository contents
 
