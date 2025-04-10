@@ -79,11 +79,11 @@ Some required packages will need to be installed manually when you run into pack
 ## Folder structure conventions at acquisition 
 - CohortX (numbered cohort of animals) 
   - experimentType_day (e.g. VestibularMismatch_day1)
-    - root_data directory (`animalID_yyyy-mm-ddThh-mm-ss`)
+    - root_data directory (`animalID-yyyy-mm-ddThh-mm-ss`)
       - all folders for Bonsai acquired data (`HarpData, ONIX, ExperimentEvents, SessionSettings, VideoData`)
       - photometry folder (containing `fluorescence_unaligned.csv`, etc...)
-    - root_results directory (`animalID_yyyy-mm-ddThh-mm-ss_processedData`)
-      - `Video_Sleap_Data1` and 2 folders (csv output file from SLEAP inference, naming as `Video_Sleap_Data1_1904-01-01T00-00-00.csv`) <- currently this needs to be copied manually
+    - root_results directory (`animalID-yyyy-mm-ddThh-mm-ss_processedData`)
+      - `Video_Sleap_Data1` and 2 folders (csv output file from SLEAP inference, naming as `Video_Sleap_Data1_1904-01-01T0X-00-00.csv`) <- currently this needs to be copied manually
       - `photometry` folder (output of photometry processing, `Processed_fluorescence.csv` and `info.csv`)
       - `donwnsampled_data` folder (parquet files for downsampled data streams) 
       - figures
