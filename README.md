@@ -12,6 +12,8 @@ The code mainly relies on <a href=https://github.com/harp-tech/harp-python>harp-
 ## EASY WAY 
 ### using the macOS environment file (not tested on Linux)
 
+if you don't have **anaconda**, install it from [here](https://www.anaconda.com/download)
+
 In terminal, navigate to the GIT repo directory 
 e.g. `cd ~/Documents/GitHub/vestibular_vr_pipeline`, then run the following commands: 
 
