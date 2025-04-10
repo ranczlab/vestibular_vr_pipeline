@@ -2,8 +2,8 @@
 
 This is the general pipeline for loading, preprocessing, aligning, quality checking and applying basic analysis to the data recorded on the <a href=https://ranczlab.github.io/RPM/>RPM</a> (e.g. running) using <a href=https://harp-tech.org/index.html>HARP devices</a>, eye movements data derived from <a href=https://sleap.ai/>SLEAP</a> and neural data (fiber photometry, Neuropixels).
 
-The definitions and parameters of the data streams are here: 
-https://docs.google.com/spreadsheets/d/1P-x9D8tPEta5BiX8FPnXMCIhDHmawuJMk9X9icllRH0/edit?usp=drive_link
+The definitions and parameters of the data streams are [here](https://docs.google.com/spreadsheets/d/1P-x9D8tPEta5BiX8FPnXMCIhDHmawuJMk9X9icllRH0/edit?usp=drive_link).
+
 
 ## Installation
 
@@ -11,6 +11,8 @@ The code mainly relies on <a href=https://github.com/harp-tech/harp-python>harp-
 
 ## EASY WAY 
 ### using the macOS environment file (not tested on Linux)
+
+if you don't have **anaconda**, install it from [here](https://www.anaconda.com/download)
 
 In terminal, navigate to the GIT repo directory 
 e.g. `cd ~/Documents/GitHub/vestibular_vr_pipeline`, then run the following commands: 
@@ -70,22 +72,33 @@ pip install opencv-python
 pip install pympler # usefull for monitoring memory during dev
 ```
 
+#### 6. Install yet other packages
+Some required packages will need to be installed manually when you run into package not found errors. 
+
 
 ## Folder structure conventions at acquisition 
 - CohortX (numbered cohort of animals) 
   - experimentType_day (e.g. VestibularMismatch_day1)
-    - root_data directory (`animalID_yyyy-mm-ddThh-mm-ss`)
+    - root_data directory (`animalID-yyyy-mm-ddThh-mm-ss`)
       - all folders for Bonsai acquired data (`HarpData, ONIX, ExperimentEvents, SessionSettings, VideoData`)
       - photometry folder (containing `fluorescence_unaligned.csv`, etc...)
-    - root_results directory (`animalID_yyyy-mm-ddThh-mm-ss_processedData`)
-      - `Video_Sleap_Data1` and 2 folders (csv output file from SLEAP inference, naming as `Video_Sleap_Data1_1904-01-01T00-00-00.csv`) <- currently this needs to be copied manually
+    - root_results directory (`animalID-yyyy-mm-ddThh-mm-ss_processedData`)
+      - `Video_Sleap_Data1` and 2 folders (csv output file from SLEAP inference, naming as `Video_Sleap_Data1_1904-01-01T0X-00-00.csv`) <- currently this needs to be copied manually
       - `photometry` folder (output of photometry processing, `Processed_fluorescence.csv` and `info.csv`)
       - `donwnsampled_data` folder (parquet files for downsampled data streams) 
       - figures
-      - `alldata_asynchronous.parquet` (non-downsampled, processed data) 
+      - `alldata_asynchronous.parquet` (non-downsampled, processed data)
+     
+__Saving SLEAP outputs:__
+When exporting SLEAP inference outputs (in SLEAP window >> File >> Export Analysis CSV >> Current Video), save the file in the same directory as the analysed video (has to be manually located) under following naming convention:
+e.g. _VideoData2_1904-01-14T04-00-00.sleap.csv_
 
+__Compression of raw data:__
 The root_data folder can be compressed into a single file after processing and QC.
 For compression commands and details, see [#11.](https://github.com/ranczlab/vestibular_vr_pipeline/issues/11) 
+
+## Experiment pipeline 
+[**Experimental pipeline and methods**](https://docs.google.com/document/d/1UkOBx3uZtbhCc5_yBhKBODSrCfPjAb2A0im_NPJ_L8U/edit?pli=1&tab=t.0)
 
 # Deprecated / to be updated as of 2025 April
 ## Repository contents
@@ -121,11 +134,7 @@ For compression commands and details, see [#11.](https://github.com/ranczlab/ves
 
 ## Conventions
 
-__Saving SLEAP outputs:__
 
-When exporting SLEAP inference outputs (in SLEAP window >> File >> Export Analysis CSV >> Current Video), save the file in the same directory as the analysed video (has to be manually located) under following naming convention:
-
-e.g. _VideoData2_1904-01-14T04-00-00.sleap.csv_
 
 ## Functions available
 
