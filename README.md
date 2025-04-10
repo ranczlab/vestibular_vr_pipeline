@@ -72,6 +72,9 @@ pip install opencv-python
 pip install pympler # usefull for monitoring memory during dev
 ```
 
+#### 6. Install yet other packages
+Some required packages will need to be installed manually when you run into package not found errors. 
+
 
 ## Folder structure conventions at acquisition 
 - CohortX (numbered cohort of animals) 
