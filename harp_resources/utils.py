@@ -562,7 +562,7 @@ def detect_and_remove_outliers(df, x_column, y_column, verbose=False):
             print(final_outliers[[x_column, y_column]])
             print(f"⚠️ Warning: {len(final_outliers)} outliers detected and removed.")
         else:
-            print(f"⚠️ Warning: {len(final_outliers)} outliers detected and removed.")
+            print(f"⚠️ Warning: {len(final_outliers)} HarpTime vs Clock outliers detected and removed.")
 
     return cleaned_data
 
