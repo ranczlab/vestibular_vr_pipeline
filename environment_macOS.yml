@@ -1,5 +1,6 @@
 name: aeon
 channels:
+  - conda-forge
   - anaconda
   - defaults
 dependencies:
