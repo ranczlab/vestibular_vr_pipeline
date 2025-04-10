@@ -87,8 +87,13 @@ Some required packages will need to be installed manually when you run into pack
       - `photometry` folder (output of photometry processing, `Processed_fluorescence.csv` and `info.csv`)
       - `donwnsampled_data` folder (parquet files for downsampled data streams) 
       - figures
-      - `alldata_asynchronous.parquet` (non-downsampled, processed data) 
+      - `alldata_asynchronous.parquet` (non-downsampled, processed data)
+     
+__Saving SLEAP outputs:__
+When exporting SLEAP inference outputs (in SLEAP window >> File >> Export Analysis CSV >> Current Video), save the file in the same directory as the analysed video (has to be manually located) under following naming convention:
+e.g. _VideoData2_1904-01-14T04-00-00.sleap.csv_
 
+__Compression of raw data:__
 The root_data folder can be compressed into a single file after processing and QC.
 For compression commands and details, see [#11.](https://github.com/ranczlab/vestibular_vr_pipeline/issues/11) 
 
@@ -129,11 +134,7 @@ For compression commands and details, see [#11.](https://github.com/ranczlab/ves
 
 ## Conventions
 
-__Saving SLEAP outputs:__
 
-When exporting SLEAP inference outputs (in SLEAP window >> File >> Export Analysis CSV >> Current Video), save the file in the same directory as the analysed video (has to be manually located) under following naming convention:
-
-e.g. _VideoData2_1904-01-14T04-00-00.sleap.csv_
 
 ## Functions available
 
