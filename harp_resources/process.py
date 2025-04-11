@@ -561,7 +561,6 @@ def resample_dataframe(df, target_freq_Hz=1000, optical_filter_Hz=33):
     position_cols = [col for col in df.columns if "Position" in col and col not in encoder_cols]
     eye_cols = [col for col in df.columns if "_eye" in col and "frame_idx" not in col and "Seconds" not in col]
     fluorescence_cols = [col for col in df.columns if col not in (encoder_cols + position_cols + eye_cols) and "frame_idx" not in col and "Seconds" not in col] #FIXME a bit ugly to call e.g. photodiode fluorescence and if we include more columns, we will be in trouble 
-    print (f"EYE col s=  {eye_cols}")
     # Create an empty DataFrame
     resampled_df = pd.DataFrame(index=new_index)
 
