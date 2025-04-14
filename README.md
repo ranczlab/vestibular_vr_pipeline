@@ -2,11 +2,35 @@
 
 This is the general pipeline for loading, preprocessing, aligning, quality checking and applying basic analysis to the data recorded on the <a href=https://ranczlab.github.io/RPM/>RPM</a> (e.g. running) using <a href=https://harp-tech.org/index.html>HARP devices</a>, eye movements data derived from <a href=https://sleap.ai/>SLEAP</a> and neural data (fiber photometry, Neuropixels).
 
+The definitions and parameters of the data streams are [here](https://docs.google.com/spreadsheets/d/1P-x9D8tPEta5BiX8FPnXMCIhDHmawuJMk9X9icllRH0/edit?usp=drive_link).
+
+
 ## Installation
 
 The code mainly relies on <a href=https://github.com/harp-tech/harp-python>harp-python</a> and <a href=https://github.com/SainsburyWellcomeCentre/aeon_mecha>aeon_mecha</a> packages. The proposed setup is to first create an Anaconda environment for _aeon\_mecha_, install it and then install _harp-python_ inside of this same environment. Optional packages required by some of the example Jupyter notebooks, but not essential for the main pipeline, are cv2, ffmpeg.
 
-### Create anaconda environment and add it to jupyter
+## EASY WAY 
+### using the macOS environment file (not tested on Linux)
+
+if you don't have **anaconda**, install it from [here](https://www.anaconda.com/download)
+
+In terminal, navigate to the GIT repo directory 
+e.g. `cd ~/Documents/GitHub/vestibular_vr_pipeline`, then run the following commands: 
+
+```
+conda create --name aeon python=3.11
+conda activate aeon
+conda install pip
+```
+```
+git clone https://github.com/SainsburyWellcomeCentre/aeon_mecha.git
+cd aeon_mecha
+python -m pip install -e .
+conda env update --name aeon --file environment_macOS.yml
+```
+
+## THE OTHER WAY if the easy fails 
+#### 1. Create anaconda environment and add it to jupyter
 
 ```python
 conda create -n aeon
@@ -15,30 +39,68 @@ conda install -c anaconda ipykernel
 python3 -m ipykernel install --user --name=aeon
 ```
 
-### Install _aeon\_mecha_
+#### 2. Install _aeon\_mecha_
+As of 2025/01, aeon\_mecha only works with python 3.11 and not later python versions. 
 
 ```python
+conda install python=3.11
 git clone https://github.com/SainsburyWellcomeCentre/aeon_mecha.git
 cd aeon_mecha
 python -m pip install -e .
 ```
-In macOS, use 
-`conda install pip` instead of the last line
+In macOS if you get an error message, use 
+`conda install pip` before the last line
 
-### Install _harp-python_
+#### 3. Install _harp-python_
 
 ```python
 pip install harp-python
 ```
 
-### Install other packages
+#### 4. Install SLEAP
+
+```python
+pip install sleap
+```
+
+#### 5. Install other packages
 
 ```python
 pip install lsq-ellipse
 pip install h5py
 pip install opencv-python
+pip install pympler # usefull for monitoring memory during dev
 ```
 
+#### 6. Install yet other packages
+Some required packages will need to be installed manually when you run into package not found errors. 
+
+
+## Folder structure conventions at acquisition 
+- CohortX (numbered cohort of animals) 
+  - experimentType_day (e.g. VestibularMismatch_day1)
+    - root_data directory (`animalID-yyyy-mm-ddThh-mm-ss`)
+      - all folders for Bonsai acquired data (`HarpData, ONIX, ExperimentEvents, SessionSettings, VideoData`)
+      - photometry folder (containing `fluorescence_unaligned.csv`, etc...)
+    - root_results directory (`animalID-yyyy-mm-ddThh-mm-ss_processedData`)
+      - `Video_Sleap_Data1` and 2 folders (csv output file from SLEAP inference, naming as `Video_Sleap_Data1_1904-01-01T0X-00-00.csv`) <- currently this needs to be copied manually
+      - `photometry` folder (output of photometry processing, `Processed_fluorescence.csv` and `info.csv`)
+      - `donwnsampled_data` folder (parquet files for downsampled data streams) 
+      - figures
+      - `alldata_asynchronous.parquet` (non-downsampled, processed data)
+     
+__Saving SLEAP outputs:__
+When exporting SLEAP inference outputs (in SLEAP window >> File >> Export Analysis CSV >> Current Video), save the file in the same directory as the analysed video (has to be manually located) under following naming convention:
+e.g. _VideoData2_1904-01-14T04-00-00.sleap.csv_
+
+__Compression of raw data:__
+The root_data folder can be compressed into a single file after processing and QC.
+For compression commands and details, see [#11.](https://github.com/ranczlab/vestibular_vr_pipeline/issues/11) 
+
+## Experiment pipeline 
+[**Experimental pipeline and methods**](https://docs.google.com/document/d/1UkOBx3uZtbhCc5_yBhKBODSrCfPjAb2A0im_NPJ_L8U/edit?pli=1&tab=t.0)
+
+# Deprecated / to be updated as of 2025 April
 ## Repository contents
 
 ```
@@ -72,11 +134,7 @@ pip install opencv-python
 
 ## Conventions
 
-__Saving SLEAP outputs:__
 
-When exporting SLEAP inference outputs (in SLEAP window >> File >> Export Analysis CSV >> Current Video), save the file in the same directory as the analysed video (has to be manually located) under following naming convention:
-
-e.g. _VideoData2_1904-01-14T04-00-00.sleap.csv_
 
 ## Functions available
 

@@ -1,0 +1,13 @@
+# Automatically normalize text files
+* text=auto
+
+# Enforce LF for specific files
+*.sh text eol=lf
+*.py text eol=lf
+*.js text eol=lf
+
+# Ensure Windows-specific files use CRLF
+*.bat text eol=crlf
+
+#enforce stripping of notebooks 
+*.ipynb filter=nbstripout
