@@ -509,7 +509,8 @@ class preprocess:
 
                 self.info['motion_correction'] = True
                 print(f'Motion correction APPLIED to all channels based on iso {iso_ch} and singal {signal_ch}. slope = {slope:.3f} and R-squared = {r_value**2:.3f}')
-                
+                return corrected_data
+
                 #debugging 
                 # Add new plot showing motion corrected signals
                 if plot:
@@ -563,18 +564,24 @@ class preprocess:
             print('dF/F: The method used for detrending was subtractive, deltaF/F is calculated now.')
             if self.info['motion_correction'] == False:
                 main_data = self.detrended
-                for signal, fit in zip(main_data, self.exp_fits):
-                    F = self.exp_fits[fit]
-                    deltaF = main_data[signal]
-                    signal_dF_F = deltaF / F
-                    dF_F[f'{signal[-3:]}_dfF'] = signal_dF_F
-            if self.info['motion_correction'] == True:
+            for signal, fit in zip(main_data, self.exp_fits):
+                F = self.exp_fits[fit]
+                deltaF = main_data[signal]
+                signal_dF_F = deltaF / F
+                dF_F[f'{signal[-3:]}_dfF'] = signal_dF_F
+        elif self.info['motion_correction'] == True:
+            if self.motion_corrected is None:
+                print("Warning: motion_corrected is None. Skipping motion correction.")
+            else:
+                for signal in self.motion_corrected.columns:
+                    dF_F[f'{signal[-3:]}_dfF'] = self.motion_corrected[signal]
                 main_data = self.motion_corrected
                 for signal, fit in zip(main_data, self.exp_fits):
                     F = self.exp_fits[fit]
                     deltaF = main_data[signal]
                     signal_dF_F = deltaF / F
                     dF_F[f'{signal[-3:]}_dfF'] = signal_dF_F
+
     
         if self.info['detrend_method'] == 'divisive': #already dF/F and was motion corrected  
             print('dF/F: Only doing motion correction if needed, as divisive detrending already resulted in deltaF/F')
@@ -587,6 +594,7 @@ class preprocess:
                 # Copy all motion corrected signals to dF_F
                 for signal in self.motion_corrected.columns:
                     dF_F[f'{signal[-3:]}_dfF'] = self.motion_corrected[signal]
+
     
         if plot:
             fig, axs = plt.subplots(len(dF_F.columns), figsize=(15, 10), sharex=True)
