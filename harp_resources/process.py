@@ -733,8 +733,6 @@ def plot_figure_1(df, session_name, save_path, common_resampled_rate, photodiode
     if show_figure:
         fig.show()
 
-
-
 def safe_to_json(x): # for session_settings saving
     if isinstance(x, DotMap):
         return json.dumps(x.toDict())  # Convert DotMap to JSON string
