@@ -17,7 +17,7 @@ data_paths = [Path(p) for p in data_dir.iterdir() if p.is_dir() and not p.name.e
 data_paths.sort()
 # static variables 
 vestibular_mismatch = False # if it is vestibular or visual MM, can be improved later with different experiment types, vestibular here means that the MM events are taken from the experiment_events instead of the photodiode
-event_name = "Apply Halt 2s" # event name to be used for the MM events; for visual "Apply Halt 2s" for vestibular "DrumWithReverseflow block started"
+event_name = "Apply halt: 2s" # event name to be used for the MM events; for visual "Apply Halt 2s" for vestibular "DrumWithReverseflow block started"
 sensor_resolution = 3100 #cpi, inferred empirical value from unit testing notebook  
 ball_radius = 0.1 # meters 
 optical_filter_Hz=40 #filter cutoff for Optical tracking and encoder signals
@@ -27,17 +27,21 @@ save_full_asynchronous_data = True #saves alldata before resampling
 has_heartbeat = False # is this the same as cohort2 or more complicated? see discussion in repo 
 cohort0 = False
 cohort2 = False
-has_sleap = False # FIXME make this algorythmic so it can handle folders according to SLEAP presence 
 #-------------------------------------------------------------------------------- 
 
 for path in data_paths:
     output_notebook = output_dir / f"output_{path.name}.ipynb"
-    
-    print(f"Running notebook for: {path}")
+    # Check if Sleap data exists
+    sleap_data_path1 = path.parent / f"{path.name}_processedData" / "Video_Sleap_Data1"
+    sleap_data_path2 = path.parent / f"{path.name}_processedData" / "Video_Sleap_Data2"
+    if sleap_data_path1.exists() or sleap_data_path2.exists():
+        has_sleap = True
+    else:
+        has_sleap = False
+    print(f"ℹ️  Running notebook for: {path}\nℹ️  Sleap data is {has_sleap}")
     pm.execute_notebook(
         notebook_path,
         output_notebook,
-        #parameters={'DATA_PATH': str(path)}
         parameters={
             "Data_path": str(path),  # Iterative parameter
             "Vestibular_mismatch": vestibular_mismatch,  # Static parameter
