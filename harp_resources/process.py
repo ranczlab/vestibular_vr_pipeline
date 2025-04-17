@@ -957,15 +957,7 @@ def analyze_photodiode(photodiode_aligned, experiment_events, event_name, plot=T
         plt.tight_layout()
         plt.show()
 
-    # # Ensure extra_falling_edges is always defined
-    # if 'extra_falling_edges' not in locals():
-    #     extra_falling_edges = pd.DatetimeIndex([])  # Ensure it's a valid DatetimeIndex
-
-    # # Convert min_diff and max_diff from ms to Timedelta
-    # min_tolerance = pd.Timedelta(milliseconds=min_diff)
-    # max_tolerance = pd.Timedelta(milliseconds=max_diff)
-
-    # Ensure extra_falling_edges is always defined --> modified nora
+    # Ensure extra_falling_edges is always defined
     if 'extra_falling_edges' not in locals():
         extra_falling_edges = pd.DatetimeIndex([])  # Ensure it's a valid DatetimeIndex
 
