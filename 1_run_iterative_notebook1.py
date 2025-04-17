@@ -12,7 +12,7 @@ output_dir.mkdir(parents=True, exist_ok=True) # Ensure the output directory exis
 #-------------------------------------------------------------------------------- 
 # data path (recording day directory)
 # data_dir = Path('/Users/rancze/Documents/Data/vestVR/Cohort1/Visual_Mismatch_day3')
-data_dir = Path('/Volumes/RanczLab2/20241125_Cohort1_rotation/Visual_mismatch_day3')
+data_dir = Path('/Volumes/RanczLab2/20250409_Cohort3_rotation/Training_day1')
 data_paths = [Path(p) for p in data_dir.iterdir() if p.is_dir() and not p.name.endswith('_processedData')]
 data_paths.sort()
 # static variables 
