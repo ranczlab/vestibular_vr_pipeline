@@ -24,9 +24,9 @@ optical_filter_Hz=40 #filter cutoff for Optical tracking and encoder signals
 common_resampled_rate = 1000 #in Hz
 save_full_asynchronous_data = True #saves alldata before resampling
 # helper flags 
-has_heartbeat = False # is this the same as cohort2 or more complicated? see discussion in repo 
+has_heartbeat = True # is this the same as cohort2 or more complicated? see discussion in repo 
 cohort0 = False
-cohort2 = False
+cohort2 = True
 #-------------------------------------------------------------------------------- 
 
 for path in data_paths:
