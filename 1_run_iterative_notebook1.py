@@ -12,8 +12,8 @@ output_dir.mkdir(parents=True, exist_ok=True) # Ensure the output directory exis
 #-------------------------------------------------------------------------------- 
 # data path (recording day directory)
 # data_dir = Path('/Users/rancze/Documents/Data/vestVR/Cohort1/Visual_Mismatch_day3')
-data_dir = Path('/Volumes/RanczLab2/20250409_Cohort3_rotation/Training_day1')
-data_paths = [Path(p) for p in data_dir.iterdir() if p.is_dir() and not p.name.endswith('_processedData')]
+data_dir = Path('~/RANCZLAB-NAS/data/ONIX/20250409_Cohort3_rotation/Visual_mismatch_day3').expanduser()
+data_paths = [p for p in data_dir.iterdir() if p.is_dir() and not p.name.endswith('_processedData')]
 data_paths.sort()
 # static variables 
 vestibular_mismatch = False # if it is vestibular or visual MM, can be improved later with different experiment types, vestibular here means that the MM events are taken from the experiment_events instead of the photodiode
