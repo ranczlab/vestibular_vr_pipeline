@@ -18,7 +18,7 @@ data_paths.sort()
 # static variables 
 vestibular_mismatch = False # if it is vestibular or visual MM, can be improved later with different experiment types, vestibular here means that the MM events are taken from the experiment_events instead of the photodiode
 event_name = "Apply halt: 2s" # event name to be used for the MM events; for visual "Apply Halt 2s" for vestibular "DrumWithReverseflow block started"
-sensor_resolution = 3100 #cpi, inferred empirical value from unit testing notebook  
+sensor_resolution = 3200 #cpi, inferred empirical value from unit testing notebook  
 ball_radius = 0.1 # meters 
 optical_filter_Hz=40 #filter cutoff for Optical tracking and encoder signals
 common_resampled_rate = 1000 #in Hz
