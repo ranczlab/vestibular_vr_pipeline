@@ -48,3 +48,7 @@ npm-debug.log*
 
 # Jupyter output management (optional, use nbstripout for cleaner commits)
 # *.ipynb is NOT ignored, as it contains critical notebook data.
+results_cohort1_vmm4_nohalt.pkl
+results_cohort1_vmm4_nohalt_baseline.pkl
+results_cohort3_vmm4_nohalt.pkl
+results_cohort3_vmm4_nohalt_baseline.pkl
