@@ -52,3 +52,4 @@ results_cohort1_vmm4_nohalt.pkl
 results_cohort1_vmm4_nohalt_baseline.pkl
 results_cohort3_vmm4_nohalt.pkl
 results_cohort3_vmm4_nohalt_baseline.pkl
+*.pkl
