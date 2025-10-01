@@ -223,7 +223,6 @@ class preprocess:
         signals = self.signals
         sensors = self.sensors
         filtered = pd.DataFrame(index=self.signals.index)
-        
         # Set x-axis limits
         if x_start is None:
             x_start = self.data_seconds['TimeStamp'].min()
@@ -248,11 +247,11 @@ class preprocess:
                 self.info['filtering_method'][signal] = 'auto'
             elif method == 'sensor': 
                 if sensor == 'G8m':
-                    Wn = 10
+                    Wn = 16
                 elif sensor == 'rG1':
-                    Wn = 10 
+                    Wn = 16 
                 elif sensor == 'g5-HT3':
-                    Wn = 5
+                    Wn = 16
                 elif isinstance(sensor, int):
                     Wn = 100 / (sensor / 3)
                 else:
@@ -319,8 +318,7 @@ class preprocess:
             plt.show()
             plt.close(fig)
             
-        return filtered    
-
+        return filtered
 
     def detrend(self, plot=False, method='divisive', savefig = False):
         '''
@@ -429,7 +427,8 @@ class preprocess:
             fig.suptitle(f'detrended data {self.info["mousename"]}, with method: {method}')
             if savefig:
                 plt.savefig(self.save_path + f'/Detrended_data_{self.info["mousename"]}.png', dpi=300)
-
+        
+        print(detrended.columns.tolist())  # Print the column names in the filtered DataFrame
         return detrended, exp_fits
 
 
@@ -907,3 +906,70 @@ class preprocess:
                     events[col]= data[col]
             
         return events#data[[event for event in events]]
+
+    #ratiometric dF/F function added sept. 2025
+    def get_ratiometric_dfF(self, baseline='median', plot=True, savefig=True):
+        """
+        Compute ratiometric dF/F using 470 nm over 560 nm signals.
+        
+        F(t) = 470F(t) / 560F(t)
+        dF/F(t) = (F(t) - F0) / F0
+
+        Args:
+            baseline (str or float): Method to calculate baseline F0.
+                - 'median': uses the median of F(t)
+                - 'mean': uses the mean of F(t)
+                - float: uses a user-provided scalar baseline
+            plot (bool): Whether to plot the ratiometric signal
+            savefig (bool): Whether to save the plot
+
+        Returns:
+            pandas.DataFrame: DataFrame with ratiometric F and dF/F signals
+        """
+        # # Check that both channels exist
+        # if '470' not in self.signals.columns or '560' not in self.signals.columns:
+        #     raise ValueError("Both 470 and 560 channels must be available in self.signals.")
+
+        # Compute raw ratio
+        ratio = self.detrended['detrend_filtered_470'] / self.detrended['detrend_filtered_560']
+
+        # Determine baseline F0
+        if baseline == 'median':
+            F0 = np.median(ratio)
+        elif baseline == 'mean':
+            F0 = np.mean(ratio)
+        elif isinstance(baseline, (int, float)):
+            F0 = baseline
+        else:
+            raise ValueError("Invalid baseline option. Choose 'median', 'mean', or a numeric value.")
+
+        # Compute ΔF/F
+        df_f = (ratio - F0) / F0
+
+        # Save to object
+        self.ratiometric = pd.DataFrame({
+            'F_ratio': ratio,
+            'dfF_ratio': df_f
+        })
+
+        if plot:
+            fig, axs = plt.subplots(2, 1, figsize=(12, 6), sharex=True)
+            axs[0].plot(self.data_seconds['TimeStamp'], ratio, color='steelblue')
+            axs[0].axhline(F0, color='red', linestyle='--', label=f'Baseline F0={F0:.3f}')
+            axs[0].set_ylabel("F (470/560)")
+            axs[0].legend()
+
+            axs[1].plot(self.data_seconds['TimeStamp'], df_f, color='darkgreen')
+            axs[1].set_xlabel("Time (s)")
+            axs[1].set_ylabel("ΔF/F (ratio)")
+            axs[1].set_title("Ratiometric ΔF/F")
+
+            plt.suptitle(f'Ratiometric ΔF/F for {self.info.get("mousename", "unknown")}')
+            plt.tight_layout()
+
+            if savefig:
+                plt.savefig(self.save_path + f'/ratiometric_dfF_{self.info["mousename"]}.png', dpi=300)
+
+            plt.show()
+        
+        return self.ratiometric
