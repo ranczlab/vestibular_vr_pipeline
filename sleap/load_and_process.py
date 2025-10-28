@@ -3,6 +3,8 @@ import numpy as np
 import pandas as pd
 from ellipse import LsqEllipse
 from scipy.ndimage import median_filter
+from concurrent.futures import ProcessPoolExecutor
+import multiprocessing as mp
 from . import horizontal_flip_script
 
 def load_df(path):
@@ -247,20 +249,134 @@ def get_eight_points_at_time(data_dict, point_name_list, t):
         points_coord_data.append(data_dict[point][t,:])
     return np.stack(points_coord_data, axis=0)
 
-def get_fitted_ellipse_parameters(coordinates_dict, columns_of_interest):
+def _get_all_points_pre_extracted(data_dict, point_name_list):
+    """
+    Pre-extract all points for all frames into a 3D array (n_frames, n_points, 2).
+    This is much faster than extracting frame-by-frame in the loop.
+    """
+    n_frames = data_dict[point_name_list[0]].shape[0]
+    n_points = len(point_name_list)
+    
+    # Pre-allocate array
+    points_array = np.zeros((n_frames, n_points, 2))
+    
+    # Extract all points at once
+    for i, point in enumerate(point_name_list):
+        points_array[:, i, :] = data_dict[point]
+    
+    return points_array
+
+def _fit_ellipse_single_frame(points):
+    """
+    Worker function to fit an ellipse to a single frame's points.
+    This function must be at module level to be pickled for multiprocessing.
+    
+    Args:
+        points: numpy array of shape (n_points, 2) containing the coordinates
+        
+    Returns:
+        tuple: (center, width, height, phi)
+    """
+    try:
+        reg = LsqEllipse()
+        reg.fit(points)
+        center, width, height, phi = reg.as_parameters()
+        return [width, height, phi], center
+    except Exception as e:
+        # Return NaN values if fitting fails
+        return [np.nan, np.nan, np.nan], [np.nan, np.nan]
+
+def _fit_ellipses_chunk(chunk_data):
+    """
+    Worker function to fit ellipses to a chunk of frames.
+    Reduces pickling overhead by processing multiple frames per worker.
+    
+    Args:
+        chunk_data: numpy array of shape (n_chunk_frames, n_points, 2)
+        
+    Returns:
+        list of results, each result is (params, center)
+    """
+    results = []
+    for t in range(chunk_data.shape[0]):
+        try:
+            reg = LsqEllipse()
+            points = chunk_data[t, :, :]
+            reg.fit(points)
+            center, width, height, phi = reg.as_parameters()
+            results.append(([width, height, phi], center))
+        except Exception as e:
+            results.append(([np.nan, np.nan, np.nan], [np.nan, np.nan]))
+    return results
+
+
+def get_fitted_ellipse_parameters(coordinates_dict, columns_of_interest, use_parallel=False, n_workers=None):
 
     # Collecting parameters of the fitted ellipse into an array over the whole recording
     # ellipse_parameters_data contents = (width, height, phi)
     # ellipse_center_points_data = (center_x, center_y)
-    ellipse_parameters_data = []
-    ellipse_center_points_data = []
-    for t in range(coordinates_dict[list(coordinates_dict.keys())[0]].shape[0]):
-        reg = LsqEllipse().fit(get_eight_points_at_time(coordinates_dict, columns_of_interest, t))
-        center, width, height, phi = reg.as_parameters()
-        ellipse_parameters_data.append([width, height, phi])
-        ellipse_center_points_data.append(center)
-    ellipse_parameters_data = np.array(ellipse_parameters_data)
-    ellipse_center_points_data = np.array(ellipse_center_points_data)
+    
+    # Pre-extract all point data to avoid repeated dictionary lookups and list operations
+    all_points = _get_all_points_pre_extracted(coordinates_dict, columns_of_interest)
+    
+    n_frames = all_points.shape[0]
+    
+    # Determine number of workers
+    if n_workers is None:
+        n_workers = mp.cpu_count()
+    
+    # Use parallel processing for larger datasets
+    # Note: Parallel processing uses fork on Linux/macOS (works well here)
+    # Falls back to sequential for small datasets or single worker
+    if use_parallel and n_frames > 100 and n_workers > 1:
+        print(f"ℹ️ Fitting ellipses to {n_frames} frames using {n_workers} parallel workers...")
+        
+        # Chunk frame indices to reduce communication overhead
+        # Use smaller number of chunks to minimize per-chunk overhead
+        n_chunks = n_workers  # 1 chunk per worker for minimal overhead
+        chunk_size = max(1, n_frames // n_chunks)
+        chunks = []
+        for i in range(0, n_frames, chunk_size):
+            end_idx = min(i + chunk_size, n_frames)
+            # Send only the data needed for this chunk (views reduce memory usage)
+            chunk_data = all_points[i:end_idx, :, :]
+            chunks.append(chunk_data)
+        
+        # Process chunks in parallel
+        with ProcessPoolExecutor(max_workers=n_workers) as executor:
+            chunk_results = list(executor.map(_fit_ellipses_chunk, chunks))
+        
+        # Flatten results from chunks
+        ellipse_parameters_data = []
+        ellipse_center_points_data = []
+        for chunk_result in chunk_results:
+            for params, center in chunk_result:
+                ellipse_parameters_data.append(params)
+                ellipse_center_points_data.append(center)
+        
+        ellipse_parameters_data = np.array(ellipse_parameters_data)
+        ellipse_center_points_data = np.array(ellipse_center_points_data)
+    else:
+        # Sequential processing (original algorithm)
+        if use_parallel:
+            print(f"ℹ️ Fitting ellipses to {n_frames} frames sequentially (n_workers={n_workers})...")
+        
+        ellipse_parameters_data = []
+        ellipse_center_points_data = []
+        
+        # Create reg object once to avoid repeated instantiation
+        reg = LsqEllipse()
+        
+        for t in range(n_frames):
+            # Direct array indexing instead of function call
+            points = all_points[t, :, :]
+            reg.fit(points)
+            center, width, height, phi = reg.as_parameters()
+            ellipse_parameters_data.append([width, height, phi])
+            ellipse_center_points_data.append(center)
+        
+        ellipse_parameters_data = np.array(ellipse_parameters_data)
+        ellipse_center_points_data = np.array(ellipse_center_points_data)
 
     return ellipse_parameters_data, ellipse_center_points_data
 
