@@ -172,9 +172,60 @@ def get_rotated_points(point_name, theta, reference_subtraced_coordinates_dict):
     rotated_points[:,1] = rotated_points[:,1] + temp_mean_center_coord[1]
     return rotated_points
 
-def find_horizontal_axis_angle(df, point1='left', point2='center'):
-    # Fits a line between original (unreferenced) left reference point and center of the pupil point, return the angle of the line
-    line_fn = np.polyfit(np.hstack([df[f'{point1}.x'].to_numpy(), df[f'{point2}.x'].to_numpy()]), np.hstack([df[f'{point1}.y'].to_numpy(), df[f'{point2}.y'].to_numpy()]), 1)
+def find_horizontal_axis_angle(df, point1='left', point2='center', min_valid_points=50):
+    """
+    Fits a line between original (unreferenced) reference points to determine horizontal axis angle.
+    Filters out NaN values before fitting.
+    
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        DataFrame containing coordinate data
+    point1 : str
+        First point name (default: 'left')
+    point2 : str
+        Second point name (default: 'center')
+    min_valid_points : int
+        Minimum number of valid (non-NaN) point pairs required for fitting (default: 50)
+    
+    Returns:
+    --------
+    float : Angle of the fitted line in radians
+    
+    Raises:
+    -------
+    ValueError : If insufficient valid data points are available
+    """
+    # Extract x and y coordinates for both points
+    x1 = df[f'{point1}.x'].to_numpy()
+    y1 = df[f'{point1}.y'].to_numpy()
+    x2 = df[f'{point2}.x'].to_numpy()
+    y2 = df[f'{point2}.y'].to_numpy()
+    
+    # Concatenate coordinates from both points
+    x_all = np.hstack([x1, x2])
+    y_all = np.hstack([y1, y2])
+    
+    # Filter out NaN values - keep only points where both x and y are valid
+    valid_mask = ~(np.isnan(x_all) | np.isnan(y_all))
+    x_valid = x_all[valid_mask]
+    y_valid = y_all[valid_mask]
+    
+    # Check if we have enough valid points
+    n_valid = len(x_valid)
+    if n_valid < min_valid_points:
+        total_points = len(x_all)
+        n_invalid = total_points - n_valid
+        raise ValueError(
+            f"Insufficient valid data points for line fitting. "
+            f"Found {n_valid} valid point pairs (required: {min_valid_points}), "
+            f"excluded {n_invalid} invalid pairs (NaNs). "
+            f"This may be due to too many blink periods or missing tracking data. "
+            f"Consider reducing blink detection sensitivity or checking data quality."
+        )
+    
+    # Fit line to valid data points
+    line_fn = np.polyfit(x_valid, y_valid, 1)
     line_fn = np.poly1d(line_fn)
     theta = np.arctan(line_fn[1])
     return theta
@@ -266,46 +317,69 @@ def _get_all_points_pre_extracted(data_dict, point_name_list):
     
     return points_array
 
-def _fit_ellipse_single_frame(points):
+def _fit_ellipse_single_frame(points, min_points=5):
     """
     Worker function to fit an ellipse to a single frame's points.
+    Filters out NaN values before fitting.
     This function must be at module level to be pickled for multiprocessing.
     
     Args:
         points: numpy array of shape (n_points, 2) containing the coordinates
+        min_points: minimum number of valid points required for fitting (default: 5)
         
     Returns:
-        tuple: (center, width, height, phi)
+        tuple: (params, center) where params is [width, height, phi] and center is [x, y]
     """
+    # Filter out NaN values - keep only points where both x and y are valid
+    valid_mask = ~(np.isnan(points[:, 0]) | np.isnan(points[:, 1]))
+    valid_points = points[valid_mask]
+    
+    # Check if we have enough valid points (ellipse fitting needs at least 5 points)
+    if len(valid_points) < min_points:
+        return [np.nan, np.nan, np.nan], [np.nan, np.nan]
+    
     try:
         reg = LsqEllipse()
-        reg.fit(points)
+        reg.fit(valid_points)
         center, width, height, phi = reg.as_parameters()
         return [width, height, phi], center
     except Exception as e:
         # Return NaN values if fitting fails
         return [np.nan, np.nan, np.nan], [np.nan, np.nan]
 
-def _fit_ellipses_chunk(chunk_data):
+def _fit_ellipses_chunk(chunk_data, min_points=5):
     """
     Worker function to fit ellipses to a chunk of frames.
+    Filters out NaN values before fitting.
     Reduces pickling overhead by processing multiple frames per worker.
     
     Args:
         chunk_data: numpy array of shape (n_chunk_frames, n_points, 2)
+        min_points: minimum number of valid points required for fitting (default: 5)
         
     Returns:
         list of results, each result is (params, center)
     """
     results = []
     for t in range(chunk_data.shape[0]):
+        points = chunk_data[t, :, :]
+        
+        # Filter out NaN values - keep only points where both x and y are valid
+        valid_mask = ~(np.isnan(points[:, 0]) | np.isnan(points[:, 1]))
+        valid_points = points[valid_mask]
+        
+        # Check if we have enough valid points (ellipse fitting needs at least 5 points)
+        if len(valid_points) < min_points:
+            results.append(([np.nan, np.nan, np.nan], [np.nan, np.nan]))
+            continue
+        
         try:
             reg = LsqEllipse()
-            points = chunk_data[t, :, :]
-            reg.fit(points)
+            reg.fit(valid_points)
             center, width, height, phi = reg.as_parameters()
             results.append(([width, height, phi], center))
         except Exception as e:
+            # Return NaN values if fitting fails
             results.append(([np.nan, np.nan, np.nan], [np.nan, np.nan]))
     return results
 
@@ -366,14 +440,31 @@ def get_fitted_ellipse_parameters(coordinates_dict, columns_of_interest, use_par
         
         # Create reg object once to avoid repeated instantiation
         reg = LsqEllipse()
+        min_points = 5  # Minimum points required for ellipse fitting
         
         for t in range(n_frames):
             # Direct array indexing instead of function call
             points = all_points[t, :, :]
-            reg.fit(points)
-            center, width, height, phi = reg.as_parameters()
-            ellipse_parameters_data.append([width, height, phi])
-            ellipse_center_points_data.append(center)
+            
+            # Filter out NaN values - keep only points where both x and y are valid
+            valid_mask = ~(np.isnan(points[:, 0]) | np.isnan(points[:, 1]))
+            valid_points = points[valid_mask]
+            
+            # Check if we have enough valid points
+            if len(valid_points) < min_points:
+                ellipse_parameters_data.append([np.nan, np.nan, np.nan])
+                ellipse_center_points_data.append([np.nan, np.nan])
+                continue
+            
+            try:
+                reg.fit(valid_points)
+                center, width, height, phi = reg.as_parameters()
+                ellipse_parameters_data.append([width, height, phi])
+                ellipse_center_points_data.append(center)
+            except Exception as e:
+                # Return NaN values if fitting fails
+                ellipse_parameters_data.append([np.nan, np.nan, np.nan])
+                ellipse_center_points_data.append([np.nan, np.nan])
         
         ellipse_parameters_data = np.array(ellipse_parameters_data)
         ellipse_center_points_data = np.array(ellipse_center_points_data)
@@ -384,8 +475,42 @@ def get_coordinates_dict(df, columns_of_interest):
     return {key:df[key].to_numpy() for key in columns_of_interest}
 
 def get_left_right_center_point(coordinates_dict):
-    x = np.hstack([coordinates_dict['left.x'], coordinates_dict['right.x']]).mean()
-    y = np.hstack([coordinates_dict['left.y'], coordinates_dict['right.y']]).mean()
+    """
+    Calculate the center point between left and right eye reference points.
+    Filters out NaN values before computing the mean.
+    
+    Parameters:
+    -----------
+    coordinates_dict : dict
+        Dictionary containing coordinate arrays with keys 'left.x', 'left.y', 'right.x', 'right.y'
+    
+    Returns:
+    --------
+    tuple : (x, y) coordinates of the center point
+    
+    Raises:
+    -------
+    ValueError : If insufficient valid data points are available
+    """
+    x_all = np.hstack([coordinates_dict['left.x'], coordinates_dict['right.x']])
+    y_all = np.hstack([coordinates_dict['left.y'], coordinates_dict['right.y']])
+    
+    # Filter out NaN values
+    x_valid = x_all[~np.isnan(x_all)]
+    y_valid = y_all[~np.isnan(y_all)]
+    
+    # Check if we have enough valid points
+    min_valid_points = 20  # Require at least 20 valid points
+    if len(x_valid) < min_valid_points or len(y_valid) < min_valid_points:
+        raise ValueError(
+            f"Insufficient valid data points for center point calculation. "
+            f"Found {len(x_valid)} valid x-coordinates and {len(y_valid)} valid y-coordinates "
+            f"(required: {min_valid_points} each). "
+            f"This may be due to too many blink periods or missing tracking data."
+        )
+    
+    x = np.mean(x_valid)
+    y = np.mean(y_valid)
     return (x, y)
 
 def get_reformatted_coordinates_dict(coordinates_dict, columns_of_interest):
