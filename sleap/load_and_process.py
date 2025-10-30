@@ -569,4 +569,4 @@ def detect_saccades_with_threshold(eye_data_stream, threshold_std_times=1):
     return harp_time_inds[detected_max_saccades_inds], detected_max_saccades[:,1]
 
 def calculate_saccade_frequency_within_time_range():
-    pass
+    pass 

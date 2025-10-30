@@ -42,12 +42,24 @@ from sleap import processing_functions as pf
 from sleap import saccade_processing as sp
 from sleap.saccade_processing import analyze_eye_video_saccades
 
+def get_eye_label(key):
+    """Return mapped user-viewable eye label for video key."""
+    return VIDEO_LABELS.get(key, key)
+
 
 # symbols to use ✅ ℹ️ ⚠️ ❗
 
 # %%
 # set up variables and load data 
 ############################################################################################################
+
+
+
+# User-editable friendly labels for plotting and console output:
+VIDEO_LABELS = {
+    "VideoData1": "VideoData1 (L)",
+    "VideoData2": "VideoData2 (R)"
+}
 
 plot_timeseries = False
 score_cutoff = 0.2 # for filtering out inferred points with low confidence, they get interpolated 
@@ -62,7 +74,11 @@ blink_merge_window_ms = 100  # merge blinks within this window (for double blink
 
 # for saccades
 refractory_period = 0.1  # sec
-k = 5  # for adaptive saccade threshold - Number of standard deviations (adjustable: 2-4 range works well) 
+## Separate adaptive saccade threshold (k) for each video:
+k1 = 4  # for VideoData1 (L)
+k2 = 5  # for VideoData2 (R)
+
+# for adaptive saccade threshold - Number of standard deviations (adjustable: 2-4 range works well) 
 onset_offset_fraction = 0.2  # to determine saccade onset and offset, i.e. o.2 is 20% of the peak velocity
 n_before = 10  # Number of points before detection peak to extract for peri-saccade-segments, points, so independent of FPS 
 n_after = 30   # Number of points after detection peak to extract
@@ -82,13 +98,13 @@ if VideoData1_Has_Sleap:
     VideoData1 = VideoData1.drop(columns=['track']) # drop the track column as it is empty
     coordinates_dict1_raw=lp.get_coordinates_dict(VideoData1, columns_of_interest)
     FPS_1 = 1 / VideoData1["Seconds"].diff().mean()  # frame rate for VideoData1 TODO where to save it, is it useful?
-    print(f"FPS_1: {FPS_1}")
+    print(f"{get_eye_label('VideoData1')}: FPS = {FPS_1}")
 
 if VideoData2_Has_Sleap:
     VideoData2 = VideoData2.drop(columns=['track']) # drop the track column as it is empty
     coordinates_dict2_raw=lp.get_coordinates_dict(VideoData2, columns_of_interest)
     FPS_2 = 1 / VideoData2["Seconds"].diff().mean()  # frame rate for VideoData2
-    print(f"FPS_2: {FPS_2}")
+    print(f"{get_eye_label('VideoData2')}: FPS = {FPS_2}")
 
 
 # %%
@@ -134,7 +150,7 @@ if plot_timeseries:
 
         fig1.update_layout(
             height=1200,
-            title_text="Time series subplots for coordinates [VideoData1]",
+            title_text=f"Time series subplots for coordinates [{get_eye_label('VideoData1')}]",
             showlegend=True
         )
         fig1.update_xaxes(title_text="Seconds", row=4, col=1)
@@ -168,7 +184,7 @@ if plot_timeseries:
 
         fig2.update_layout(
             height=1200,
-            title_text="Time series subplots for coordinates [VideoData2]",
+            title_text=f"Time series subplots for coordinates [{get_eye_label('VideoData2')}]",
             showlegend=True
         )
         fig2.update_xaxes(title_text="Seconds", row=4, col=1)
@@ -217,14 +233,17 @@ else:
 
 # Create the figure and axes
 fig, ax = plt.subplots(nrows=2, ncols=2, figsize=(18, 12))
-fig.suptitle('XY coordinate distribution of different points for VideoData1 (_dict1) and VideoData2 (_dict2) before outlier removal and NaN interpolation', fontsize=14)
+fig.suptitle(
+    f"XY coordinate distribution of different points for {get_eye_label('VideoData1')} and {get_eye_label('VideoData2')} before outlier removal and NaN interpolation", 
+    fontsize=14
+)
 
 # Define colormap for p1-p8
 colors = ['blue', 'green', 'red', 'cyan', 'magenta', 'yellow', 'black', 'orange']
 
 # Panel 1: left, right, center (dict1)
 if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
-    ax[0, 0].set_title('VideoData1 (_dict1): left, right, center')
+    ax[0, 0].set_title(f"{get_eye_label('VideoData1')}: left, right, center")
     ax[0, 0].scatter(coordinates_dict1_raw['left.x'], coordinates_dict1_raw['left.y'], color='black', label='left', s=10)
     ax[0, 0].scatter(coordinates_dict1_raw['right.x'], coordinates_dict1_raw['right.y'], color='grey', label='right', s=10)
     ax[0, 0].scatter(coordinates_dict1_raw['center.x'], coordinates_dict1_raw['center.y'], color='red', label='center', s=10)
@@ -238,7 +257,7 @@ else:
 
 # Panel 2: p1 to p8 (dict1)
 if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
-    ax[0, 1].set_title('VideoData1 (_dict1): p1 to p8')
+    ax[0, 1].set_title(f"{get_eye_label('VideoData1')}: p1 to p8")
     for idx, col in enumerate(columns_of_interest[3:]):
         ax[0, 1].scatter(coordinates_dict1_raw[f'{col}.x'], coordinates_dict1_raw[f'{col}.y'], color=colors[idx], label=col, s=5)
     ax[0, 1].set_xlim([x_min, x_max])
@@ -251,7 +270,7 @@ else:
 
 # Panel 3: left, right, center (dict2)
 if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
-    ax[1, 0].set_title('VideoData2 (_dict2): left, right, center')
+    ax[1, 0].set_title(f"{get_eye_label('VideoData2')}: left, right, center")
     ax[1, 0].scatter(coordinates_dict2_raw['left.x'], coordinates_dict2_raw['left.y'], color='black', label='left', s=10)
     ax[1, 0].scatter(coordinates_dict2_raw['right.x'], coordinates_dict2_raw['right.y'], color='grey', label='right', s=10)
     ax[1, 0].scatter(coordinates_dict2_raw['center.x'], coordinates_dict2_raw['center.y'], color='red', label='center', s=10)
@@ -265,7 +284,7 @@ else:
 
 # Panel 4: p1 to p8 (dict2)
 if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
-    ax[1, 1].set_title('VideoData2 (_dict2): p1 to p8')
+    ax[1, 1].set_title(f"{get_eye_label('VideoData2')}: p1 to p8")
     for idx, col in enumerate(columns_of_interest[3:]):
         ax[1, 1].scatter(coordinates_dict2_raw[f'{col}.x'], coordinates_dict2_raw[f'{col}.y'], color=colors[idx], label=col, s=5)
     ax[1, 1].set_xlim([x_min, x_max])
@@ -491,7 +510,7 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
     mean_center_x1 = VideoData1['center.x'].median()
     mean_center_y1 = VideoData1['center.y'].median()
 
-    print(f"VideoData1 - Centering on median pupil centre: \nMean center.x: {mean_center_x1}, Mean center.y: {mean_center_y1}")
+    print(f"{get_eye_label('VideoData1')} - Centering on median pupil centre: \nMean center.x: {mean_center_x1}, Mean center.y: {mean_center_y1}")
 
     # Translate the coordinates
     for col in columns_of_interest:
@@ -508,7 +527,7 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
     mean_center_x2 = VideoData2['center.x'].median()
     mean_center_y2 = VideoData2['center.y'].median()
 
-    print(f"VideoData2 - Centering on median pupil centre: \nMean center.x: {mean_center_x2}, Mean center.y: {mean_center_y2}")
+    print(f"{get_eye_label('VideoData2')} - Centering on median pupil centre: \nMean center.x: {mean_center_x2}, Mean center.y: {mean_center_y2}")
 
     # Translate the coordinates
     for col in columns_of_interest:
@@ -550,8 +569,8 @@ if not NaNs_removed:
         max_low_score_count1 = low_score_counts1[max_low_score_channel1]
         
         # Print the channel with the maximum number of low-score points
-        print(f"VideoData1 - Channel with the maximum number of low-confidence points: {max_low_score_channel1}, Number of low-confidence points: {max_low_score_count1}")
-        print(f"VideoData1 - A total number of {total_low_score1} low-confidence coordinate values were replaced by interpolation")
+        print(f"{get_eye_label('VideoData1')} - Channel with the maximum number of low-confidence points: {max_low_score_channel1}, Number of low-confidence points: {max_low_score_count1}")
+        print(f"{get_eye_label('VideoData1')} - A total number of {total_low_score1} low-confidence coordinate values were replaced by interpolation")
 
     # VideoData2 score-based filtering
     if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
@@ -575,8 +594,8 @@ if not NaNs_removed:
         max_low_score_count2 = low_score_counts2[max_low_score_channel2]
         
         # Print the channel with the maximum number of low-score points
-        print(f"VideoData2 - Channel with the maximum number of low-confidence points: {max_low_score_channel2}, Number of low-confidence points: {max_low_score_count2}")
-        print(f"VideoData2 - A total number of {total_low_score2} low-confidence coordinate values were replaced by interpolation")
+        print(f"{get_eye_label('VideoData2')} - Channel with the maximum number of low-confidence points: {max_low_score_channel2}, Number of low-confidence points: {max_low_score_count2}")
+        print(f"{get_eye_label('VideoData2')} - A total number of {total_low_score2} low-confidence coordinate values were replaced by interpolation")
 
     ############################################################################################################
     # remove outliers (x times SD)
@@ -598,11 +617,11 @@ if not NaNs_removed:
         max_outliers_count1 = outliers1[max_outliers_channel1]
 
         # Print the channel with the maximum number of outliers and the number
-        print(f"VideoData1 - Channel with the maximum number of outliers: {max_outliers_channel1}, Number of outliers: {max_outliers_count1}")
+        print(f"{get_eye_label('VideoData1')} - Channel with the maximum number of outliers: {max_outliers_channel1}, Number of outliers: {max_outliers_count1}")
 
         # Print the total number of outliers
         total_outliers1 = sum(outliers1.values())
-        print(f"VideoData1 - A total number of {total_outliers1} outliers were replaced by interpolation")
+        print(f"{get_eye_label('VideoData1')} - A total number of {total_outliers1} outliers were replaced by interpolation")
 
         # Replace outliers by interpolating between the previous and subsequent non-NaN value
         for col in columns_of_interest:
@@ -625,11 +644,11 @@ if not NaNs_removed:
         max_outliers_count2 = outliers2[max_outliers_channel2]
 
         # Print the channel with the maximum number of outliers and the number
-        print(f"VideoData2 - Channel with the maximum number of outliers: {max_outliers_channel2}, Number of outliers: {max_outliers_count2}")
+        print(f"{get_eye_label('VideoData2')} - Channel with the maximum number of outliers: {max_outliers_channel2}, Number of outliers: {max_outliers_count2}")
 
         # Print the total number of outliers
         total_outliers2 = sum(outliers2.values())
-        print(f"VideoData2 - A total number of {total_outliers2} outliers were replaced by interpolation")
+        print(f"{get_eye_label('VideoData2')} - A total number of {total_outliers2} outliers were replaced by interpolation")
 
         # Replace outliers by interpolating between the previous and subsequent non-NaN value
         for col in columns_of_interest:
@@ -654,7 +673,7 @@ print("\n=== Blink Detection ===")
 
 # VideoData1 blink detection
 if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
-    print(f"\nVideoData1 - Blink Detection")
+    print(f"\n{get_eye_label('VideoData1')} - Blink Detection")
     
     # Calculate frame-based durations (using FPS_1 if available, otherwise estimate)
     if 'FPS_1' in globals():
@@ -751,7 +770,7 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
 
 # VideoData2 blink detection
 if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
-    print(f"\nVideoData2 - Blink Detection")
+    print(f"\n{get_eye_label('VideoData2')} - Blink Detection")
     
     # Calculate frame-based durations (using FPS_2 if available, otherwise estimate)
     if 'FPS_2' in globals():
@@ -864,10 +883,10 @@ if plot_timeseries:
             shared_xaxes=True,
             vertical_spacing=0.05,
             subplot_titles=(
-                "VideoData1 - X coordinates for pupil centre and left-right eye corner",
-                "VideoData1 - Y coordinates for pupil centre and left-right eye corner",
-                "VideoData1 - X coordinates for iris points",
-                "VideoData1 - Y coordinates for iris points"
+                f"VideoData1 - X coordinates for pupil centre and left-right eye corner",
+                f"VideoData1 - Y coordinates for pupil centre and left-right eye corner",
+                f"VideoData1 - X coordinates for iris points",
+                f"VideoData1 - Y coordinates for iris points"
             )
         )
 
@@ -891,7 +910,7 @@ if plot_timeseries:
 
         fig1.update_layout(
             height=1200,
-            title_text="VideoData1 - Time series subplots for coordinates (QC after interpolation)",
+            title_text=f"VideoData1 - Time series subplots for coordinates (QC after interpolation)",
             showlegend=True
         )
         fig1.update_xaxes(title_text="Seconds", row=4, col=1)
@@ -909,10 +928,10 @@ if plot_timeseries:
             shared_xaxes=True,
             vertical_spacing=0.05,
             subplot_titles=(
-                "VideoData2 - X coordinates for pupil centre and left-right eye corner",
-                "VideoData2 - Y coordinates for pupil centre and left-right eye corner",
-                "VideoData2 - X coordinates for iris points",
-                "VideoData2 - Y coordinates for iris points"
+                f"VideoData2 - X coordinates for pupil centre and left-right eye corner",
+                f"VideoData2 - Y coordinates for pupil centre and left-right eye corner",
+                f"VideoData2 - X coordinates for iris points",
+                f"VideoData2 - Y coordinates for iris points"
             )
         )
 
@@ -936,7 +955,7 @@ if plot_timeseries:
 
         fig2.update_layout(
             height=1200,
-            title_text="VideoData2 - Time series subplots for coordinates (QC after interpolation)",
+            title_text=f"VideoData2 - Time series subplots for coordinates (QC after interpolation)",
             showlegend=True
         )
         fig2.update_xaxes(title_text="Seconds", row=4, col=1)
@@ -987,14 +1006,17 @@ elif VideoData2_Has_Sleap:
     x_min, x_max, y_min, y_max = x_min2, x_max2, y_min2, y_max2
 
 fig, ax = plt.subplots(nrows=2, ncols=2, figsize=(18, 12))
-fig.suptitle('XY coordinate distribution of different points for VideoData1 and VideoData2 post outlier removal and NaN interpolation)', fontsize=14)
+fig.suptitle(
+    f"XY coordinate distribution of different points for {get_eye_label('VideoData1')} and {get_eye_label('VideoData2')} post outlier removal and NaN interpolation",
+    fontsize=14
+)
 
 # Define colormap for p1-p8
 colors = ['blue', 'green', 'red', 'cyan', 'magenta', 'yellow', 'black', 'orange']
 
 # Panel 1: left, right, center (VideoData1)
 if VideoData1_Has_Sleap:
-    ax[0, 0].set_title('VideoData1: left, right, center')
+    ax[0, 0].set_title(f"{get_eye_label('VideoData1')}: left, right, center")
     ax[0, 0].scatter(coordinates_dict1_processed['left.x'], coordinates_dict1_processed['left.y'], color='black', label='left', s=10)
     ax[0, 0].scatter(coordinates_dict1_processed['right.x'], coordinates_dict1_processed['right.y'], color='grey', label='right', s=10)
     ax[0, 0].scatter(coordinates_dict1_processed['center.x'], coordinates_dict1_processed['center.y'], color='red', label='center', s=10)
@@ -1005,7 +1027,7 @@ if VideoData1_Has_Sleap:
     ax[0, 0].legend(loc='upper right')
 
     # Panel 2: p1 to p8 (VideoData1)
-    ax[0, 1].set_title('VideoData1: p1 to p8')
+    ax[0, 1].set_title(f"{get_eye_label('VideoData1')}: p1 to p8")
     for idx, col in enumerate(columns_of_interest[3:]):
         ax[0, 1].scatter(coordinates_dict1_processed[f'{col}.x'], coordinates_dict1_processed[f'{col}.y'], color=colors[idx], label=col, s=5)
     ax[0, 1].set_xlim([x_min, x_max])
@@ -1016,7 +1038,7 @@ if VideoData1_Has_Sleap:
 
 # Panel 3: left, right, center (VideoData2)
 if VideoData2_Has_Sleap:
-    ax[1, 0].set_title('VideoData2: left, right, center')
+    ax[1, 0].set_title(f"{get_eye_label('VideoData2')}: left, right, center")
     ax[1, 0].scatter(coordinates_dict2_processed['left.x'], coordinates_dict2_processed['left.y'], color='black', label='left', s=10)
     ax[1, 0].scatter(coordinates_dict2_processed['right.x'], coordinates_dict2_processed['right.y'], color='grey', label='right', s=10)
     ax[1, 0].scatter(coordinates_dict2_processed['center.x'], coordinates_dict2_processed['center.y'], color='red', label='center', s=10)
@@ -1027,7 +1049,7 @@ if VideoData2_Has_Sleap:
     ax[1, 0].legend(loc='upper right')
 
     # Panel 4: p1 to p8 (VideoData2)
-    ax[1, 1].set_title('VideoData2: p1 to p8')
+    ax[1, 1].set_title(f"{get_eye_label('VideoData2')}: p1 to p8")
     for idx, col in enumerate(columns_of_interest[3:]):
         ax[1, 1].scatter(coordinates_dict2_processed[f'{col}.x'], coordinates_dict2_processed[f'{col}.y'], color=colors[idx], label=col, s=5)
     ax[1, 1].set_xlim([x_min, x_max])
@@ -1047,7 +1069,7 @@ columns_of_interest = ['left.x','left.y','center.x','center.y','right.x','right.
 
 # VideoData1 processing
 if VideoData1_Has_Sleap:
-    print("=== VideoData1 Ellipse Fitting for Pupil Diameter ===")
+    print(f"=== VideoData1 Ellipse Fitting for Pupil Diameter ===")
     coordinates_dict1_processed = lp.get_coordinates_dict(VideoData1, columns_of_interest)
 
     theta1 = lp.find_horizontal_axis_angle(VideoData1, 'left', 'center')
@@ -1067,7 +1089,7 @@ if VideoData1_Has_Sleap:
 
 # VideoData2 processing
 if VideoData2_Has_Sleap:
-    print("=== VideoData2 Ellipse Fitting for Pupil Diameter ===")
+    print(f"=== VideoData2 Ellipse Fitting for Pupil Diameter ===")
     coordinates_dict2_processed = lp.get_coordinates_dict(VideoData2, columns_of_interest)
 
     theta2 = lp.find_horizontal_axis_angle(VideoData2, 'left', 'center')
@@ -1091,7 +1113,7 @@ if VideoData2_Has_Sleap:
 
 # VideoData1 filtering
 if VideoData1_Has_Sleap:
-    print("\n=== VideoData1 Filtering ===")
+    print(f"\n=== VideoData1 Filtering ===")
     # Butterworth filter parameters
     fs1 = 1 / np.median(np.diff(SleapVideoData1['Seconds']))  # Sampling frequency (Hz)
     order = 6
@@ -1119,7 +1141,7 @@ if VideoData1_Has_Sleap:
 
 # VideoData2 filtering
 if VideoData2_Has_Sleap:
-    print("=== VideoData2 Filtering ===")
+    print(f"=== VideoData2 Filtering ===")
     fs2 = 1 / np.median(np.diff(SleapVideoData2['Seconds']))  # Sampling frequency (Hz)
     order = 6
 
@@ -1164,7 +1186,7 @@ if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
             x=SleapVideoData1['Seconds'],
             y=SleapVideoData1['Ellipse.Diameter'],
             mode='lines',
-            name="VideoData1 Pupil Diameter",
+            name=f"VideoData1 Pupil Diameter",
             line=dict(color='blue')
         ),
         row=1, col=1
@@ -1176,7 +1198,7 @@ if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
             x=SleapVideoData2['Seconds'],
             y=SleapVideoData2['Ellipse.Diameter'],
             mode='lines',
-            name="VideoData2 Pupil Diameter",
+            name=f"VideoData2 Pupil Diameter",
             line=dict(color='red')
         ),
         row=1, col=1
@@ -1286,7 +1308,7 @@ if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
     fig.update_layout(
         height=800,
         width=1000,
-        title_text="SLEAP Pupil Diameter Analysis: Comparison & Cross-Correlation"
+        title_text=f"SLEAP Pupil Diameter Analysis: Comparison & Cross-Correlation"
     )
 
     fig.show()
@@ -1323,14 +1345,14 @@ else:
 
 if VideoData1_Has_Sleap is True:
     if VideoData1['Seconds'].equals(SleapVideoData1['Seconds']) is False:
-        print("❗ Video1: The 'Seconds' columns DO NOT correspond 1:1 between the two DataFrames. This should not happen")
+        print(f"❗ {get_eye_label('VideoData1')}: The 'Seconds' columns DO NOT correspond 1:1 between the two DataFrames. This should not happen")
     else:
         VideoData1 = VideoData1.merge(SleapVideoData1, on='Seconds', how='outer')
         del SleapVideoData1
 
 if VideoData2_Has_Sleap is True:
     if VideoData2['Seconds'].equals(SleapVideoData2['Seconds']) is False:
-        print("❗ Video2: The 'Seconds' columns DO NOT correspond 1:1 between the two DataFrames. This should not happen")
+        print(f"❗ {get_eye_label('VideoData2')}: The 'Seconds' columns DO NOT correspond 1:1 between the two DataFrames. This should not happen")
     else:
         VideoData2 = VideoData2.merge(SleapVideoData2, on='Seconds', how='outer')
         del SleapVideoData2
@@ -1345,45 +1367,45 @@ None
 # 1) Compute correlations for VideoData1
 # ------------------------------------------------------------------
 if VideoData1_Has_Sleap is True:
-    print("=== VideoData1 Analysis ===")
+    print(f"=== VideoData1 Analysis ===")
     slope_x1, intercept_x1, r_value_x1, p_value_x1, std_err_x1 = linregress(
         VideoData1["Ellipse.Center.X"], 
         VideoData1["center.x"]
     )
     r_squared_x1 = r_value_x1**2
-    print(f"VideoData1 - R^2 between center point and ellipse center X data: {r_squared_x1:.4f}")
+    print(f"{get_eye_label('VideoData1')} - R^2 between center point and ellipse center X data: {r_squared_x1:.4f}")
 
     slope_y1, intercept_y1, r_value_y1, p_value_y1, std_err_y1 = linregress(
         VideoData1["Ellipse.Center.Y"], 
         VideoData1["center.y"]
     )
     r_squared_y1 = r_value_y1**2
-    print(f"VideoData1 - R^2 between center point and ellipse center Y data: {r_squared_y1:.4f}")
+    print(f"{get_eye_label('VideoData1')} - R^2 between center point and ellipse center Y data: {r_squared_y1:.4f}")
 
 # ------------------------------------------------------------------
 # 2) Compute correlations for VideoData2
 # ------------------------------------------------------------------
 if VideoData2_Has_Sleap is True:
-    print("\n=== VideoData2 Analysis ===")
+    print(f"\n=== VideoData2 Analysis ===")
     slope_x2, intercept_x2, r_value_x2, p_value_x2, std_err_x2 = linregress(
         VideoData2["Ellipse.Center.X"], 
         VideoData2["center.x"]
     )
     r_squared_x2 = r_value_x2**2
-    print(f"VideoData2 - R^2 between center point and ellipse center X data: {r_squared_x2:.4f}")
+    print(f"{get_eye_label('VideoData2')} - R^2 between center point and ellipse center X data: {r_squared_x2:.4f}")
 
     slope_y2, intercept_y2, r_value_y2, p_value_y2, std_err_y2 = linregress(
         VideoData2["Ellipse.Center.Y"], 
         VideoData2["center.y"]
     )
     r_squared_y2 = r_value_y2**2
-    print(f"VideoData2 - R^2 between center point and ellipse center Y data: {r_squared_y2:.4f}")
+    print(f"{get_eye_label('VideoData2')} - R^2 between center point and ellipse center Y data: {r_squared_y2:.4f}")
 
 # ------------------------------------------------------------------
 # 3) Center of Mass Analysis (if both VideoData1 and VideoData2 are available)
 # ------------------------------------------------------------------
 if VideoData1_Has_Sleap is True and VideoData2_Has_Sleap is True:
-    print("\n=== Center of Mass Distance Analysis ===")
+    print(f"\n=== Center of Mass Distance Analysis ===")
     
     # Calculate center of mass (mean) for VideoData1
     com_center_x1 = VideoData1["center.x"].mean()
@@ -1395,7 +1417,7 @@ if VideoData1_Has_Sleap is True and VideoData2_Has_Sleap is True:
     dist_x1 = abs(com_center_x1 - com_ellipse_x1)
     dist_y1 = abs(com_center_y1 - com_ellipse_y1)
     
-    print(f"\nVideoData1:")
+    print(f"\n{get_eye_label('VideoData1')}:")
     print(f"  Center of mass for center.x/y: ({com_center_x1:.4f}, {com_center_y1:.4f})")
     print(f"  Center of mass for Ellipse.Center.X/Y: ({com_ellipse_x1:.4f}, {com_ellipse_y1:.4f})")
     print(f"  Absolute distance in X: {dist_x1:.4f} pixels")
@@ -1411,7 +1433,7 @@ if VideoData1_Has_Sleap is True and VideoData2_Has_Sleap is True:
     dist_x2 = abs(com_center_x2 - com_ellipse_x2)
     dist_y2 = abs(com_center_y2 - com_ellipse_y2)
     
-    print(f"\nVideoData2:")
+    print(f"\n{get_eye_label('VideoData2')}:")
     print(f"  Center of mass for center.x/y: ({com_center_x2:.4f}, {com_center_y2:.4f})")
     print(f"  Center of mass for Ellipse.Center.X/Y: ({com_ellipse_x2:.4f}, {com_ellipse_y2:.4f})")
     print(f"  Absolute distance in X: {dist_x2:.4f} pixels")
@@ -1432,7 +1454,7 @@ if VideoData1_Has_Sleap is True:
     VideoData1["Ellipse.Center.X"] = VideoData1["Ellipse.Center.X"] - median_ellipse_x1
     VideoData1["Ellipse.Center.Y"] = VideoData1["Ellipse.Center.Y"] - median_ellipse_y1
     
-    print(f"VideoData1 - Re-centered Ellipse.Center using median: ({median_ellipse_x1:.4f}, {median_ellipse_y1:.4f})")
+    print(f"{get_eye_label('VideoData1')} - Re-centered Ellipse.Center using median: ({median_ellipse_x1:.4f}, {median_ellipse_y1:.4f})")
 
 # Re-center VideoData2 Ellipse.Center coordinates
 if VideoData2_Has_Sleap is True:
@@ -1444,7 +1466,7 @@ if VideoData2_Has_Sleap is True:
     VideoData2["Ellipse.Center.X"] = VideoData2["Ellipse.Center.X"] - median_ellipse_x2
     VideoData2["Ellipse.Center.Y"] = VideoData2["Ellipse.Center.Y"] - median_ellipse_y2
     
-    print(f"VideoData2 - Re-centered Ellipse.Center using median: ({median_ellipse_x2:.4f}, {median_ellipse_y2:.4f})")
+    print(f"{get_eye_label('VideoData2')} - Re-centered Ellipse.Center using median: ({median_ellipse_x2:.4f}, {median_ellipse_y2:.4f})")
 
 
 
@@ -1517,7 +1539,7 @@ if VideoData1_Has_Sleap:
             linewidth=0.5, c='red', alpha=0.6, label='Ellipse Center.X')
     ax1.set_xlabel('Time (s)')
     ax1.set_ylabel('Position (pixels)')
-    ax1.set_title('VideoData1 - center.X Time Series')
+    ax1.set_title(f"{get_eye_label('VideoData1')} - center.X Time Series")
     ax1.legend()
     ax1.grid(True, alpha=0.3)
 
@@ -1530,7 +1552,7 @@ if VideoData2_Has_Sleap:
             linewidth=0.5, c='red', alpha=0.6, label='Ellipse Center.X')
     ax2.set_xlabel('Time (s)')
     ax2.set_ylabel('Position (pixels)')
-    ax2.set_title('VideoData2 - center.X Time Series')
+    ax2.set_title(f"{get_eye_label('VideoData2')} - center.X Time Series")
     ax2.legend()
     ax2.grid(True, alpha=0.3)
 
@@ -1556,7 +1578,7 @@ if VideoData1_Has_Sleap:
     
     ax3.set_xlabel('Center X (pixels)')
     ax3.set_ylabel('Center Y (pixels)')
-    ax3.set_title('VideoData1 - Center X-Y Distribution (center.X vs Ellipse)')
+    ax3.set_title(f"{get_eye_label('VideoData1')} - Center X-Y Distribution (center.X vs Ellipse)")
     ax3.legend()
     ax3.grid(True, alpha=0.3)
     
@@ -1604,7 +1626,7 @@ if VideoData2_Has_Sleap:
     
     ax4.set_xlabel('Center X (pixels)')
     ax4.set_ylabel('Center Y (pixels)')
-    ax4.set_title('VideoData2 - Center X-Y Distribution (center.X vs Ellipse)')
+    ax4.set_title(f"{get_eye_label('VideoData2')} - Center X-Y Distribution (center.X vs Ellipse)")
     ax4.legend()
     ax4.grid(True, alpha=0.3)
     
@@ -1760,9 +1782,11 @@ fig = make_subplots(
     rows=3, cols=1,
     shared_xaxes=True,
     vertical_spacing=0.08,
-    subplot_titles=('VideoData1 - center.X Time Series', 
-                    'VideoData2 - center.X Time Series',
-                    'Ellipse.Center.X Comparison with Difference'),
+    subplot_titles=(
+        f"{get_eye_label('VideoData1')} - center.X Time Series",
+        f"{get_eye_label('VideoData2')} - center.X Time Series",
+        "Ellipse.Center.X Comparison with Difference"
+    ),
     specs=[[{}], [{}], [{"secondary_y": True}]]  # Enable secondary_y for row 3
 )
 
@@ -1933,19 +1957,22 @@ if VideoData2_Has_Sleap:
 saccade_results = {}
 
 if VideoData1_Has_Sleap:
+    print(f"\n🔎 === Source: ({get_eye_label('VideoData1')}) ===\n")
     df1 = VideoData1[['Ellipse.Center.X', 'Seconds']].copy()
     saccade_results['VideoData1'] = analyze_eye_video_saccades(
-        df1, FPS_1, "VideoData1",
-        k=k, refractory_period=refractory_period,
+        df1, FPS_1, get_eye_label('VideoData1'),
+        k=k1, refractory_period=refractory_period,
         onset_offset_fraction=onset_offset_fraction,
         n_before=n_before, n_after=n_after, baseline_n_points=5
     )
 
+
 if VideoData2_Has_Sleap:
+    print(f"\n🔎 === Source: ({get_eye_label('VideoData2')}) ===\n")
     df2 = VideoData2[['Ellipse.Center.X', 'Seconds']].copy()
     saccade_results['VideoData2'] = analyze_eye_video_saccades(
-        df2, FPS_2, "VideoData2",
-        k=k, refractory_period=refractory_period,
+        df2, FPS_2, get_eye_label('VideoData2'),
+        k=k2, refractory_period=refractory_period,
         onset_offset_fraction=onset_offset_fraction,
         n_before=n_before, n_after=n_after, baseline_n_points=5
     )
@@ -2211,7 +2238,7 @@ for video_key, res in saccade_results.items():
 
     # Update layout
     fig_all.update_layout(
-        title_text=f'All Detected Saccades Overlaid - Position and Velocity Profiles<br><sub>Position traces are baselined (avg of points -{n_before} to -{n_before-5}). All traces in semi-transparent, mean in bold. Time=0 is threshold crossing. {n_before} points before, {n_after} after.</sub>',
+        title_text=f'All Detected Saccades Overlaid ({get_eye_label(video_key)}) - Position and Velocity Profiles<br><sub>Position traces are baselined (avg of points -{n_before} to -{n_before-5}). All traces in semi-transparent, mean in bold. Time=0 is threshold crossing. {n_before} points before, {n_after} after.</sub>',
         height=500,
         width=1600,
         showlegend=False
@@ -2593,7 +2620,7 @@ for video_key, res in saccade_results.items():
 
     # Update layout
     fig_qc.update_layout(
-        title_text='Saccade Amplitude QC: Distributions, Correlations, and Segments (Outlier Detection)',
+        title_text=f'Saccade Amplitude QC: Distributions, Correlations, and Segments (Outlier Detection, {get_eye_label(video_key)})',
         height=1200,
         showlegend=False
     )
@@ -2617,22 +2644,19 @@ for video_key, res in saccade_results.items():
     # Print correlation statistics
     print("\n=== SACCADE AMPLITUDE-DURATION CORRELATION ===\n")
     if upward_saccades_df is not None and len(upward_saccades_df) > 0:
-        print(f"Upward saccades (n={len(upward_saccades_df)}):")
+        print(f"{get_eye_label(video_key)} saccades (n={len(upward_saccades_df)}):")
         print(f"  Correlation (amplitude vs duration): {corr_up:.3f}")
         print(f"  Mean amplitude: {upward_saccades_df['amplitude'].mean():.2f} px")
         print(f"  Mean duration: {upward_saccades_df['duration'].mean():.3f} s")
         print(f"  Amp range: {upward_saccades_df['amplitude'].min():.2f} - {upward_saccades_df['amplitude'].max():.2f} px")
 
     if downward_saccades_df is not None and len(downward_saccades_df) > 0:
-        print(f"\nDownward saccades (n={len(downward_saccades_df)}):")
+        print(f"\n{get_eye_label(video_key)} saccades (n={len(downward_saccades_df)}):")
         print(f"  Correlation (amplitude vs duration): {corr_down:.3f}")
         print(f"  Mean amplitude: {downward_saccades_df['amplitude'].mean():.2f} px")
         print(f"  Mean duration: {downward_saccades_df['duration'].mean():.3f} s")
         print(f"  Amp range: {downward_saccades_df['amplitude'].min():.2f} - {downward_saccades_df['amplitude'].max():.2f} px")
 
-    print("\n=== PERI-SACCADE SEGMENT COLOR CODING ===")
-    print("Segment plots use 'plasma' colormap: darker colors (purple/blue) = amplitudes near median,")
-    print("  brighter colors (yellow/magenta) = outliers (far from median IQR)")
 
 
 # %%
@@ -2805,7 +2829,7 @@ for video_key, res in saccade_results.items():
 
     # Update layout
     fig.update_layout(
-        title='Detected Saccades: Duration Lines + Peak Arrows (QC Visualization)',
+        title=f'Detected Saccades ({get_eye_label(video_key)}): Duration Lines + Peak Arrows (QC Visualization)',
         height=600,
         showlegend=True,
         legend=dict(x=0.01, y=0.99)
