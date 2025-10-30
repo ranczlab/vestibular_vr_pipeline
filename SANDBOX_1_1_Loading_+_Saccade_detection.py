@@ -2157,271 +2157,292 @@ if VideoData2_Has_Sleap:
 #
 
 # %%
-### smooth and plot position X and velocity data 
+saccade_results = {}
 
-# 1. Preprocess:  smooth
-df = VideoData1[["Ellipse.Center.X", "Seconds"]].copy()
+if VideoData1_Has_Sleap:
+    df1 = VideoData1[['Ellipse.Center.X', 'Seconds']].copy()
+    saccade_results['VideoData1'] = analyze_eye_video_saccades(
+        df1, FPS_1, "VideoData1",
+        k=k, refractory_period=refractory_period,
+        onset_offset_fraction=onset_offset_fraction,
+        n_before=n_before, n_after=n_after, baseline_n_points=5
+    )
 
-df['X_smooth'] = (
-    df['Ellipse.Center.X']
-      .rolling(window=5, center=True)
-      .median()
-      .bfill()
-      .ffill()
-)
-
-# 2. Compute instantaneous velocity for both original and smoothed data
-#   dt in seconds
-df['dt'] = df['Seconds'].diff()
-#   Original velocity
-df['vel_x_original'] = df['Ellipse.Center.X'].diff() / df['dt']
-#   Smoothed velocity
-df['vel_x_smooth'] = df['X_smooth'].diff() / df['dt']
-
-# --- Plot original and smoothed traces with overlay ---
-# Create subplots with shared x-axis for synchronized zooming
-fig = make_subplots(
-    rows=2, cols=1,
-    shared_xaxes=True,  # This ensures x-axis zoom synchronization
-    vertical_spacing=0.1,
-    subplot_titles=('X Position (px)', 'Velocity (px/s)')
-)
-
-# Add original X position to the first subplot
-fig.add_trace(
-    go.Scatter(
-        x=df['Seconds'],
-        y=df['Ellipse.Center.X'],
-        mode='lines',
-        name='Original X',
-        line=dict(color='lightblue', width=2),
-        opacity=0.8
-    ),
-    row=1, col=1
-)
-
-# Add smoothed X to the first subplot
-fig.add_trace(
-    go.Scatter(
-        x=df['Seconds'],
-        y=df['X_smooth'],
-        mode='lines',
-        name='Smoothed X',
-        line=dict(color='blue', width=2)
-    ),
-    row=1, col=1
-)
-
-# Add original velocity to the second subplot
-fig.add_trace(
-    go.Scatter(
-        x=df['Seconds'],
-        y=df['vel_x_original'],
-        mode='lines',
-        name='Original Velocity',
-        line=dict(color='lightcoral', width=2),
-        opacity=0.8
-    ),
-    row=2, col=1
-)
-
-# Add smoothed velocity to the second subplot
-fig.add_trace(
-    go.Scatter(
-        x=df['Seconds'],
-        y=df['vel_x_smooth'],
-        mode='lines',
-        name='Smoothed Velocity',
-        line=dict(color='red', width=2)
-    ),
-    row=2, col=1
-)
-
-# Update layout
-fig.update_layout(
-    title='Original vs Smoothed X Position and Velocity (Synchronized Zoom)',
-    height=600,  # Adjust height for two subplots
-    showlegend=True,
-    legend=dict(x=0.01, y=0.99)
-)
-
-# Update x-axes
-fig.update_xaxes(title_text="Time (s)", row=2, col=1)
-
-# Update y-axes
-fig.update_yaxes(title_text="X Position (px)", row=1, col=1)
-fig.update_yaxes(title_text="Velocity (px/s)", row=2, col=1)
-
-fig.show()
+if VideoData2_Has_Sleap:
+    df2 = VideoData2[['Ellipse.Center.X', 'Seconds']].copy()
+    saccade_results['VideoData2'] = analyze_eye_video_saccades(
+        df2, FPS_2, "VideoData2",
+        k=k, refractory_period=refractory_period,
+        onset_offset_fraction=onset_offset_fraction,
+        n_before=n_before, n_after=n_after, baseline_n_points=5
+    )
 
 # %%
-# SACCADE DETECTION (Adaptive Statistical Method)
-#-------------------------------------------------------------------------------
-# This approach uses statistical methods to set adaptive thresholds based on the data itself,
-# which better captures both large and small saccades
+# ### smooth and plot position X and velocity data 
 
-# Use saccade detection function from sleap.saccade_processing
-# (detect_saccades_adaptive function replaces the inline logic below)
-upward_saccades_df, downward_saccades_df, vel_thresh = sp.detect_saccades_adaptive(
-    df, 
-    position_col='X_smooth',
-    velocity_col='vel_x_smooth',
-    time_col='Seconds',
-    fps=FPS_1,
-    k=k,
-    refractory_period=refractory_period,
-    onset_offset_fraction=onset_offset_fraction,
-    verbose=True
-)
+# # 1. Preprocess:  smooth
+# df = VideoData1[["Ellipse.Center.X", "Seconds"]].copy()
+
+# df['X_smooth'] = (
+#     df['Ellipse.Center.X']
+#       .rolling(window=5, center=True)
+#       .median()
+#       .bfill()
+#       .ffill()
+# )
+
+# # 2. Compute instantaneous velocity for both original and smoothed data
+# #   dt in seconds
+# df['dt'] = df['Seconds'].diff()
+# #   Original velocity
+# df['vel_x_original'] = df['Ellipse.Center.X'].diff() / df['dt']
+# #   Smoothed velocity
+# df['vel_x_smooth'] = df['X_smooth'].diff() / df['dt']
+
+# # --- Plot original and smoothed traces with overlay ---
+# # Create subplots with shared x-axis for synchronized zooming
+# fig = make_subplots(
+#     rows=2, cols=1,
+#     shared_xaxes=True,  # This ensures x-axis zoom synchronization
+#     vertical_spacing=0.1,
+#     subplot_titles=('X Position (px)', 'Velocity (px/s)')
+# )
+
+# # Add original X position to the first subplot
+# fig.add_trace(
+#     go.Scatter(
+#         x=df['Seconds'],
+#         y=df['Ellipse.Center.X'],
+#         mode='lines',
+#         name='Original X',
+#         line=dict(color='lightblue', width=2),
+#         opacity=0.8
+#     ),
+#     row=1, col=1
+# )
+
+# # Add smoothed X to the first subplot
+# fig.add_trace(
+#     go.Scatter(
+#         x=df['Seconds'],
+#         y=df['X_smooth'],
+#         mode='lines',
+#         name='Smoothed X',
+#         line=dict(color='blue', width=2)
+#     ),
+#     row=1, col=1
+# )
+
+# # Add original velocity to the second subplot
+# fig.add_trace(
+#     go.Scatter(
+#         x=df['Seconds'],
+#         y=df['vel_x_original'],
+#         mode='lines',
+#         name='Original Velocity',
+#         line=dict(color='lightcoral', width=2),
+#         opacity=0.8
+#     ),
+#     row=2, col=1
+# )
+
+# # Add smoothed velocity to the second subplot
+# fig.add_trace(
+#     go.Scatter(
+#         x=df['Seconds'],
+#         y=df['vel_x_smooth'],
+#         mode='lines',
+#         name='Smoothed Velocity',
+#         line=dict(color='red', width=2)
+#     ),
+#     row=2, col=1
+# )
+
+# # Update layout
+# fig.update_layout(
+#     title='Original vs Smoothed X Position and Velocity (Synchronized Zoom)',
+#     height=600,  # Adjust height for two subplots
+#     showlegend=True,
+#     legend=dict(x=0.01, y=0.99)
+# )
+
+# # Update x-axes
+# fig.update_xaxes(title_text="Time (s)", row=2, col=1)
+
+# # Update y-axes
+# fig.update_yaxes(title_text="X Position (px)", row=1, col=1)
+# fig.update_yaxes(title_text="Velocity (px/s)", row=2, col=1)
+
+# fig.show()
 
 # %%
-# EXTRACT PERI-SACCADE SEGMENTS
-#-------------------------------------------------------------------------------
-# Extract each detected saccade with 10 frames before and 20 frames after the threshold crossing (start_time)
-# This allows us to visualize saccade profiles and do QC on amplitude detection
-#-------------------------------------------------------------------------------
-# PARAMETERS: Peri-saccade segment extraction window
-#-------------------------------------------------------------------------------
-# NOTE: n_before and n_after are defined in Cell 2 (setup cell)
-# Parameters are being used from Cell 2: n_before={n_before}, n_after={n_after}
-# If you need to change these, edit Cell 2, not here
+# # SACCADE DETECTION (Adaptive Statistical Method)
+# #-------------------------------------------------------------------------------
+# # This approach uses statistical methods to set adaptive thresholds based on the data itself,
+# # which better captures both large and small saccades
+
+# # Use saccade detection function from sleap.saccade_processing
+# # (detect_saccades_adaptive function replaces the inline logic below)
+# upward_saccades_df, downward_saccades_df, vel_thresh = sp.detect_saccades_adaptive(
+#     df, 
+#     position_col='X_smooth',
+#     velocity_col='vel_x_smooth',
+#     time_col='Seconds',
+#     fps=FPS_1,
+#     k=k,
+#     refractory_period=refractory_period,
+#     onset_offset_fraction=onset_offset_fraction,
+#     verbose=True
+# )
+
+# # %%
+# # EXTRACT PERI-SACCADE SEGMENTS
+# #-------------------------------------------------------------------------------
+# # Extract each detected saccade with 10 frames before and 20 frames after the threshold crossing (start_time)
+# # This allows us to visualize saccade profiles and do QC on amplitude detection
+# #-------------------------------------------------------------------------------
+# # PARAMETERS: Peri-saccade segment extraction window
+# #-------------------------------------------------------------------------------
+# # NOTE: n_before and n_after are defined in Cell 2 (setup cell)
+# # Parameters are being used from Cell 2: n_before={n_before}, n_after={n_after}
+# # If you need to change these, edit Cell 2, not here
 
 
-# Initialize storage for peri-saccade segments
-peri_saccades = []
+# # Initialize storage for peri-saccade segments
+# peri_saccades = []
 
-# (extract_saccade_segment is now imported from sleap.saccade_processing)
-
-
-# %%
-# EXTRACT PERI-SACCADE SEGMENTS
-#-------------------------------------------------------------------------------
-# Extract each detected saccade with 10 frames before and 20 frames after the threshold crossing (start_time)
-# This allows us to visualize saccade profiles and do QC on amplitude detection
-
-#-------------------------------------------------------------------------------
-# PARAMETERS: Peri-saccade segment extraction window
-#-------------------------------------------------------------------------------
-# NOTE: n_before and n_after are defined in Cell 2 (setup cell)
-# Parameters are being used from Cell 2: n_before={n_before}, n_after={n_after}
-# If you need to change these, edit Cell 2, not here
+# # (extract_saccade_segment is now imported from sleap.saccade_processing)
 
 
-# Initialize storage for peri-saccade segments
-peri_saccades = []
+# # %%
+# # EXTRACT PERI-SACCADE SEGMENTS
+# #-------------------------------------------------------------------------------
+# # Extract each detected saccade with 10 frames before and 20 frames after the threshold crossing (start_time)
+# # This allows us to visualize saccade profiles and do QC on amplitude detection
 
-# Extract upward saccades
-all_excluded = []
-if len(upward_saccades_df) > 0:
-    upward_segments, upward_excluded = sp.extract_saccade_segment(df, upward_saccades_df, n_before, n_after, direction='upward')
-    peri_saccades.extend(upward_segments)
-    all_excluded.extend(upward_excluded)
-    print(f"✅ Extracted {len(upward_segments)} upward saccade segments")
-    if len(upward_excluded) > 0:
-        print(f"   ⚠️  Excluded {len(upward_excluded)} upward segment(s) with unreasonable time ranges")
+# #-------------------------------------------------------------------------------
+# # PARAMETERS: Peri-saccade segment extraction window
+# #-------------------------------------------------------------------------------
+# # NOTE: n_before and n_after are defined in Cell 2 (setup cell)
+# # Parameters are being used from Cell 2: n_before={n_before}, n_after={n_after}
+# # If you need to change these, edit Cell 2, not here
 
-# Extract downward saccades
-if len(downward_saccades_df) > 0:
-    downward_segments, downward_excluded = sp.extract_saccade_segment(df, downward_saccades_df, n_before, n_after, direction='downward')
-    peri_saccades.extend(downward_segments)
-    all_excluded.extend(downward_excluded)
-    print(f"✅ Extracted {len(downward_segments)} downward saccade segments")
-    if len(downward_excluded) > 0:
-        print(f"   ⚠️  Excluded {len(downward_excluded)} downward segment(s) with unreasonable time ranges")
 
-# Report excluded segments
-if len(all_excluded) > 0:
-    print(f"\n📋 EXCLUSION REPORT:")
-    print(f"   Total excluded: {len(all_excluded)} segments")
-    print(f"   Reason: Time range exceeds 110% of expected span based on n_before + n_after points最开始")
-    print(f"\n   Excluded segment details (first 10):")
-    for i, exc in enumerate(all_excluded[:10]):
-        tmin, tmax = exc['time_range']
-        expected_pts = exc.get('expected_points', '?')
-        print(f"   {i+1}. ID {exc['saccade_id']} ({exc['direction']}): time range [{tmin:.3f}, {tmax:.3f}]s, "
-              f"{exc['n_points']} points (expected {expected_pts}), amplitude {exc['amplitude']:.2f} px, peak at {exc['peak_time']:.3f}s")
-    if len(all_excluded) > 10:
-        print(f"   ... and {len(all_excluded) - 10} more excluded segments")
+# # Initialize storage for peri-saccade segments
+# peri_saccades = []
 
-print(f"\n📊 Total peri-saccade segments: {len(peri_saccades)}")
+# # Extract upward saccades
+# all_excluded = []
+# if len(upward_saccades_df) > 0:
+#     upward_segments, upward_excluded = sp.extract_saccade_segment(df, upward_saccades_df, n_before, n_after, direction='upward')
+#     peri_saccades.extend(upward_segments)
+#     all_excluded.extend(upward_excluded)
+#     print(f"✅ Extracted {len(upward_segments)} upward saccade segments")
+#     if len(upward_excluded) > 0:
+#         print(f"   ⚠️  Excluded {len(upward_excluded)} upward segment(s) with unreasonable time ranges")
 
-# BASELINE CORRECTION
-#-------------------------------------------------------------------------------
-# Baseline each saccade using the average value of data points in the baseline window (relative to threshold crossing)
-# This removes pre-saccade position offsets and centers all saccades at baseline = 0
-# Baseline window: from baseline_start to baseline_end (default: -n_before to -(n_before - baseline_n_points))
+# # Extract downward saccades
+# if len(downward_saccades_df) > 0:
+#     downward_segments, downward_excluded = sp.extract_saccade_segment(df, downward_saccades_df, n_before, n_after, direction='downward')
+#     peri_saccades.extend(downward_segments)
+#     all_excluded.extend(downward_excluded)
+#     print(f"✅ Extracted {len(downward_segments)} downward saccade segments")
+#     if len(downward_excluded) > 0:
+#         print(f"   ⚠️  Excluded {len(downward_excluded)} downward segment(s) with unreasonable time ranges")
 
-# Baseline window: use the last 5 points before threshold crossing
-baseline_n_points = 5  # Number of points before threshold crossing to use for baseline
-baseline_start = -n_before  # Relative to threshold crossing (start of extracted window)
-baseline_end = -(n_before - baseline_n_points)  # Relative to threshold crossing (baseline_n_points before threshold crossing)
+# # Report excluded segments
+# if len(all_excluded) > 0:
+#     print(f"\n📋 EXCLUSION REPORT:")
+#     print(f"   Total excluded: {len(all_excluded)} segments")
+#     print(f"   Reason: Time range exceeds 110% of expected span based on n_before + n_after points最开始")
+#     print(f"\n   Excluded segment details (first 10):")
+#     for i, exc in enumerate(all_excluded[:10]):
+#         tmin, tmax = exc['time_range']
+#         expected_pts = exc.get('expected_points', '?')
+#         print(f"   {i+1}. ID {exc['saccade_id']} ({exc['direction']}): time range [{tmin:.3f}, {tmax:.3f}]s, "
+#               f"{exc['n_points']} points (expected {expected_pts}), amplitude {exc['amplitude']:.2f} px, peak at {exc['peak_time']:.3f}s")
+#     if len(all_excluded) > 10:
+#         print(f"   ... and {len(all_excluded) - 10} more excluded segments")
 
-# Use baselining function from sleap.saccade_processing
-peri_saccades = sp.baseline_saccade_segments(peri_saccades, n_before, baseline_n_points=5)
+# print(f"\n📊 Total peri-saccade segments: {len(peri_saccades)}")
 
-# (The loop below was replaced by the function call above)
-"""
-for segment_DEPRECATED in peri_saccades:
-    # Baseline window: We want to use the last baseline_n_points points before threshold crossing
-    # The segment structure: [points before threshold crossing (n_before points), threshold crossing, points after threshold crossing (n_after points)]
-    # Index 0 is the earliest pre-threshold point (Time_rel_threshold = -n_before * dt approximately)
-    # Index n_before is the threshold crossing (Time_rel_threshold = 0)
-    # We want the last baseline_n_points points before the threshold crossing
-    # These are at indices: (n_before - baseline_n_points + 1) to n_before (inclusive)
-    # But we need to handle edge cases where segment might be truncated
+# # BASELINE CORRECTION
+# #-------------------------------------------------------------------------------
+# # Baseline each saccade using the average value of data points in the baseline window (relative to threshold crossing)
+# # This removes pre-saccade position offsets and centers all saccades at baseline = 0
+# # Baseline window: from baseline_start to baseline_end (default: -n_before to -(n_before - baseline_n_points))
+
+# # Baseline window: use the last 5 points before threshold crossing
+# baseline_n_points = 5  # Number of points before threshold crossing to use for baseline
+# baseline_start = -n_before  # Relative to threshold crossing (start of extracted window)
+# baseline_end = -(n_before - baseline_n_points)  # Relative to threshold crossing (baseline_n_points before threshold crossing)
+
+# # Use baselining function from sleap.saccade_processing
+# peri_saccades = sp.baseline_saccade_segments(peri_saccades, n_before, baseline_n_points=5)
+
+# # (The loop below was replaced by the function call above)
+# """
+# for segment_DEPRECATED in peri_saccades:
+#     # Baseline window: We want to use the last baseline_n_points points before threshold crossing
+#     # The segment structure: [points before threshold crossing (n_before points), threshold crossing, points after threshold crossing (n_after points)]
+#     # Index 0 is the earliest pre-threshold point (Time_rel_threshold = -n_before * dt approximately)
+#     # Index n_before is the threshold crossing (Time_rel_threshold = 0)
+#     # We want the last baseline_n_points points before the threshold crossing
+#     # These are at indices: (n_before - baseline_n_points + 1) to n_before (inclusive)
+#     # But we need to handle edge cases where segment might be truncated
     
-    # Find threshold crossing index in segment (where Time_rel_threshold is closest to 0)
-    threshold_idx_in_seg = segment['Time_rel_threshold'].abs().idxmin()
-    threshold_pos_in_seg = segment.index.get_loc(threshold_idx_in_seg)
+#     # Find threshold crossing index in segment (where Time_rel_threshold is closest to 0)
+#     threshold_idx_in_seg = segment['Time_rel_threshold'].abs().idxmin()
+#     threshold_pos_in_seg = segment.index.get_loc(threshold_idx_in_seg)
     
-    # Baseline window: last baseline_n_points points before threshold crossing
-    baseline_start_idx = max(0, threshold_pos_in_seg - baseline_n_points)
-    baseline_end_idx = threshold_pos_in_seg  # Up to but not including threshold crossing
+#     # Baseline window: last baseline_n_points points before threshold crossing
+#     baseline_start_idx = max(0, threshold_pos_in_seg - baseline_n_points)
+#     baseline_end_idx = threshold_pos_in_seg  # Up to but not including threshold crossing
     
-    if baseline_end_idx > baseline_start_idx:
-        # Extract baseline window
-        baseline_indices = range(baseline_start_idx, baseline_end_idx)
-        baseline_window_size = len(baseline_indices)
+#     if baseline_end_idx > baseline_start_idx:
+#         # Extract baseline window
+#         baseline_indices = range(baseline_start_idx, baseline_end_idx)
+#         baseline_window_size = len(baseline_indices)
         
-        # Calculate baseline as mean X_smooth in this window
-        baseline_value = segment.iloc[baseline_indices]['X_smooth'].mean()
+#         # Calculate baseline as mean X_smooth in this window
+#         baseline_value = segment.iloc[baseline_indices]['X_smooth'].mean()
         
-        # Subtract baseline from all X_smooth values in the segment
-        segment['X_smooth_baselined'] = segment['X_smooth'] - baseline_value
-        segment['baseline_value'] = baseline_value
-    else:
-        # If segment is too short, use available early points
-        if len(segment) > 0:
-            baseline_value = segment.iloc[:min(baseline_window_size, len(segment))]['X_smooth'].mean()
-            segment['X_smooth_baselined'] = segment['X_smooth'] - baseline_value
-            segment['baseline_value'] = baseline_value
-        else:
-            # If no points found, use zero baseline
-            segment['X_smooth_baselined'] = segment['X_smooth']
-            segment['baseline_value'] = 0.0
-            print(f"⚠️  Warning: Saccade {segment['saccade_id'].iloc[0]} has no points for baselining")
+#         # Subtract baseline from all X_smooth values in the segment
+#         segment['X_smooth_baselined'] = segment['X_smooth'] - baseline_value
+#         segment['baseline_value'] = baseline_value
+#     else:
+#         # If segment is too short, use available early points
+#         if len(segment) > 0:
+#             baseline_value = segment.iloc[:min(baseline_window_size, len(segment))]['X_smooth'].mean()
+#             segment['X_smooth_baselined'] = segment['X_smooth'] - baseline_value
+#             segment['baseline_value'] = baseline_value
+#         else:
+#             # If no points found, use zero baseline
+#             segment['X_smooth_baselined'] = segment['X_smooth']
+#             segment['baseline_value'] = 0.0
+#             print(f"⚠️  Warning: Saccade {segment['saccade_id'].iloc[0]} has no points for baselining")
 
-print(f"✅ Baselined all {len(peri_saccades)} saccade segments using {baseline_n_points} points before threshold crossing")
-"""
+# print(f"✅ Baselined all {len(peri_saccades)} saccade segments using {baseline_n_points} points before threshold crossing")
+# """
 
-# Store as a list of dataframes for easy iteration and analysis
-# Each element in peri_saccades is a dataframe containing one saccade's peri-event window
+# # Store as a list of dataframes for easy iteration and analysis
+# # Each element in peri_saccades is a dataframe containing one saccade's peri-event window
 
-# Optional: Create a concatenated version for batch analysis
-if len(peri_saccades) > 0:
-    peri_saccades_df = pd.concat(peri_saccades, ignore_index=True)
-    print(f"   Combined dataframe shape: {peri_saccades_df.shape}")
-    print(f"\n   Columns in segment: {list(peri_saccades_df.columns)}")
-    print(f"   Time range per segment: {n_before} points before peak + {n_after} points after peak")
+# # Optional: Create a concatenated version for batch analysis
+# if len(peri_saccades) > 0:
+#     peri_saccades_df = pd.concat(peri_saccades, ignore_index=True)
+#     print(f"   Combined dataframe shape: {peri_saccades_df.shape}")
+#     print(f"\n   Columns in segment: {list(peri_saccades_df.columns)}")
+#     print(f"   Time range per segment: {n_before} points before peak + {n_after} points after peak")
     
-    # Summary statistics
-    print(f"\n📈 Segment Statistics:")
-    print(f"   Mean samples per segment: {peri_saccades_df.groupby('saccade_id').size().mean():.1f}")
-    print(f"   Total samples: {len(peri_saccades_df)}")
+#     # Summary statistics
+#     print(f"\n📈 Segment Statistics:")
+#     print(f"   Mean samples per segment: {peri_saccades_df.groupby('saccade_id').size().mean():.1f}")
+#     print(f"   Total samples: {len(peri_saccades_df)}")
 
-# The peri_saccades list contains individual dataframes for each saccade
-# Access like: peri_saccades[0] for first saccade, peri_saccades[1] for second, etc.
-# peri_saccades_df is concatenated version for batch analysis
+# # The peri_saccades list contains individual dataframes for each saccade
+# # Access like: peri_saccades[0] for first saccade, peri_saccades[1] for second, etc.
+# # peri_saccades_df is concatenated version for batch analysis
 
 
 
@@ -2431,460 +2452,469 @@ if len(peri_saccades) > 0:
 # Plot all upward and downward saccades aligned by time with position and velocity traces
 
 # Create figure with 4 columns in a single row: up pos, up vel, down pos, down vel
-fig_all = make_subplots(
-    rows=1, cols=4,
-    shared_yaxes=False,  # Each panel can have different y-axis scale
-    shared_xaxes=False,
-    subplot_titles=(
-        'Position - Upward Saccades',
-        'Velocity - Upward Saccades',
-        'Position - Downward Saccades',
-        'Velocity - Downward Saccades'
-    ),
-    vertical_spacing=0.08,
-    horizontal_spacing=0.05
-)
 
-# Extract segments for each direction
-upward_segments_all = [seg for seg in peri_saccades if seg['saccade_direction'].iloc[0] == 'upward']
-downward_segments_all = [seg for seg in peri_saccades if seg['saccade_direction'].iloc[0] == 'downward']
+for video_key, res in saccade_results.items():
+    upward_saccades_df = res['upward_saccades_df']
+    downward_saccades_df = res['downward_saccades_df']
+    peri_saccades = res['peri_saccades']
+    upward_segments = res['upward_segments']
+    downward_segments = res['downward_segments']
+    # Any other variables you need...
 
-# Remove outlier saccades based on amplitude and extreme position/velocity values
-# (filter_outlier_saccades is now imported from sleap.saccade_processing)
-def filter_outliers_DEPRECATED(segments, direction_name):
-    """Filter out outlier segments using IQR method on amplitude and extreme values"""
-    if len(segments) == 0:
-        return [], []
-    
-    # Calculate statistics on amplitudes
-    amplitudes = [seg['saccade_amplitude'].iloc[0] for seg in segments]
-    q1_amp = np.percentile(amplitudes, 25)
-    q3_amp = np.percentile(amplitudes, 75)
-    iqr_amp = q3_amp - q1_amp
-    lower_bound_amp = q1_amp - 3 * iqr_amp  # Using 3*IQR for more lenient filtering
-    upper_bound_amp = q3_amp + 3 * iqr_amp
-    
-    # Calculate statistics on max absolute position values
-    max_pos_values = []
-    max_vel_values = []
-    for seg in segments:
-        max_pos_values.append(np.abs(seg['X_smooth_baselined']).max())
-        max_vel_values.append(np.abs(seg['vel_x_smooth']).max())
-    
-    q1_pos = np.percentile(max_pos_values, 25)
-    q3_pos = np.percentile(max_pos_values, 75)
-    iqr_pos = q3_pos - q1_pos
-    upper_bound_pos = q3_pos + 3 * iqr_pos
-    
-    q1_vel = np.percentile(max_vel_values, 25)
-    q3_vel = np.percentile(max_vel_values, 75)
-    iqr_vel = q3_vel - q1_vel
-    upper_bound_vel = q3_vel + 3 * iqr_vel
-    
-    filtered = []
-    outliers_metadata = []
-    outlier_segments = []
-    
-    for seg in segments:
-        amp = seg['saccade_amplitude'].iloc[0]
-        max_pos = np.abs(seg['X_smooth_baselined']).max()
-        max_vel = np.abs(seg['vel_x_smooth']).max()
-        seg_id = seg['saccade_id'].iloc[0]
-        
-        # Check if outlier
-        is_outlier = (amp < lower_bound_amp or amp > upper_bound_amp or
-                     max_pos > upper_bound_pos or
-                     max_vel > upper_bound_vel)
-        
-        if is_outlier:
-            outliers_metadata.append({
-                'saccade_id': seg_id,
-                'amplitude': amp,
-                'max_abs_position': max_pos,
-                'max_abs_velocity': max_vel,
-                'direction': direction_name
-            })
-            outlier_segments.append(seg)  # Keep the segment for plotting
-        else:
-            filtered.append(seg)
-    
-    return filtered, outliers_metadata, outlier_segments
-
-# Filter outliers
-upward_segments, upward_outliers_meta, upward_outlier_segments = sp.filter_outlier_saccades(upward_segments_all, 'upward')
-downward_segments, downward_outliers_meta, downward_outlier_segments = sp.filter_outlier_saccades(downward_segments_all, 'downward')
-
-print(f"Plotting {len(upward_segments)} upward and {len(downward_segments)} downward saccades...")
-if len(upward_outliers_meta) > 0 or len(downward_outliers_meta) > 0:
-    print(f"\n⚠️  OUTLIER FILTERING:")
-    print(f"   Excluded {len(upward_outliers_meta)} upward outlier(s) and {len(downward_outliers_meta)} downward outlier(s)")
-    print(f"   Criteria: Amplitude or max position/velocity outside 3×IQR range")
-    
-    if len(upward_outliers_meta) > 0:
-        print(f"\n   Upward outliers (first 5):")
-        for i, out in enumerate(upward_outliers_meta[:5]):
-            print(f"      ID {out['saccade_id']}: amp={out['amplitude']:.2f}px, max_pos={out['max_abs_position']:.2f}px, max_vel={out['max_abs_velocity']:.2f}px/s")
-        if len(upward_outliers_meta) > 5:
-            print(f"      ... and {len(upward_outliers_meta) - 5} more")
-    
-    if len(downward_outliers_meta) > 0:
-        print(f"\n   Downward outliers (first 5):")
-        for i, out in enumerate(downward_outliers_meta[:5]):
-            print(f"      ID {out['saccade_id']}: amp={out['amplitude']:.2f}px, max_pos={out['max_abs_position']:.2f}px, max_vel={out['max_abs_velocity']:.2f}px/s")
-        if len(downward_outliers_meta) > 5:
-            print(f"      ... and {len(downward_outliers_meta) - 5} more")
-
-# Plot upward saccades
-for i, segment in enumerate(upward_segments):
-    color_opacity = 0.15 if len(upward_segments) > 20 else 0.3
-    
-    # Position trace (using baselined values)
-    fig_all.add_trace(
-        go.Scatter(
-            x=segment['Time_rel_threshold'],
-            y=segment['X_smooth_baselined'],
-            mode='lines',
-            name=f'Up #{i+1}',
-            line=dict(color='green', width=1),
-            showlegend=False,
-            opacity=color_opacity
+    fig_all = make_subplots(
+        rows=1, cols=4,
+        shared_yaxes=False,  # Each panel can have different y-axis scale
+        shared_xaxes=False,
+        subplot_titles=(
+            'Position - Upward Saccades',
+            'Velocity - Upward Saccades',
+            'Position - Downward Saccades',
+            'Velocity - Downward Saccades'
         ),
-        row=1, col=1
-    )
-    
-    # Velocity trace
-    fig_all.add_trace(
-        go.Scatter(
-            x=segment['Time_rel_threshold'],
-            y=segment['vel_x_smooth'],
-            mode='lines',
-            name=f'Up #{i+1}',
-            line=dict(color='green', width=1),
-                       showlegend=False,
-            opacity=color_opacity
-        ),
-        row=1, col=2
+        vertical_spacing=0.08,
+        horizontal_spacing=0.05
     )
 
-# Plot downward saccades
-for i, segment in enumerate(downward_segments):
-    color_opacity = 0.15 if len(downward_segments) > 20 else 0.3
-    
-    # Position trace (using baselined values)
-    fig_all.add_trace(
-        go.Scatter(
-            x=segment['Time_rel_threshold'],
-            y=segment['X_smooth_baselined'],
-            mode='lines',
-            name=f'Down #{i+1}',
-            line=dict(color='purple', width=1),
-            showlegend=False,
-            opacity=color_opacity
-        ),
-        row=1, col=3
-    )
-    
-    # Velocity trace
-    fig_all.add_trace(
-        go.Scatter(
-            x=segment['Time_rel_threshold'],
-            y=segment['vel_x_smooth'],
-            mode='lines',
-            name=f'Down #{i+1}',
-            line=dict(color='purple', width=1),
-            showlegend=False,
-            opacity=color_opacity
-        ),
-        row=1, col=4
-    )
+    # Extract segments for each direction
+    upward_segments_all = [seg for seg in peri_saccades if seg['saccade_direction'].iloc[0] == 'upward']
+    downward_segments_all = [seg for seg in peri_saccades if seg['saccade_direction'].iloc[0] == 'downward']
 
-# Add mean traces for reference
-if len(upward_segments) > 0:
-    # Calculate mean for upward by aligning segments by Time_rel_threshold (not by array index)
-    # Find the threshold crossing index (where Time_rel_threshold ≈ 0) for each segment and align based on that
-    aligned_positions = []
-    aligned_velocities = []
-    aligned_times = []
-    
-    for seg in upward_segments:
-        # Find index where Time_rel_threshold is closest to 0 (the threshold crossing)
-        threshold_idx = np.abs(seg['Time_rel_threshold'].values).argmin()
+    # # Remove outlier saccades based on amplitude and extreme position/velocity values
+    # # (filter_outlier_saccades is now imported from sleap.saccade_processing)
+    # def filter_outliers_DEPRECATED(segments, direction_name):
+    #     """Filter out outlier segments using IQR method on amplitude and extreme values"""
+    #     if len(segments) == 0:
+    #         return [], []
         
-        # Extract data centered on threshold crossing: n_before points before, threshold crossing, n_after points after
-        start_idx = max(0, threshold_idx - n_before)
-        end_idx = min(len(seg), threshold_idx + n_after + 1)
+    #     # Calculate statistics on amplitudes
+    #     amplitudes = [seg['saccade_amplitude'].iloc[0] for seg in segments]
+    #     q1_amp = np.percentile(amplitudes, 25)
+    #     q3_amp = np.percentile(amplitudes, 75)
+    #     iqr_amp = q3_amp - q1_amp
+    #     lower_bound_amp = q1_amp - 3 * iqr_amp  # Using 3*IQR for more lenient filtering
+    #     upper_bound_amp = q3_amp + 3 * iqr_amp
         
-        # Extract aligned segment
-        aligned_seg = seg.iloc[start_idx:end_idx].copy()
+    #     # Calculate statistics on max absolute position values
+    #     max_pos_values = []
+    #     max_vel_values = []
+    #     for seg in segments:
+    #         max_pos_values.append(np.abs(seg['X_smooth_baselined']).max())
+    #         max_vel_values.append(np.abs(seg['vel_x_smooth']).max())
         
-        # Find where the threshold crossing actually is within the extracted segment
-        threshold_in_seg_idx = threshold_idx - start_idx
+    #     q1_pos = np.percentile(max_pos_values, 25)
+    #     q3_pos = np.percentile(max_pos_values, 75)
+    #     iqr_pos = q3_pos - q1_pos
+    #     upper_bound_pos = q3_pos + 3 * iqr_pos
         
-        # Ensure threshold crossing is at index n_before by padding at start if needed
-        if threshold_in_seg_idx < n_before:
-            # Need to pad at the start to align threshold crossing to index n_before
-            pad_length = n_before - threshold_in_seg_idx
-            # Estimate time step from original segment for padding
-            if len(seg) > 1:
-                dt_est = np.diff(seg['Time_rel_threshold'].values).mean()
-            else:
-                dt_est = 0.0083  # default estimate if we can't calculate
+    #     q1_vel = np.percentile(max_vel_values, 25)
+    #     q3_vel = np.percentile(max_vel_values, 75)
+    #     iqr_vel = q3_vel - q1_vel
+    #     upper_bound_vel = q3_vel + 3 * iqr_vel
+        
+    #     filtered = []
+    #     outliers_metadata = []
+    #     outlier_segments = []
+        
+    #     for seg in segments:
+    #         amp = seg['saccade_amplitude'].iloc[0]
+    #         max_pos = np.abs(seg['X_smooth_baselined']).max()
+    #         max_vel = np.abs(seg['vel_x_smooth']).max()
+    #         seg_id = seg['saccade_id'].iloc[0]
             
-            # Create padding with NaN values
-            pad_times = aligned_seg['Time_rel_threshold'].iloc[0] - dt_est * np.arange(pad_length, 0, -1)
-            pad_df = pd.DataFrame({
-                'X_smooth_baselined': [np.nan] * pad_length,
-                'vel_x_smooth': [np.nan] * pad_length,
-                'Time_rel_threshold': pad_times
-            })
-            aligned_seg = pd.concat([pad_df, aligned_seg.reset_index(drop=True)], ignore_index=True)
+    #         # Check if outlier
+    #         is_outlier = (amp < lower_bound_amp or amp > upper_bound_amp or
+    #                      max_pos > upper_bound_pos or
+    #                      max_vel > upper_bound_vel)
+            
+    #         if is_outlier:
+    #             outliers_metadata.append({
+    #                 'saccade_id': seg_id,
+    #                 'amplitude': amp,
+    #                 'max_abs_position': max_pos,
+    #                 'max_abs_velocity': max_vel,
+    #                 'direction': direction_name
+    #             })
+    #             outlier_segments.append(seg)  # Keep the segment for plotting
+    #         else:
+    #             filtered.append(seg)
         
-        aligned_positions.append(aligned_seg['X_smooth_baselined'].values)
-        aligned_velocities.append(aligned_seg['vel_x_smooth'].values)
-        aligned_times.append(aligned_seg['Time_rel_threshold'].values)
-    
-    # Find minimum length after alignment
-    min_length = min(len(pos) for pos in aligned_positions)
-    max_length = max(len(pos) for pos in aligned_positions)
-    
-    if min_length != max_length:
-        print(f"⚠️  Warning: Upward segments have variable lengths after alignment ({min_length} to {max_length} points). Using minimum length {min_length}.")
-    
-    # Truncate all segments to same length and stack
-    upward_positions = np.array([pos[:min_length] for pos in aligned_positions])
-    upward_velocities = np.array([vel[:min_length] for vel in aligned_velocities])
-    upward_times = aligned_times[0][:min_length]  # Use first segment's time values
-    
-    # Calculate mean across all segments (axis=0 means across segments, keeping time dimension)
-    upward_mean_pos = np.mean(upward_positions, axis=0)
-    upward_mean_vel = np.mean(upward_velocities, axis=0)
-    
-    fig_all.add_trace(
-        go.Scatter(
-            x=upward_times,
-            y=upward_mean_pos,
-            mode='lines',
-            name='Mean Up',
-            line=dict(color='darkgreen', width=3),
-            showlegend=False
-        ),
-        row=1, col=1
+    #     return filtered, outliers_metadata, outlier_segments
+
+    # Filter outliers
+    upward_segments, upward_outliers_meta, upward_outlier_segments = sp.filter_outlier_saccades(upward_segments_all, 'upward')
+    downward_segments, downward_outliers_meta, downward_outlier_segments = sp.filter_outlier_saccades(downward_segments_all, 'downward')
+
+    print(f"Plotting {len(upward_segments)} upward and {len(downward_segments)} downward saccades...")
+    if len(upward_outliers_meta) > 0 or len(downward_outliers_meta) > 0:
+        print(f"\n⚠️  OUTLIER FILTERING:")
+        print(f"   Excluded {len(upward_outliers_meta)} upward outlier(s) and {len(downward_outliers_meta)} downward outlier(s)")
+        print(f"   Criteria: Amplitude or max position/velocity outside 3×IQR range")
+        
+        if len(upward_outliers_meta) > 0:
+            print(f"\n   Upward outliers (first 5):")
+            for i, out in enumerate(upward_outliers_meta[:5]):
+                print(f"      ID {out['saccade_id']}: amp={out['amplitude']:.2f}px, max_pos={out['max_abs_position']:.2f}px, max_vel={out['max_abs_velocity']:.2f}px/s")
+            if len(upward_outliers_meta) > 5:
+                print(f"      ... and {len(upward_outliers_meta) - 5} more")
+        
+        if len(downward_outliers_meta) > 0:
+            print(f"\n   Downward outliers (first 5):")
+            for i, out in enumerate(downward_outliers_meta[:5]):
+                print(f"      ID {out['saccade_id']}: amp={out['amplitude']:.2f}px, max_pos={out['max_abs_position']:.2f}px, max_vel={out['max_abs_velocity']:.2f}px/s")
+            if len(downward_outliers_meta) > 5:
+                print(f"      ... and {len(downward_outliers_meta) - 5} more")
+
+    # Plot upward saccades
+    for i, segment in enumerate(upward_segments):
+        color_opacity = 0.15 if len(upward_segments) > 20 else 0.3
+        
+        # Position trace (using baselined values)
+        fig_all.add_trace(
+            go.Scatter(
+                x=segment['Time_rel_threshold'],
+                y=segment['X_smooth_baselined'],
+                mode='lines',
+                name=f'Up #{i+1}',
+                line=dict(color='green', width=1),
+                showlegend=False,
+                opacity=color_opacity
+            ),
+            row=1, col=1
+        )
+        
+        # Velocity trace
+        fig_all.add_trace(
+            go.Scatter(
+                x=segment['Time_rel_threshold'],
+                y=segment['vel_x_smooth'],
+                mode='lines',
+                name=f'Up #{i+1}',
+                line=dict(color='green', width=1),
+                        showlegend=False,
+                opacity=color_opacity
+            ),
+            row=1, col=2
+        )
+
+    # Plot downward saccades
+    for i, segment in enumerate(downward_segments):
+        color_opacity = 0.15 if len(downward_segments) > 20 else 0.3
+        
+        # Position trace (using baselined values)
+        fig_all.add_trace(
+            go.Scatter(
+                x=segment['Time_rel_threshold'],
+                y=segment['X_smooth_baselined'],
+                mode='lines',
+                name=f'Down #{i+1}',
+                line=dict(color='purple', width=1),
+                showlegend=False,
+                opacity=color_opacity
+            ),
+            row=1, col=3
+        )
+        
+        # Velocity trace
+        fig_all.add_trace(
+            go.Scatter(
+                x=segment['Time_rel_threshold'],
+                y=segment['vel_x_smooth'],
+                mode='lines',
+                name=f'Down #{i+1}',
+                line=dict(color='purple', width=1),
+                showlegend=False,
+                opacity=color_opacity
+            ),
+            row=1, col=4
+        )
+
+    # Add mean traces for reference
+    if len(upward_segments) > 0:
+        # Calculate mean for upward by aligning segments by Time_rel_threshold (not by array index)
+        # Find the threshold crossing index (where Time_rel_threshold ≈ 0) for each segment and align based on that
+        aligned_positions = []
+        aligned_velocities = []
+        aligned_times = []
+        
+        for seg in upward_segments:
+            # Find index where Time_rel_threshold is closest to 0 (the threshold crossing)
+            threshold_idx = np.abs(seg['Time_rel_threshold'].values).argmin()
+            
+            # Extract data centered on threshold crossing: n_before points before, threshold crossing, n_after points after
+            start_idx = max(0, threshold_idx - n_before)
+            end_idx = min(len(seg), threshold_idx + n_after + 1)
+            
+            # Extract aligned segment
+            aligned_seg = seg.iloc[start_idx:end_idx].copy()
+            
+            # Find where the threshold crossing actually is within the extracted segment
+            threshold_in_seg_idx = threshold_idx - start_idx
+            
+            # Ensure threshold crossing is at index n_before by padding at start if needed
+            if threshold_in_seg_idx < n_before:
+                # Need to pad at the start to align threshold crossing to index n_before
+                pad_length = n_before - threshold_in_seg_idx
+                # Estimate time step from original segment for padding
+                if len(seg) > 1:
+                    dt_est = np.diff(seg['Time_rel_threshold'].values).mean()
+                else:
+                    dt_est = 0.0083  # default estimate if we can't calculate
+                
+                # Create padding with NaN values
+                pad_times = aligned_seg['Time_rel_threshold'].iloc[0] - dt_est * np.arange(pad_length, 0, -1)
+                pad_df = pd.DataFrame({
+                    'X_smooth_baselined': [np.nan] * pad_length,
+                    'vel_x_smooth': [np.nan] * pad_length,
+                    'Time_rel_threshold': pad_times
+                })
+                aligned_seg = pd.concat([pad_df, aligned_seg.reset_index(drop=True)], ignore_index=True)
+            
+            aligned_positions.append(aligned_seg['X_smooth_baselined'].values)
+            aligned_velocities.append(aligned_seg['vel_x_smooth'].values)
+            aligned_times.append(aligned_seg['Time_rel_threshold'].values)
+        
+        # Find minimum length after alignment
+        min_length = min(len(pos) for pos in aligned_positions)
+        max_length = max(len(pos) for pos in aligned_positions)
+        
+        if min_length != max_length:
+            print(f"⚠️  Warning: Upward segments have variable lengths after alignment ({min_length} to {max_length} points). Using minimum length {min_length}.")
+        
+        # Truncate all segments to same length and stack
+        upward_positions = np.array([pos[:min_length] for pos in aligned_positions])
+        upward_velocities = np.array([vel[:min_length] for vel in aligned_velocities])
+        upward_times = aligned_times[0][:min_length]  # Use first segment's time values
+        
+        # Calculate mean across all segments (axis=0 means across segments, keeping time dimension)
+        upward_mean_pos = np.mean(upward_positions, axis=0)
+        upward_mean_vel = np.mean(upward_velocities, axis=0)
+        
+        fig_all.add_trace(
+            go.Scatter(
+                x=upward_times,
+                y=upward_mean_pos,
+                mode='lines',
+                name='Mean Up',
+                line=dict(color='darkgreen', width=3),
+                showlegend=False
+            ),
+            row=1, col=1
+        )
+        
+        fig_all.add_trace(
+            go.Scatter(
+                x=upward_times,
+                y=upward_mean_vel,
+                mode='lines',
+                name='Mean Up Vel',
+                line=dict(color='darkgreen', width=3),
+                showlegend=False
+            ),
+            row=1, col=2
+        )
+
+    if len(downward_segments) > 0:
+        # Calculate mean for downward by taking mean across all segments at each index position
+        # Find minimum length to handle variable-length segments
+        min_length_down = min(len(seg) for seg in downward_segments)
+        max_length_down = max(len(seg) for seg in downward_segments)
+        
+        if min_length_down != max_length_down:
+            print(f"⚠️  Warning: Downward segments have variable lengths ({min_length_down} to {max_length_down} points). Using minimum length {min_length_down}.")
+        
+        # Stack all segments as arrays (each row is one saccade, columns are time points)
+        # Use only first min_length points to ensure all arrays have same shape
+        downward_positions = np.array([seg['X_smooth_baselined'].values[:min_length_down] for seg in downward_segments])
+        downward_velocities = np.array([seg['vel_x_smooth'].values[:min_length_down] for seg in downward_segments])
+        downward_times = downward_segments[0]['Time_rel_threshold'].values[:min_length_down]  # Use first segment's time values
+        
+        # Calculate mean across all segments (axis=0 means across segments, keeping time dimension)
+        downward_mean_pos = np.mean(downward_positions, axis=0)
+        downward_mean_vel = np.mean(downward_velocities, axis=0)
+        
+        fig_all.add_trace(
+            go.Scatter(
+                x=downward_times,
+                y=downward_mean_pos,
+                mode='lines',
+                name='Mean Down',
+                line=dict(color='darkviolet', width=3),
+                showlegend=False
+            ),
+            row=1, col=3
+        )
+        
+        fig_all.add_trace(
+            go.Scatter(
+                x=downward_times,
+                y=downward_mean_vel,
+                mode='lines',
+                name='Mean Down Vel',
+                line=dict(color='darkviolet', width=3),
+                showlegend=False
+            ),
+            row=1, col=4
+        )
+
+    # Add vertical line at time=0 (saccade onset)
+    for col in [1, 2, 3, 4]:
+        fig_all.add_shape(
+            type="line",
+            x0=0, x1=0,
+            y0=-999, y1=999,
+            line=dict(color='black', width=1, dash='dash'),
+            row=1, col=col
+        )
+
+    # Update layout
+    fig_all.update_layout(
+        title_text=f'All Detected Saccades Overlaid - Position and Velocity Profiles<br><sub>Position traces are baselined (avg of points -{n_before} to -{n_before-5}). All traces in semi-transparent, mean in bold. Time=0 is threshold crossing. {n_before} points before, {n_after} after.</sub>',
+        height=500,
+        width=1600,
+        showlegend=False
     )
-    
-    fig_all.add_trace(
-        go.Scatter(
-            x=upward_times,
-            y=upward_mean_vel,
-            mode='lines',
-            name='Mean Up Vel',
-            line=dict(color='darkgreen', width=3),
-            showlegend=False
-        ),
-        row=1, col=2
-    )
 
-if len(downward_segments) > 0:
-    # Calculate mean for downward by taking mean across all segments at each index position
-    # Find minimum length to handle variable-length segments
-    min_length_down = min(len(seg) for seg in downward_segments)
-    max_length_down = max(len(seg) for seg in downward_segments)
-    
-    if min_length_down != max_length_down:
-        print(f"⚠️  Warning: Downward segments have variable lengths ({min_length_down} to {max_length_down} points). Using minimum length {min_length_down}.")
-    
-    # Stack all segments as arrays (each row is one saccade, columns are time points)
-    # Use only first min_length points to ensure all arrays have same shape
-    downward_positions = np.array([seg['X_smooth_baselined'].values[:min_length_down] for seg in downward_segments])
-    downward_velocities = np.array([seg['vel_x_smooth'].values[:min_length_down] for seg in downward_segments])
-    downward_times = downward_segments[0]['Time_rel_threshold'].values[:min_length_down]  # Use first segment's time values
-    
-    # Calculate mean across all segments (axis=0 means across segments, keeping time dimension)
-    downward_mean_pos = np.mean(downward_positions, axis=0)
-    downward_mean_vel = np.mean(downward_velocities, axis=0)
-    
-    fig_all.add_trace(
-        go.Scatter(
-            x=downward_times,
-            y=downward_mean_pos,
-            mode='lines',
-            name='Mean Down',
-            line=dict(color='darkviolet', width=3),
-            showlegend=False
-        ),
-        row=1, col=3
-    )
-    
-    fig_all.add_trace(
-        go.Scatter(
-            x=downward_times,
-            y=downward_mean_vel,
-            mode='lines',
-            name='Mean Down Vel',
-            line=dict(color='darkviolet', width=3),
-            showlegend=False
-        ),
-        row=1, col=4
-    )
+    # Calculate x-axis limits based on actual min/max time values from segments (with small padding)
+    # Y-axis will use auto-range (no explicit range setting)
 
-# Add vertical line at time=0 (saccade onset)
-for col in [1, 2, 3, 4]:
-    fig_all.add_shape(
-        type="line",
-        x0=0, x1=0,
-        y0=-999, y1=999,
-        line=dict(color='black', width=1, dash='dash'),
-        row=1, col=col
-    )
+    # Collect all time values for proper x-axis scaling
+    all_upward_times = []
+    all_downward_times = []
 
-# Update layout
-fig_all.update_layout(
-    title_text=f'All Detected Saccades Overlaid - Position and Velocity Profiles<br><sub>Position traces are baselined (avg of points -{n_before} to -{n_before-5}). All traces in semi-transparent, mean in bold. Time=0 is threshold crossing. {n_before} points before, {n_after} after.</sub>',
-    height=500,
-    width=1600,
-    showlegend=False
-)
+    for seg in upward_segments:
+        all_upward_times.extend(seg['Time_rel_threshold'].values)
 
-# Calculate x-axis limits based on actual min/max time values from segments (with small padding)
-# Y-axis will use auto-range (no explicit range setting)
+    for seg in downward_segments:
+        all_downward_times.extend(seg['Time_rel_threshold'].values)
 
-# Collect all time values for proper x-axis scaling
-all_upward_times = []
-all_downward_times = []
+    # Set x-axis ranges using actual min/max from all segment times (with small padding to show all data)
+    padding_factor = 0.02  # 2% padding on each side for readability
+    if len(all_upward_times) > 0:
+        up_x_range = np.max(all_upward_times) - np.min(all_upward_times)
+        padding = up_x_range * padding_factor if up_x_range > 0 else 0.01
+        up_x_min = np.min(all_upward_times) - padding
+        up_x_max = np.max(all_upward_times) + padding
+    else:
+        up_x_min, up_x_max = -0.2, 0.4
 
-for seg in upward_segments:
-    all_upward_times.extend(seg['Time_rel_threshold'].values)
+    if len(all_downward_times) > 0:
+        down_x_range = np.max(all_downward_times) - np.min(all_downward_times)
+        padding = down_x_range * padding_factor if down_x_range > 0 else 0.01
+        down_x_min = np.min(all_downward_times) - padding
+        down_x_max = np.max(all_downward_times) + padding
+    else:
+        down_x_min, down_x_max = -0.2, 0.4
 
-for seg in downward_segments:
-    all_downward_times.extend(seg['Time_rel_threshold'].values)
+    # Calculate y-axis ranges separately for position and velocity from filtered data
+    # Collect position and velocity values from filtered segments
+    upward_pos_values = []
+    downward_pos_values = []
+    upward_vel_values = []
+    downward_vel_values = []
 
-# Set x-axis ranges using actual min/max from all segment times (with small padding to show all data)
-padding_factor = 0.02  # 2% padding on each side for readability
-if len(all_upward_times) > 0:
-    up_x_range = np.max(all_upward_times) - np.min(all_upward_times)
-    padding = up_x_range * padding_factor if up_x_range > 0 else 0.01
-    up_x_min = np.min(all_upward_times) - padding
-    up_x_max = np.max(all_upward_times) + padding
-else:
-    up_x_min, up_x_max = -0.2, 0.4
+    for seg in upward_segments:
+        upward_pos_values.extend(seg['X_smooth_baselined'].values)
+        # Filter out NaN values when collecting velocity data
+        vel_values = seg['vel_x_smooth'].values
+        upward_vel_values.extend(vel_values[~np.isnan(vel_values)])
 
-if len(all_downward_times) > 0:
-    down_x_range = np.max(all_downward_times) - np.min(all_downward_times)
-    padding = down_x_range * padding_factor if down_x_range > 0 else 0.01
-    down_x_min = np.min(all_downward_times) - padding
-    down_x_max = np.max(all_downward_times) + padding
-else:
-    down_x_min, down_x_max = -0.2, 0.4
+    for seg in downward_segments:
+        downward_pos_values.extend(seg['X_smooth_baselined'].values)
+        # Filter out NaN values when collecting velocity data
+        vel_values = seg['vel_x_smooth'].values
+        downward_vel_values.extend(vel_values[~np.isnan(vel_values)])
 
-# Calculate y-axis ranges separately for position and velocity from filtered data
-# Collect position and velocity values from filtered segments
-upward_pos_values = []
-downward_pos_values = []
-upward_vel_values = []
-downward_vel_values = []
+    # Position: find min/max for upward and downward, use wider range for both panels in row 1
+    if len(upward_pos_values) > 0 and len(downward_pos_values) > 0:
+        up_pos_min = np.min(upward_pos_values)
+        up_pos_max = np.max(upward_pos_values)
+        down_pos_min = np.min(downward_pos_values)
+        down_pos_max = np.max(downward_pos_values)
+        # Use the wider range (smaller min, larger max)
+        pos_min = min(up_pos_min, down_pos_min)
+        pos_max = max(up_pos_max, down_pos_max)
+    elif len(upward_pos_values) > 0:
+        pos_min = np.min(upward_pos_values)
+        pos_max = np.max(upward_pos_values)
+    elif len(downward_pos_values) > 0:
+        pos_min = np.min(downward_pos_values)
+        pos_max = np.max(downward_pos_values)
+    else:
+        pos_min, pos_max = -50, 50
 
-for seg in upward_segments:
-    upward_pos_values.extend(seg['X_smooth_baselined'].values)
-    # Filter out NaN values when collecting velocity data
-    vel_values = seg['vel_x_smooth'].values
-    upward_vel_values.extend(vel_values[~np.isnan(vel_values)])
+    # Velocity: find min/max for upward and downward, use wider range for both panels in row 2
+    # Get min and max directly from all velocity traces being plotted, with padding to prevent clipping
+    if len(upward_vel_values) > 0 and len(downward_vel_values) > 0:
+        # Get actual min/max from all velocity values
+        all_vel_min = min(np.min(upward_vel_values), np.min(downward_vel_values))
+        all_vel_max = max(np.max(upward_vel_values), np.max(downward_vel_values))
 
-for seg in downward_segments:
-    downward_pos_values.extend(seg['X_smooth_baselined'].values)
-    # Filter out NaN values when collecting velocity data
-    vel_values = seg['vel_x_smooth'].values
-    downward_vel_values.extend(vel_values[~np.isnan(vel_values)])
+    elif len(upward_vel_values) > 0:
+        all_vel_min = np.min(upward_vel_values)
+        all_vel_max = np.max(upward_vel_values)
 
-# Position: find min/max for upward and downward, use wider range for both panels in row 1
-if len(upward_pos_values) > 0 and len(downward_pos_values) > 0:
-    up_pos_min = np.min(upward_pos_values)
-    up_pos_max = np.max(upward_pos_values)
-    down_pos_min = np.min(downward_pos_values)
-    down_pos_max = np.max(downward_pos_values)
-    # Use the wider range (smaller min, larger max)
-    pos_min = min(up_pos_min, down_pos_min)
-    pos_max = max(up_pos_max, down_pos_max)
-elif len(upward_pos_values) > 0:
-    pos_min = np.min(upward_pos_values)
-    pos_max = np.max(upward_pos_values)
-elif len(downward_pos_values) > 0:
-    pos_min = np.min(downward_pos_values)
-    pos_max = np.max(downward_pos_values)
-else:
-    pos_min, pos_max = -50, 50
+    elif len(downward_vel_values) > 0:
+        all_vel_min = np.min(downward_vel_values)
+        all_vel_max = np.max(downward_vel_values)
 
-# Velocity: find min/max for upward and downward, use wider range for both panels in row 2
-# Get min and max directly from all velocity traces being plotted, with padding to prevent clipping
-if len(upward_vel_values) > 0 and len(downward_vel_values) > 0:
-    # Get actual min/max from all velocity values
-    all_vel_min = min(np.min(upward_vel_values), np.min(downward_vel_values))
-    all_vel_max = max(np.max(upward_vel_values), np.max(downward_vel_values))
+    else:
+        all_vel_min, all_vel_max = -1000, 1000
+        print(f"   ⚠️  No velocity values found, using default range: [{all_vel_min:.2f}, {all_vel_max:.2f}] px/s")
 
-elif len(upward_vel_values) > 0:
-    all_vel_min = np.min(upward_vel_values)
-    all_vel_max = np.max(upward_vel_values)
+    # Add padding to prevent clipping (20% padding on each side)
+    vel_range = all_vel_max - all_vel_min
+    if vel_range > 0:
+        padding = vel_range * 0.20  # 20% padding
+        vel_min = all_vel_min - padding
+        vel_max = all_vel_max + padding
+    else:
+        # If range is zero or very small, use default padding
+        vel_min = all_vel_min - 1.0
+        vel_max = all_vel_max + 1.0
 
-elif len(downward_vel_values) > 0:
-    all_vel_min = np.min(downward_vel_values)
-    all_vel_max = np.max(downward_vel_values)
+    # Update axes - x-axis with ranges, y-axis with explicit ranges based on filtered data
+    fig_all.update_xaxes(title_text="Time relative to threshold crossing (s)", range=[up_x_min, up_x_max], row=1, col=2)
+    fig_all.update_xaxes(title_text="Time relative to threshold crossing (s)", range=[down_x_min, down_x_max], row=1, col=4)
+    fig_all.update_xaxes(title_text="", range=[up_x_min, up_x_max], row=1, col=1)
+    fig_all.update_xaxes(title_text="", range=[down_x_min, down_x_max], row=1, col=3)
 
-else:
-    all_vel_min, all_vel_max = -1000, 1000
-    print(f"   ⚠️  No velocity values found, using default range: [{all_vel_min:.2f}, {all_vel_max:.2f}] px/s")
-
-# Add padding to prevent clipping (20% padding on each side)
-vel_range = all_vel_max - all_vel_min
-if vel_range > 0:
-    padding = vel_range * 0.20  # 20% padding
-    vel_min = all_vel_min - padding
-    vel_max = all_vel_max + padding
-else:
-    # If range is zero or very small, use default padding
-    vel_min = all_vel_min - 1.0
-    vel_max = all_vel_max + 1.0
-
-# Update axes - x-axis with ranges, y-axis with explicit ranges based on filtered data
-fig_all.update_xaxes(title_text="Time relative to threshold crossing (s)", range=[up_x_min, up_x_max], row=1, col=2)
-fig_all.update_xaxes(title_text="Time relative to threshold crossing (s)", range=[down_x_min, down_x_max], row=1, col=4)
-fig_all.update_xaxes(title_text="", range=[up_x_min, up_x_max], row=1, col=1)
-fig_all.update_xaxes(title_text="", range=[down_x_min, down_x_max], row=1, col=3)
-
-# Set explicit y-axis ranges - position panels share same range, velocity panels share same range
-fig_all.update_yaxes(title_text="X Position (px)", range=[pos_min, pos_max], row=1, col=1)
-fig_all.update_yaxes(title_text="X Position (px)", range=[pos_min, pos_max], row=1, col=3)
-fig_all.update_yaxes(title_text="Velocity (px/s)", range=[vel_min, vel_max], row=1, col=2)
-fig_all.update_yaxes(title_text="Velocity (px/s)", range=[vel_min, vel_max], row=1, col=4)
+    # Set explicit y-axis ranges - position panels share same range, velocity panels share same range
+    fig_all.update_yaxes(title_text="X Position (px)", range=[pos_min, pos_max], row=1, col=1)
+    fig_all.update_yaxes(title_text="X Position (px)", range=[pos_min, pos_max], row=1, col=3)
+    fig_all.update_yaxes(title_text="Velocity (px/s)", range=[vel_min, vel_max], row=1, col=2)
+    fig_all.update_yaxes(title_text="Velocity (px/s)", range=[vel_min, vel_max], row=1, col=4)
 
 
-fig_all.show()
+    fig_all.show()
 
-# Print statistics
-print(f"\n=== OVERLAY SUMMARY ===")
-if len(upward_segments) > 0:
-    up_amps = [seg['saccade_amplitude'].iloc[0] for seg in upward_segments]
-    up_durs = [seg['saccade_duration'].iloc[0] for seg in upward_segments]
-    print(f"Upward saccades: {len(upward_segments)}")
-    print(f"  Mean amplitude: {np.mean(up_amps):.2f} px")
-    print(f"  Mean duration: {np.mean(up_durs):.3f} s")
+    # Print statistics
+    print(f"\n=== OVERLAY SUMMARY ===")
+    if len(upward_segments) > 0:
+        up_amps = [seg['saccade_amplitude'].iloc[0] for seg in upward_segments]
+        up_durs = [seg['saccade_duration'].iloc[0] for seg in upward_segments]
+        print(f"Upward saccades: {len(upward_segments)}")
+        print(f"  Mean amplitude: {np.mean(up_amps):.2f} px")
+        print(f"  Mean duration: {np.mean(up_durs):.3f} s")
 
-if len(downward_segments) > 0:
-    down_amps = [seg['saccade_amplitude'].iloc[0] for seg in downward_segments]
-    down_durs = [seg['saccade_duration'].iloc[0] for seg in downward_segments]
-    print(f"Downward saccades: {len(downward_segments)}")
-    print(f"  Mean amplitude: {np.mean(down_amps):.2f} px")
-    print(f"  Mean duration: {np.mean(down_durs):.3f} s")
+    if len(downward_segments) > 0:
+        down_amps = [seg['saccade_amplitude'].iloc[0] for seg in downward_segments]
+        down_durs = [seg['saccade_duration'].iloc[0] for seg in downward_segments]
+        print(f"Downward saccades: {len(downward_segments)}")
+        print(f"  Mean amplitude: {np.mean(down_amps):.2f} px")
+        print(f"  Mean duration: {np.mean(down_durs):.3f} s")
 
-print(f"\n⏱️  Time alignment: All saccades aligned to threshold crossing (Time_rel_threshold=0)")
-if len(all_upward_times) > 0 and len(all_downward_times) > 0:
-    # Use the wider range for reporting
-    overall_x_min = min(np.min(all_upward_times), np.min(all_downward_times))
-    overall_x_max = max(np.max(all_upward_times), np.max(all_downward_times))
-    print(f"📏 Window: {n_before} points before + {n_after} points after threshold crossing (actual time range: {overall_x_min:.3f} to {overall_x_max:.3f} s)")
-elif len(all_upward_times) > 0:
-    print(f"📏 Window: {n_before} points before + {n_after} points after threshold crossing (upward actual time range: {np.min(all_upward_times):.3f} to {np.max(all_upward_times):.3f} s)")
-elif len(all_downward_times) > 0:
-    print(f"📏 Window: {n_before} points before + {n_after} points after threshold crossing (downward actual time range: {np.min(all_downward_times):.3f} to {np.max(all_downward_times):.3f} s)")
-else:
-    print(f"📏 Window: {n_before} points before + {n_after} points after threshold crossing")
+    print(f"\n⏱️  Time alignment: All saccades aligned to threshold crossing (Time_rel_threshold=0)")
+    if len(all_upward_times) > 0 and len(all_downward_times) > 0:
+        # Use the wider range for reporting
+        overall_x_min = min(np.min(all_upward_times), np.min(all_downward_times))
+        overall_x_max = max(np.max(all_upward_times), np.max(all_downward_times))
+        print(f"📏 Window: {n_before} points before + {n_after} points after threshold crossing (actual time range: {overall_x_min:.3f} to {overall_x_max:.3f} s)")
+    elif len(all_upward_times) > 0:
+        print(f"📏 Window: {n_before} points before + {n_after} points after threshold crossing (upward actual time range: {np.min(all_upward_times):.3f} to {np.max(all_upward_times):.3f} s)")
+    elif len(all_downward_times) > 0:
+        print(f"📏 Window: {n_before} points before + {n_after} points after threshold crossing (downward actual time range: {np.min(all_downward_times):.3f} to {np.max(all_downward_times):.3f} s)")
+    else:
+        print(f"📏 Window: {n_before} points before + {n_after} points after threshold crossing")
 
 
 
@@ -2898,179 +2928,8 @@ else:
 from plotly.subplots import make_subplots
 import matplotlib.cm as cm
 
-fig_qc = make_subplots(
-    rows=3, cols=2,
-    subplot_titles=(
-        'Amplitude Distribution - Upward Saccades', 
-        'Amplitude Distribution - Downward Saccades',
-        'Amplitude vs Duration - Upward Saccades',
-        'Amplitude vs Duration - Downward Saccades',
-        'Peri-Saccade Segments - Upward (colored by amplitude)',
-        'Peri-Saccade Segments - Downward (colored by amplitude)'
-    ),
-    vertical_spacing=0.10,
-    horizontal_spacing=0.1,
-    row_heights=[0.25, 0.25, 0.5]  # Make segment plots larger
-)
-
-# 1. Amplitude distributions
-if len(upward_saccades_df) > 0:
-    # Histogram for upward saccades
-    fig_qc.add_trace(
-        go.Histogram(
-            x=upward_saccades_df['amplitude'],
-            nbinsx=30,
-            name='Upward',
-            marker_color='green',
-            showlegend=False
-        ),
-        row=1, col=1
-    )
-    
-    # Scatter plot for upward saccades
-    fig_qc.add_trace(
-        go.Scatter(
-            x=upward_saccades_df['duration'],
-            y=upward_saccades_df['amplitude'],
-            mode='markers',
-            name='Upward',
-            marker=dict(color='green', size=8, opacity=0.6),
-            showlegend=False
-        ),
-        row=2, col=1
-    )
-    
-    # Add correlation line for upward saccades
-    corr_up = upward_saccades_df[['amplitude', 'duration']].corr().iloc[0, 1]
-    z_up = np.polyfit(upward_saccades_df['duration'], upward_saccades_df['amplitude'], 1)
-    p_up = np.poly1d(z_up)
-    fig_qc.add_trace(
-        go.Scatter(
-            x=upward_saccades_df['duration'],
-            y=p_up(upward_saccades_df['duration']),
-            mode='lines',
-            name=f'R={corr_up:.2f}',
-            line=dict(color='darkgreen', width=2),
-            showlegend=False
-        ),
-        row=2, col=1
-    )
-
-if len(downward_saccades_df) > 0:
-    # Histogram for downward saccades
-    fig_qc.add_trace(
-        go.Histogram(
-            x=downward_saccades_df['amplitude'],
-            nbinsx=30,
-            name='Downward',
-            marker_color='purple',
-            showlegend=False
-        ),
-        row=1, col=2
-    )
-    
-    # Scatter plot for downward saccades
-    fig_qc.add_trace(
-        go.Scatter(
-            x=downward_saccades_df['duration'],
-            y=downward_saccades_df['amplitude'],
-            mode='markers',
-            name='Downward',
-            marker=dict(color='purple', size=8, opacity=0.6),
-            showlegend=False
-        ),
-        row=2, col=2
-    )
-    
-    # Add correlation line for downward saccades
-    corr_down = downward_saccades_df[['amplitude', 'duration']].corr().iloc[0, 1]
-    z_down = np.polyfit(downward_saccades_df['duration'], downward_saccades_df['amplitude'], 1)
-    p_down = np.poly1d(z_down)
-    fig_qc.add_trace(
-        go.Scatter(
-            x=downward_saccades_df['duration'],
-            y=p_down(downward_saccades_df['duration']),
-            mode='lines',
-            name=f'R={corr_down:.2f}',
-            line=dict(color='darkviolet', width=2),
-            showlegend=False
-        ),
-        row=2, col=2
-    )
-
-# 3. Plot peri-saccade segments colored by amplitude
-# Reuse already-extracted and baselined segments from peri_saccades (no re-extraction or re-baselining)
-
-# Extract upward and downward segments for QC visualization from already-baselined peri_saccades
-# (Removed extract_qc_segments function - segments are now baselined only once during initial extraction)
-if 'peri_saccades' in globals() and len(peri_saccades) > 0:
-    upward_segments_all = [seg for seg in peri_saccades if seg['saccade_direction'].iloc[0] == 'upward']
-    downward_segments_all = [seg for seg in peri_saccades if seg['saccade_direction'].iloc[0] == 'downward']
-else:
-    upward_segments_all = []
-    downward_segments_all = []
-
-# Function to extract segments for QC visualization based on threshold crossing (REMOVED - no longer needed)
-def extract_qc_segments_DEPRECATED(sacc_df, direction='upward', n_points_before=10, n_points_after=10):
-    """Extract peri-saccade segments for QC visualization
-    Uses start_time (threshold crossing) as center point: n_points_before before, n_points_after after"""
-    segments = []
-    
-    for idx, sacc in sacc_df.iterrows():
-        start_time = sacc['start_time']  # Threshold crossing time
-        amplitude = sacc['amplitude']
-        
-        # Find threshold crossing index (start_time)
-        start_idx = df['Seconds'].sub(start_time).abs().idxmin()
-        
-        # Extract -10 to +10 points around threshold crossing
-        segment_start_idx = max(0, start_idx - n_points_before)
-        segment_end_idx = min(len(df) - 1, start_idx + n_points_after)
-        
-        # Extract segment
-        segment = df.iloc[segment_start_idx:segment_end_idx + 1].copy()
-        
-        # Normalize time relative to threshold crossing (start_time)
-        segment['Time_rel_threshold'] = segment['Seconds'] - start_time
-        
-        # Baseline the segment using points before threshold crossing
-        # Use the last 5 points before threshold crossing (if available) for baseline
-        baseline_n_points = 5
-        threshold_idx_in_segment = np.abs(segment['Time_rel_threshold']).idxmin()
-        threshold_pos_in_segment = segment.index.get_loc(threshold_idx_in_segment)
-        
-        baseline_start_idx = max(0, threshold_pos_in_segment - baseline_n_points)
-        baseline_end_idx = threshold_pos_in_segment
-        
-        if baseline_end_idx > baseline_start_idx and 'X_smooth' in segment.columns:
-            baseline_value = segment.iloc[baseline_start_idx:baseline_end_idx]['X_smooth'].mean()
-            segment['X_smooth_baselined'] = segment['X_smooth'] - baseline_value
-        elif 'X_smooth' in segment.columns:
-            # If not enough points before threshold, use available early points
-            if len(segment) > 0:
-                baseline_value = segment.iloc[:min(baseline_n_points, len(segment))]['X_smooth'].mean()
-                segment['X_smooth_baselined'] = segment['X_smooth'] - baseline_value
-            else:
-                segment['X_smooth_baselined'] = segment['X_smooth']
-        else:
-            # If X_smooth doesn't exist, create empty column
-            segment['X_smooth_baselined'] = np.nan
-        
-        # Add metadata
-        segment['saccade_id'] = idx
-        segment['saccade_direction'] = direction
-        segment['saccade_amplitude'] = amplitude
-        segment['saccade_peak_velocity'] = sacc.get('velocity', np.nan)
-        segment['saccade_duration'] = sacc.get('duration', np.nan)
-        
-        segments.append(segment)
-    
-    return segments
-
-# Old extraction calls removed - now using peri_saccades directly (see above)
-
 # Function to create color mapping for outlier detection
-# (get_color_mapping is now imported from sleap.saccade_processing)
+ # (get_color_mapping is now imported from sleap.saccade_processing)
 def get_color_mapping_DEPRECATED(amplitudes):
     """Create color mapping from min to max amplitude"""
     amps = np.array(amplitudes)
@@ -3087,219 +2946,327 @@ def get_color_mapping_DEPRECATED(amplitudes):
     colors = cm.plasma(normalized_amps)
     return ['rgb({}, {}, {})'.format(int(r*255), int(g*255), int(b*255)) for r, g, b, _ in colors], min_amp, max_amp
 
+for video_key, res in saccade_results.items():
+    upward_saccades_df = res['upward_saccades_df']
+    downward_saccades_df = res['downward_saccades_df']
+    peri_saccades = res['peri_saccades']   
+    upward_segments = res['upward_segments']
+    downward_segments = res['downward_segments']
+    # Any other variables you need...
 
-# Plot upward segments
-if len(upward_segments_all) > 0:
-    upward_amplitudes = [seg['saccade_amplitude'].iloc[0] for seg in upward_segments_all]
-    upward_colors, upward_min_amp, upward_max_amp = sp.get_color_mapping(upward_amplitudes)
-    
-    for i, (segment, color) in enumerate(zip(upward_segments_all, upward_colors)):
+    fig_qc = make_subplots(
+        rows=3, cols=2,
+        subplot_titles=(
+            'Amplitude Distribution - Upward Saccades', 
+            'Amplitude Distribution - Downward Saccades',
+            'Amplitude vs Duration - Upward Saccades',
+            'Amplitude vs Duration - Downward Saccades',
+            'Peri-Saccade Segments - Upward (colored by amplitude)',
+            'Peri-Saccade Segments - Downward (colored by amplitude)'
+        ),
+        vertical_spacing=0.10,
+        horizontal_spacing=0.1,
+        row_heights=[0.25, 0.25, 0.5]  # Make segment plots larger
+    )
+
+    # 1. Amplitude distributions
+    if len(upward_saccades_df) > 0:
+        # Histogram for upward saccades
+        fig_qc.add_trace(
+            go.Histogram(
+                x=upward_saccades_df['amplitude'],
+                nbinsx=30,
+                name='Upward',
+                marker_color='green',
+                showlegend=False
+            ),
+            row=1, col=1
+        )
+        
+        # Scatter plot for upward saccades
         fig_qc.add_trace(
             go.Scatter(
-                x=segment['Time_rel_threshold'],
-                y=segment['X_smooth_baselined'],
+                x=upward_saccades_df['duration'],
+                y=upward_saccades_df['amplitude'],
+                mode='markers',
+                name='Upward',
+                marker=dict(color='green', size=8, opacity=0.6),
+                showlegend=False
+            ),
+            row=2, col=1
+        )
+        
+        # Add correlation line for upward saccades
+        corr_up = upward_saccades_df[['amplitude', 'duration']].corr().iloc[0, 1]
+        z_up = np.polyfit(upward_saccades_df['duration'], upward_saccades_df['amplitude'], 1)
+        p_up = np.poly1d(z_up)
+        fig_qc.add_trace(
+            go.Scatter(
+                x=upward_saccades_df['duration'],
+                y=p_up(upward_saccades_df['duration']),
                 mode='lines',
-                name=f'Up #{i+1}',
-                line=dict(color=color, width=1.5),
+                name=f'R={corr_up:.2f}',
+                line=dict(color='darkgreen', width=2),
+                showlegend=False
+            ),
+            row=2, col=1
+        )
+
+    if len(downward_saccades_df) > 0:
+        # Histogram for downward saccades
+        fig_qc.add_trace(
+            go.Histogram(
+                x=downward_saccades_df['amplitude'],
+                nbinsx=30,
+                name='Downward',
+                marker_color='purple',
+                showlegend=False
+            ),
+            row=1, col=2
+        )
+        
+        # Scatter plot for downward saccades
+        fig_qc.add_trace(
+            go.Scatter(
+                x=downward_saccades_df['duration'],
+                y=downward_saccades_df['amplitude'],
+                mode='markers',
+                name='Downward',
+                marker=dict(color='purple', size=8, opacity=0.6),
+                showlegend=False
+            ),
+            row=2, col=2
+        )
+        
+        # Add correlation line for downward saccades
+        corr_down = downward_saccades_df[['amplitude', 'duration']].corr().iloc[0, 1]
+        z_down = np.polyfit(downward_saccades_df['duration'], downward_saccades_df['amplitude'], 1)
+        p_down = np.poly1d(z_down)
+        fig_qc.add_trace(
+            go.Scatter(
+                x=downward_saccades_df['duration'],
+                y=p_down(downward_saccades_df['duration']),
+                mode='lines',
+                name=f'R={corr_down:.2f}',
+                line=dict(color='darkviolet', width=2),
+                showlegend=False
+            ),
+            row=2, col=2
+        )
+
+    # 3. Plot peri-saccade segments colored by amplitude
+    # Reuse already-extracted and baselined segments from peri_saccades (no re-extraction or re-baselining)
+
+    # Extract upward and downward segments for QC visualization from already-baselined peri_saccades
+    # (Removed extract_qc_segments function - segments are now baselined only once during initial extraction)
+    if 'peri_saccades' in globals() and len(peri_saccades) > 0:
+        upward_segments_all = [seg for seg in peri_saccades if seg['saccade_direction'].iloc[0] == 'upward']
+        downward_segments_all = [seg for seg in peri_saccades if seg['saccade_direction'].iloc[0] == 'downward']
+    else:
+        upward_segments_all = []
+        downward_segments_all = []
+
+    # Function to extract segments for QC visualization based on threshold crossing (REMOVED - no longer needed)
+    # def extract_qc_segments_DEPRECATED(sacc_df, direction='upward', n_points_before=10, n_points_after=10):
+    #     """Extract peri-saccade segments for QC visualization
+    #     Uses start_time (threshold crossing) as center point: n_points_before before, n_points_after after"""
+    #     segments = []
+        
+    #     for idx, sacc in sacc_df.iterrows():
+    #         start_time = sacc['start_time']  # Threshold crossing time
+    #         amplitude = sacc['amplitude']
+            
+    #         # Find threshold crossing index (start_time)
+    #         start_idx = df['Seconds'].sub(start_time).abs().idxmin()
+            
+    #         # Extract -10 to +10 points around threshold crossing
+    #         segment_start_idx = max(0, start_idx - n_points_before)
+    #         segment_end_idx = min(len(df) - 1, start_idx + n_points_after)
+            
+    #         # Extract segment
+    #         segment = df.iloc[segment_start_idx:segment_end_idx + 1].copy()
+            
+    #         # Normalize time relative to threshold crossing (start_time)
+    #         segment['Time_rel_threshold'] = segment['Seconds'] - start_time
+            
+    #         # Baseline the segment using points before threshold crossing
+    #         # Use the last 5 points before threshold crossing (if available) for baseline
+    #         baseline_n_points = 5
+    #         threshold_idx_in_segment = np.abs(segment['Time_rel_threshold']).idxmin()
+    #         threshold_pos_in_segment = segment.index.get_loc(threshold_idx_in_segment)
+            
+    #         baseline_start_idx = max(0, threshold_pos_in_segment - baseline_n_points)
+    #         baseline_end_idx = threshold_pos_in_segment
+            
+    #         if baseline_end_idx > baseline_start_idx and 'X_smooth' in segment.columns:
+    #             baseline_value = segment.iloc[baseline_start_idx:baseline_end_idx]['X_smooth'].mean()
+    #             segment['X_smooth_baselined'] = segment['X_smooth'] - baseline_value
+    #         elif 'X_smooth' in segment.columns:
+    #             # If not enough points before threshold, use available early points
+    #             if len(segment) > 0:
+    #                 baseline_value = segment.iloc[:min(baseline_n_points, len(segment))]['X_smooth'].mean()
+    #                 segment['X_smooth_baselined'] = segment['X_smooth'] - baseline_value
+    #             else:
+    #                 segment['X_smooth_baselined'] = segment['X_smooth']
+    #         else:
+    #             # If X_smooth doesn't exist, create empty column
+    #             segment['X_smooth_baselined'] = np.nan
+            
+    #         # Add metadata
+    #         segment['saccade_id'] = idx
+    #         segment['saccade_direction'] = direction
+    #         segment['saccade_amplitude'] = amplitude
+    #         segment['saccade_peak_velocity'] = sacc.get('velocity', np.nan)
+    #         segment['saccade_duration'] = sacc.get('duration', np.nan)
+            
+    #         segments.append(segment)
+        
+    #     return segments
+
+    # Old extraction calls removed - now using peri_saccades directly (see above)
+
+    # Plot upward segments
+    if len(upward_segments_all) > 0:
+        upward_amplitudes = [seg['saccade_amplitude'].iloc[0] for seg in upward_segments_all]
+        upward_colors, upward_min_amp, upward_max_amp = sp.get_color_mapping(upward_amplitudes)
+        
+        for i, (segment, color) in enumerate(zip(upward_segments_all, upward_colors)):
+            fig_qc.add_trace(
+                go.Scatter(
+                    x=segment['Time_rel_threshold'],
+                    y=segment['X_smooth_baselined'],
+                    mode='lines',
+                    name=f'Up #{i+1}',
+                    line=dict(color=color, width=1.5),
+                    showlegend=False,
+                    opacity=0.7,
+                    hovertemplate=f'Amplitude: {segment["saccade_amplitude"].iloc[0]:.2f} px<br>' +
+                                'Time: %{x:.3f} s<br>' +
+                                'Position: %{y:.2f} px<extra></extra>'
+                ),
+                row=3, col=1
+            )
+        
+        # Add dummy trace for colorbar (hidden but provides colorbar)
+        fig_qc.add_trace(
+            go.Scatter(
+                x=[None],  # Hidden trace
+                y=[None],
+                mode='markers',
+                marker=dict(
+                    size=1,
+                    color=[upward_min_amp, upward_max_amp],
+                    colorscale='Plasma',
+                    cmin=upward_min_amp,
+                    cmax=upward_max_amp,
+                    showscale=True,
+                    colorbar=dict(
+                        title=dict(text="Amplitude (px)", side="right"),
+                        x=0.47,  # Position to the right of the left column plot
+                        xpad=10,
+                        len=0.45,  # Set colorbar length relative to subplot
+                        y=0.5,  # Center vertically on the subplot
+                        yanchor="middle"
+                    )
+                ),
                 showlegend=False,
-                opacity=0.7,
-                hovertemplate=f'Amplitude: {segment["saccade_amplitude"].iloc[0]:.2f} px<br>' +
-                              'Time: %{x:.3f} s<br>' +
-                              'Position: %{y:.2f} px<extra></extra>'
+                hoverinfo='skip'
             ),
             row=3, col=1
         )
-    
-    # Add dummy trace for colorbar (hidden but provides colorbar)
-    fig_qc.add_trace(
-        go.Scatter(
-            x=[None],  # Hidden trace
-            y=[None],
-            mode='markers',
-            marker=dict(
-                size=1,
-                color=[upward_min_amp, upward_max_amp],
-                colorscale='Plasma',
-                cmin=upward_min_amp,
-                cmax=upward_max_amp,
-                showscale=True,
-                colorbar=dict(
-                    title=dict(text="Amplitude (px)", side="right"),
-                    x=0.47,  # Position to the right of the left column plot
-                    xpad=10,
-                    len=0.45,  # Set colorbar length relative to subplot
-                    y=0.5,  # Center vertically on the subplot
-                    yanchor="middle"
-                )
-            ),
-            showlegend=False,
-            hoverinfo='skip'
-        ),
-        row=3, col=1
-    )
 
-# Plot downward segments
-if len(downward_segments_all) > 0:
-    downward_amplitudes = [seg['saccade_amplitude'].iloc[0] for seg in downward_segments_all]
-    downward_colors, downward_min_amp, downward_max_amp = sp.get_color_mapping(downward_amplitudes)
-    
-    for i, (segment, color) in enumerate(zip(downward_segments_all, downward_colors)):
+    # Plot downward segments
+    if len(downward_segments_all) > 0:
+        downward_amplitudes = [seg['saccade_amplitude'].iloc[0] for seg in downward_segments_all]
+        downward_colors, downward_min_amp, downward_max_amp = sp.get_color_mapping(downward_amplitudes)
+        
+        for i, (segment, color) in enumerate(zip(downward_segments_all, downward_colors)):
+            fig_qc.add_trace(
+                go.Scatter(
+                    x=segment['Time_rel_threshold'],
+                    y=segment['X_smooth_baselined'],
+                    mode='lines',
+                    name=f'Down #{i+1}',
+                    line=dict(color=color, width=1.5),
+                    showlegend=False,
+                    opacity=0.7,
+                    hovertemplate=f'Amplitude: {segment["saccade_amplitude"].iloc[0]:.2f} px<br>' +
+                                'Time: %{x:.3f} s<br>' +
+                                'Position: %{y:.2f} px<extra></extra>'
+                ),
+                row=3, col=2
+            )
+        
+        # Add dummy trace for colorbar (hidden but provides colorbar)
         fig_qc.add_trace(
             go.Scatter(
-                x=segment['Time_rel_threshold'],
-                y=segment['X_smooth_baselined'],
-                mode='lines',
-                name=f'Down #{i+1}',
-                line=dict(color=color, width=1.5),
+                x=[None],  # Hidden trace
+                y=[None],
+                mode='markers',
+                marker=dict(
+                    size=1,
+                    color=[downward_min_amp, downward_max_amp],
+                    colorscale='Plasma',
+                    cmin=downward_min_amp,
+                    cmax=downward_max_amp,
+                    showscale=True,
+                    colorbar=dict(
+                        title=dict(text="Amplitude (px)", side="right"),
+                        x=0.97,  # Position to the right of the right column plot
+                        xpad=10,
+                        len=0.45,  # Set colorbar length relative to subplot
+                        y=0.5,  # Center vertically on the subplot
+                        yanchor="middle"
+                    )
+                ),
                 showlegend=False,
-                opacity=0.7,
-                hovertemplate=f'Amplitude: {segment["saccade_amplitude"].iloc[0]:.2f} px<br>' +
-                              'Time: %{x:.3f} s<br>' +
-                              'Position: %{y:.2f} px<extra></extra>'
+                hoverinfo='skip'
             ),
             row=3, col=2
         )
-    
-    # Add dummy trace for colorbar (hidden but provides colorbar)
-    fig_qc.add_trace(
-        go.Scatter(
-            x=[None],  # Hidden trace
-            y=[None],
-            mode='markers',
-            marker=dict(
-                size=1,
-                color=[downward_min_amp, downward_max_amp],
-                colorscale='Plasma',
-                cmin=downward_min_amp,
-                cmax=downward_max_amp,
-                showscale=True,
-                colorbar=dict(
-                    title=dict(text="Amplitude (px)", side="right"),
-                    x=0.97,  # Position to the right of the right column plot
-                    xpad=10,
-                    len=0.45,  # Set colorbar length relative to subplot
-                    y=0.5,  # Center vertically on the subplot
-                    yanchor="middle"
-                )
-            ),
-            showlegend=False,
-            hoverinfo='skip'
-        ),
-        row=3, col=2
+
+    # Update layout
+    fig_qc.update_layout(
+        title_text='Saccade Amplitude QC: Distributions, Correlations, and Segments (Outlier Detection)',
+        height=1200,
+        showlegend=False
     )
 
-# Update layout
-fig_qc.update_layout(
-    title_text='Saccade Amplitude QC: Distributions, Correlations, and Segments (Outlier Detection)',
-    height=1200,
-    showlegend=False
-)
+    # Update axes labels
+    fig_qc.update_xaxes(title_text="Amplitude (px)", row=1, col=1)
+    fig_qc.update_xaxes(title_text="Amplitude (px)", row=1, col=2)
+    fig_qc.update_xaxes(title_text="Duration (s)", row=2, col=1)
+    fig_qc.update_xaxes(title_text="Duration (s)", row=2, col=2)
+    fig_qc.update_xaxes(title_text="Time relative to threshold crossing (s)", row=3, col=1)
+    fig_qc.update_xaxes(title_text="Time relative to threshold crossing (s)", row=3, col=2)
+    fig_qc.update_yaxes(title_text="Count", row=1, col=1)
+    fig_qc.update_yaxes(title_text="Count", row=1, col=2)
+    fig_qc.update_yaxes(title_text="Amplitude (px)", row=2, col=1)
+    fig_qc.update_yaxes(title_text="Amplitude (px)", row=2, col=2)
+    fig_qc.update_yaxes(title_text="Position (baselined, px)", row=3, col=1)
+    fig_qc.update_yaxes(title_text="Position (baselined, px)", row=3, col=2)
 
-# Update axes labels
-fig_qc.update_xaxes(title_text="Amplitude (px)", row=1, col=1)
-fig_qc.update_xaxes(title_text="Amplitude (px)", row=1, col=2)
-fig_qc.update_xaxes(title_text="Duration (s)", row=2, col=1)
-fig_qc.update_xaxes(title_text="Duration (s)", row=2, col=2)
-fig_qc.update_xaxes(title_text="Time relative to threshold crossing (s)", row=3, col=1)
-fig_qc.update_xaxes(title_text="Time relative to threshold crossing (s)", row=3, col=2)
-fig_qc.update_yaxes(title_text="Count", row=1, col=1)
-fig_qc.update_yaxes(title_text="Count", row=1, col=2)
-fig_qc.update_yaxes(title_text="Amplitude (px)", row=2, col=1)
-fig_qc.update_yaxes(title_text="Amplitude (px)", row=2, col=2)
-fig_qc.update_yaxes(title_text="Position (baselined, px)", row=3, col=1)
-fig_qc.update_yaxes(title_text="Position (baselined, px)", row=3, col=2)
+    fig_qc.show()
 
-fig_qc.show()
+    # Print correlation statistics
+    print("\n=== SACCADE AMPLITUDE-DURATION CORRELATION ===\n")
+    if upward_saccades_df is not None and len(upward_saccades_df) > 0:
+        print(f"Upward saccades (n={len(upward_saccades_df)}):")
+        print(f"  Correlation (amplitude vs duration): {corr_up:.3f}")
+        print(f"  Mean amplitude: {upward_saccades_df['amplitude'].mean():.2f} px")
+        print(f"  Mean duration: {upward_saccades_df['duration'].mean():.3f} s")
+        print(f"  Amp range: {upward_saccades_df['amplitude'].min():.2f} - {upward_saccades_df['amplitude'].max():.2f} px")
 
-# Print correlation statistics
-print("\n=== SACCADE AMPLITUDE-DURATION CORRELATION ===\n")
-if upward_saccades_df is not None and len(upward_saccades_df) > 0:
-    print(f"Upward saccades (n={len(upward_saccades_df)}):")
-    print(f"  Correlation (amplitude vs duration): {corr_up:.3f}")
-    print(f"  Mean amplitude: {upward_saccades_df['amplitude'].mean():.2f} px")
-    print(f"  Mean duration: {upward_saccades_df['duration'].mean():.3f} s")
-    print(f"  Amp range: {upward_saccades_df['amplitude'].min():.2f} - {upward_saccades_df['amplitude'].max():.2f} px")
+    if downward_saccades_df is not None and len(downward_saccades_df) > 0:
+        print(f"\nDownward saccades (n={len(downward_saccades_df)}):")
+        print(f"  Correlation (amplitude vs duration): {corr_down:.3f}")
+        print(f"  Mean amplitude: {downward_saccades_df['amplitude'].mean():.2f} px")
+        print(f"  Mean duration: {downward_saccades_df['duration'].mean():.3f} s")
+        print(f"  Amp range: {downward_saccades_df['amplitude'].min():.2f} - {downward_saccades_df['amplitude'].max():.2f} px")
 
-if downward_saccades_df is not None and len(downward_saccades_df) > 0:
-    print(f"\nDownward saccades (n={len(downward_saccades_df)}):")
-    print(f"  Correlation (amplitude vs duration): {corr_down:.3f}")
-    print(f"  Mean amplitude: {downward_saccades_df['amplitude'].mean():.2f} px")
-    print(f"  Mean duration: {downward_saccades_df['duration'].mean():.3f} s")
-    print(f"  Amp range: {downward_saccades_df['amplitude'].min():.2f} - {downward_saccades_df['amplitude'].max():.2f} px")
-
-print("\n=== PERI-SACCADE SEGMENT COLOR CODING ===")
-print("Segment plots use 'plasma' colormap: darker colors (purple/blue) = amplitudes near median,")
-print("  brighter colors (yellow/magenta) = outliers (far from median IQR)")
-
-
-
-# %%
-# ADD SACCADE INDICATORS TO VideoData1
-#-------------------------------------------------------------------------------
-# Add boolean columns and speed columns to VideoData1 at their respective indices
-
-# Initialize columns with False and NaN
-VideoData1['saccade_up'] = False
-VideoData1['saccade_down'] = False
-VideoData1['saccade_speed_up'] = np.nan
-VideoData1['saccade_speed_down'] = np.nan
-
-# Mark upward saccades
-for idx, row in upward_saccades_df.iterrows():
-    # Find all indices within the saccade duration
-    start_time = row['start_time']
-    end_time = row['end_time']
-    peak_time = row['time']
-    peak_velocity = row['velocity']
-    
-    # Find the peak index
-    peak_idx = VideoData1[VideoData1['Seconds'] == peak_time].index
-    if len(peak_idx) > 0:
-        peak_idx = peak_idx[0]
-        # Mark the peak with speed
-        VideoData1.loc[peak_idx, 'saccade_speed_up'] = peak_velocity
-    
-    # Mark all points within the saccade duration
-    mask = (VideoData1['Seconds'] >= start_time) & (VideoData1['Seconds'] <= end_time)
-    VideoData1.loc[mask, 'saccade_up'] = True
-
-# Mark downward saccades
-for idx, row in downward_saccades_df.iterrows():
-    start_time = row['start_time']
-    end_time = row['end_time']
-    peak_time = row['time']
-    peak_velocity = row['velocity']
-    
-    # Find the peak index
-    peak_idx = VideoData1[VideoData1['Seconds'] == peak_time].index
-    if len(peak_idx) > 0:
-        peak_idx = peak_idx[0]
-        # Mark the peak with speed
-        VideoData1.loc[peak_idx, 'saccade_speed_down'] = peak_velocity
-    
-    # Mark all points within the saccade duration
-    mask = (VideoData1['Seconds'] >= start_time) & (VideoData1['Seconds'] <= end_time)
-    VideoData1.loc[mask, 'saccade_down'] = True
-
-print(f"✅ Added saccade indicators to VideoData1")
-print(f"\nSummary:")
-print(f"   Upward saccades: {upward_saccades_df.shape[0]} events → {VideoData1['saccade_up'].sum()} timepoints marked")
-print(f"   Downward saccades: {downward_saccades_df.shape[0]} events → {VideoData1['saccade_down'].sum()} timepoints marked")
-print(f"   (Each saccade event spans multiple consecutive timepoints)")
-print(f"\nSpeed values:")
-print(f"   Upward speeds recorded: {VideoData1['saccade_speed_up'].notna().sum()} (peak velocities only)")
-print(f"   Downward speeds recorded: {VideoData1['saccade_speed_down'].notna().sum()} (peak velocities only)")
-
-# If VideoData2 exists, add saccade indicators to it as well
-# Note: This assumes the same detection logic would apply to VideoData2
-# You may want to repeat the detection for VideoData2 if it has separate data
-if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
-    VideoData2['saccade_up'] = False
-    VideoData2['saccade_down'] = False
-    VideoData2['saccade_speed_up'] = np.nan
-    VideoData2['saccade_speed_down'] = np.nan
-    print(f"\n⚠️ Note: VideoData2 saccade columns initialized but empty.")
-    print(f"   To add saccades to VideoData2, run the detection code on VideoData2 data separately.")
+    print("\n=== PERI-SACCADE SEGMENT COLOR CODING ===")
+    print("Segment plots use 'plasma' colormap: darker colors (purple/blue) = amplitudes near median,")
+    print("  brighter colors (yellow/magenta) = outliers (far from median IQR)")
 
 
 # %%
@@ -3307,175 +3274,183 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
 #-------------------------------------------------------------------------------
 # Create overlay plot showing detected saccades with duration lines and peak arrows
 
-fig = make_subplots(
-    rows=2, cols=1,
-    shared_xaxes=True,
-    vertical_spacing=0.1,
-    subplot_titles=('X Position (px)', 'Velocity (px/s) with Detected Saccades')
-)
+for video_key, res in saccade_results.items():
+    upward_saccades_df = res['upward_saccades_df']
+    downward_saccades_df = res['downward_saccades_df']
+    peri_saccades = res['peri_saccades']   
+    upward_segments = res['upward_segments']
+    downward_segments = res['downward_segments']
+    # Any other variables you need...
 
-# Add smoothed X position to the first subplot
-fig.add_trace(
-    go.Scatter(
-        x=df['Seconds'],
-        y=df['X_smooth'],
-        mode='lines',
-        name='Smoothed X',
-        line=dict(color='blue', width=2)
-    ),
-    row=1, col=1
-)
+    fig = make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.1,
+        subplot_titles=('X Position (px)', 'Velocity (px/s) with Detected Saccades')
+    )
 
-# Add smoothed velocity to the second subplot
-fig.add_trace(
-    go.Scatter(
-        x=df['Seconds'],
-        y=df['vel_x_smooth'],
-        mode='lines',
-        name='Smoothed Velocity',
-        line=dict(color='red', width=2)
-    ),
-    row=2, col=1
-)
-
-# Add adaptive threshold lines for reference
-fig.add_hline(
-    y=vel_thresh,
-    line_dash="dash",
-    line_color="green",
-    opacity=0.5,
-    annotation_text=f"Adaptive threshold (±{vel_thresh:.0f} px/s)",
-    row=2, col=1
-)
-
-fig.add_hline(
-    y=-vel_thresh,
-    line_dash="dash",
-    line_color="green",
-    opacity=0.5,
-    row=2, col=1
-)
-
-# Set offset for saccade indicator lines (above the trace for upward, below for downward)
-vel_max = df['vel_x_smooth'].max()
-vel_min = df['vel_x_smooth'].min()
-vel_range = vel_max - vel_min
-line_offset = vel_range * 0.15  # 15% of velocity range
-
-# Plot upward saccades with duration lines and peak arrows
-if len(upward_saccades_df) > 0:
-    for idx, row in upward_saccades_df.iterrows():
-        start_time = row['start_time']
-        end_time = row['end_time']
-        peak_time = row['time']
-        peak_velocity = row['velocity']
-        
-        # Draw horizontal line spanning the saccade duration
-        # Line is positioned above the velocity trace
-        y_line_pos = vel_max + line_offset
-        
-        fig.add_shape(
-            type="line",
-            x0=start_time, y0=y_line_pos,
-            x1=end_time, y1=y_line_pos,
-            line=dict(color='green', width=3),
-            row=2, col=1
-        )
-        
-        # Add arrow annotation at the peak position pointing to the actual peak velocity
-        # Arrow points from the line to the peak velocity value on the velocity trace
-        y_arrow_start = y_line_pos
-        y_arrow_end = peak_velocity
-        
-        fig.add_annotation(
-            x=peak_time,
-            y=y_arrow_start,
-            ax=0,
-            ay=y_arrow_end - y_arrow_start,  # arrow points to peak velocity
-            arrowhead=2,  # filled arrowhead
-            arrowsize=2,
-            arrowwidth=2,
-            arrowcolor='green',
-            row=2, col=1,
-            showarrow=True
-        )
-    
-    # Add legend entry for upward saccades
+    # Add smoothed X position to the first subplot
     fig.add_trace(
         go.Scatter(
-            x=[None],
-            y=[None],
-            mode='markers',
-            name='Upward Saccades (duration lines)',
-            marker=dict(symbol='line-ns', size=15, color='green', line=dict(width=3))
+            x=df['Seconds'],
+            y=df['X_smooth'],
+            mode='lines',
+            name='Smoothed X',
+            line=dict(color='blue', width=2)
+        ),
+        row=1, col=1
+    )
+
+    # Add smoothed velocity to the second subplot
+    fig.add_trace(
+        go.Scatter(
+            x=df['Seconds'],
+            y=df['vel_x_smooth'],
+            mode='lines',
+            name='Smoothed Velocity',
+            line=dict(color='red', width=2)
         ),
         row=2, col=1
     )
 
-# Plot downward saccades with duration lines and peak arrows
-if len(downward_saccades_df) > 0:
-    for idx, row in downward_saccades_df.iterrows():
-        start_time = row['start_time']
-        end_time = row['end_time']
-        peak_time = row['time']
-        peak_velocity = row['velocity']
-        
-        # Draw horizontal line spanning the saccade duration
-        # Line is positioned below the velocity trace
-        y_line_pos = vel_min - line_offset
-        
-        fig.add_shape(
-            type="line",
-            x0=start_time, y0=y_line_pos,
-            x1=end_time, y1=y_line_pos,
-            line=dict(color='purple', width=3),
-            row=2, col=1
-        )
-        
-        # Add arrow annotation at the peak position pointing to the actual peak velocity
-        # Arrow points from the line to the peak velocity value on the velocity trace
-        y_arrow_start = y_line_pos
-        y_arrow_end = peak_velocity
-        
-        fig.add_annotation(
-            x=peak_time,
-            y=y_arrow_start,
-            ax=0,
-            ay=y_arrow_end - y_arrow_start,  # arrow points to peak velocity
-            arrowhead=2,  # filled arrowhead
-            arrowsize=2,
-            arrowwidth=2,
-            arrowcolor='purple',
-            row=2, col=1,
-            showarrow=True
-        )
-    
-    # Add legend entry for downward saccades
-    fig.add_trace(
-        go.Scatter(
-            x=[None],
-            y=[None],
-            mode='markers',
-            name='Downward Saccades (duration lines)',
-            marker=dict(symbol='line-ns', size=15, color='purple', line=dict(width=3))
-        ),
+    # Add adaptive threshold lines for reference
+    fig.add_hline(
+        y=vel_thresh,
+        line_dash="dash",
+        line_color="green",
+        opacity=0.5,
+        annotation_text=f"Adaptive threshold (±{vel_thresh:.0f} px/s)",
         row=2, col=1
     )
 
-# Update layout
-fig.update_layout(
-    title='Detected Saccades: Duration Lines + Peak Arrows (QC Visualization)',
-    height=600,
-    showlegend=True,
-    legend=dict(x=0.01, y=0.99)
-)
+    fig.add_hline(
+        y=-vel_thresh,
+        line_dash="dash",
+        line_color="green",
+        opacity=0.5,
+        row=2, col=1
+    )
 
-# Update axes
-fig.update_xaxes(title_text="Time (s)", row=2, col=1)
-fig.update_yaxes(title_text="X Position (px)", row=1, col=1)
-fig.update_yaxes(title_text="Velocity (px/s)", row=2, col=1)
+    # Set offset for saccade indicator lines (above the trace for upward, below for downward)
+    vel_max = df['vel_x_smooth'].max()
+    vel_min = df['vel_x_smooth'].min()
+    vel_range = vel_max - vel_min
+    line_offset = vel_range * 0.15  # 15% of velocity range
 
-fig.show()
+    # Plot upward saccades with duration lines and peak arrows
+    if len(upward_saccades_df) > 0:
+        for idx, row in upward_saccades_df.iterrows():
+            start_time = row['start_time']
+            end_time = row['end_time']
+            peak_time = row['time']
+            peak_velocity = row['velocity']
+            
+            # Draw horizontal line spanning the saccade duration
+            # Line is positioned above the velocity trace
+            y_line_pos = vel_max + line_offset
+            
+            fig.add_shape(
+                type="line",
+                x0=start_time, y0=y_line_pos,
+                x1=end_time, y1=y_line_pos,
+                line=dict(color='green', width=3),
+                row=2, col=1
+            )
+            
+            # Add arrow annotation at the peak position pointing to the actual peak velocity
+            # Arrow points from the line to the peak velocity value on the velocity trace
+            y_arrow_start = y_line_pos
+            y_arrow_end = peak_velocity
+            
+            fig.add_annotation(
+                x=peak_time,
+                y=y_arrow_start,
+                ax=0,
+                ay=y_arrow_end - y_arrow_start,  # arrow points to peak velocity
+                arrowhead=2,  # filled arrowhead
+                arrowsize=2,
+                arrowwidth=2,
+                arrowcolor='green',
+                row=2, col=1,
+                showarrow=True
+            )
+        
+        # Add legend entry for upward saccades
+        fig.add_trace(
+            go.Scatter(
+                x=[None],
+                y=[None],
+                mode='markers',
+                name='Upward Saccades (duration lines)',
+                marker=dict(symbol='line-ns', size=15, color='green', line=dict(width=3))
+            ),
+            row=2, col=1
+        )
+
+    # Plot downward saccades with duration lines and peak arrows
+    if len(downward_saccades_df) > 0:
+        for idx, row in downward_saccades_df.iterrows():
+            start_time = row['start_time']
+            end_time = row['end_time']
+            peak_time = row['time']
+            peak_velocity = row['velocity']
+            
+            # Draw horizontal line spanning the saccade duration
+            # Line is positioned below the velocity trace
+            y_line_pos = vel_min - line_offset
+            
+            fig.add_shape(
+                type="line",
+                x0=start_time, y0=y_line_pos,
+                x1=end_time, y1=y_line_pos,
+                line=dict(color='purple', width=3),
+                row=2, col=1
+            )
+            
+            # Add arrow annotation at the peak position pointing to the actual peak velocity
+            # Arrow points from the line to the peak velocity value on the velocity trace
+            y_arrow_start = y_line_pos
+            y_arrow_end = peak_velocity
+            
+            fig.add_annotation(
+                x=peak_time,
+                y=y_arrow_start,
+                ax=0,
+                ay=y_arrow_end - y_arrow_start,  # arrow points to peak velocity
+                arrowhead=2,  # filled arrowhead
+                arrowsize=2,
+                arrowwidth=2,
+                arrowcolor='purple',
+                row=2, col=1,
+                showarrow=True
+            )
+        
+        # Add legend entry for downward saccades
+        fig.add_trace(
+            go.Scatter(
+                x=[None],
+                y=[None],
+                mode='markers',
+                name='Downward Saccades (duration lines)',
+                marker=dict(symbol='line-ns', size=15, color='purple', line=dict(width=3))
+            ),
+            row=2, col=1
+        )
+
+    # Update layout
+    fig.update_layout(
+        title='Detected Saccades: Duration Lines + Peak Arrows (QC Visualization)',
+        height=600,
+        showlegend=True,
+        legend=dict(x=0.01, y=0.99)
+    )
+
+    # Update axes
+    fig.update_xaxes(title_text="Time (s)", row=2, col=1)
+    fig.update_yaxes(title_text="X Position (px)", row=1, col=1)
+    fig.update_yaxes(title_text="Velocity (px/s)", row=2, col=1)
+
+    fig.show()
 
 
 # %%
