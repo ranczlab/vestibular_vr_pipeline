@@ -38,6 +38,8 @@ from scipy.signal import find_peaks
 
 from harp_resources import process, utils
 from sleap import load_and_process as lp
+from sleap import processing_functions as pf
+from sleap import saccade_processing as sp
 
 # symbols to use ✅ ℹ️ ⚠️ ❗
 
@@ -194,9 +196,9 @@ def min_max_dict(coordinates_dict):
 
 # Compute min/max as before for global axes limits
 if VideoData1_Has_Sleap:
-    x_min1, x_max1, y_min1, y_max1 = min_max_dict(coordinates_dict1_raw)
+    x_min1, x_max1, y_min1, y_max1 = pf.min_max_dict(coordinates_dict1_raw, columns_of_interest)
 if VideoData2_Has_Sleap:
-    x_min2, x_max2, y_min2, y_max2 = min_max_dict(coordinates_dict2_raw)
+    x_min2, x_max2, y_min2, y_max2 = pf.min_max_dict(coordinates_dict2_raw, columns_of_interest)
 
 # Use global min and max for consistency only if both VideoData1_Has_Sleap and VideoData2_Has_Sleap are True
 if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
@@ -406,7 +408,8 @@ import pandas as pd
 
 max_consecutive_lowscore = 120  # in frames TODO make it depend on FPS_1 and FPS_2 
 
-def find_longest_lowscore_sections(scores, threshold, top_n=5):
+# (find_longest_lowscore_sections function is now imported from sleap.processing_functions)
+def find_longest_lowscore_sections_DEPRECATED(scores, threshold, top_n=5):
     """
     Finds the top_n longest consecutive segments where scores < threshold.
     Returns list of dict: {'start_idx', 'end_idx', 'length', 'start_time', 'end_time' (if available)}
@@ -428,7 +431,8 @@ def find_longest_lowscore_sections(scores, threshold, top_n=5):
     top_sections = sorted(sections, key=lambda x: x['length'], reverse=True)[:top_n]
     return top_sections
 
-def find_percentile_for_consecutive_limit(scores, max_consecutive):
+# (find_percentile_for_consecutive_limit function is now imported from sleap.processing_functions)
+def find_percentile_for_consecutive_limit_DEPRECATED(scores, max_consecutive):
     """
     Binary search for the lowest percentile so that the maximum number of
     consecutively excluded frames (scores below the percentile) does not exceed max_consecutive.
@@ -445,7 +449,7 @@ def find_percentile_for_consecutive_limit(scores, max_consecutive):
     while (high - low) > tol:
         mid = (low + high) / 2
         thr = sorted_scores.quantile(mid)
-        sections = find_longest_lowscore_sections(scores, thr, top_n=1)
+        sections = pf.find_longest_lowscore_sections(scores, thr, top_n=1)
         longest = sections[0]['length'] if sections else 0
         if longest > max_consecutive:
             high = mid
@@ -469,7 +473,7 @@ if has_v1 or has_v2:
 
 # Find adaptive percentile and threshold for each present VideoData
 if has_v1:
-    adaptive_pct_v1, adaptive_thr_v1 = find_percentile_for_consecutive_limit(VideoData1['instance.score'], max_consecutive_lowscore)
+    adaptive_pct_v1, adaptive_thr_v1 = pf.find_percentile_for_consecutive_limit(VideoData1['instance.score'], max_consecutive_lowscore)
     plt.subplot(1, 2 if has_v2 else 1, plot_index)
     plt.hist(VideoData1['instance.score'].dropna(), bins=30, color='skyblue', edgecolor='black')
     plt.axvline(adaptive_thr_v1, color='red', linestyle='--', label=f'Adaptive threshold ({adaptive_pct_v1*100:.2f} percentile)\nlimit {max_consecutive_lowscore} consecutive')
@@ -480,7 +484,7 @@ if has_v1:
     plot_index += 1
 
 if has_v2:
-    adaptive_pct_v2, adaptive_thr_v2 = find_percentile_for_consecutive_limit(VideoData2['instance.score'], max_consecutive_lowscore)
+    adaptive_pct_v2, adaptive_thr_v2 = pf.find_percentile_for_consecutive_limit(VideoData2['instance.score'], max_consecutive_lowscore)
     plt.subplot(1, 2 if has_v1 else 1, plot_index)
     plt.hist(VideoData2['instance.score'].dropna(), bins=30, color='salmon', edgecolor='black')
     plt.axvline(adaptive_thr_v2, color='red', linestyle='--', label=f'Adaptive threshold ({adaptive_pct_v2*100:.2f} percentile)\nlimit {max_consecutive_lowscore} consecutive')
@@ -505,7 +509,7 @@ if has_v2:
 # Report the top 5 longest consecutive sections with instance.score < adaptive threshold
 if has_v1:
     print(f"\nVideoData1: Top 5 longest consecutive sections where instance.score < adaptive threshold:")
-    low_sections_v1 = find_longest_lowscore_sections(VideoData1['instance.score'], adaptive_thr_v1, top_n=5)
+    low_sections_v1 = pf.find_longest_lowscore_sections(VideoData1['instance.score'], adaptive_thr_v1, top_n=5)
     for i, sec in enumerate(low_sections_v1, 1):
         start_idx = sec['start_idx']
         end_idx = sec['end_idx']
@@ -514,7 +518,7 @@ if has_v1:
         print(f"  Section {i}: index {start_idx}-{end_idx} (length {sec['length']})")
 if has_v2:
     print(f"\nVideoData2: Top 5 longest consecutive sections where instance.score < adaptive threshold:")
-    low_sections_v2 = find_longest_lowscore_sections(VideoData2['instance.score'], adaptive_thr_v2, top_n=5)
+    low_sections_v2 = pf.find_longest_lowscore_sections(VideoData2['instance.score'], adaptive_thr_v2, top_n=5)
     for i, sec in enumerate(low_sections_v2, 1):
         start_idx = sec['start_idx']
         end_idx = sec['end_idx']
@@ -699,7 +703,8 @@ else:
 print("\n=== Blink Detection ===")
 
 # Helper function to find consecutive segments with low instance.score
-def find_blink_segments(instance_scores, threshold, min_frames, max_frames):
+# (find_blink_segments is now imported from sleap.processing_functions)
+def find_blink_segments_DEPRECATED(instance_scores, threshold, min_frames, max_frames):
     """
     Find consecutive segments where instance.score < threshold.
     Filters by duration and returns valid blink segments.
@@ -743,7 +748,8 @@ def find_blink_segments(instance_scores, threshold, min_frames, max_frames):
     
     return segments
 
-def format_time_from_start(seconds_from_start):
+# (format_time_from_start is now imported from sleap.processing_functions)
+def format_time_from_start_DEPRECATED(seconds_from_start):
     """
     Format seconds as MM:SS from the start of recording.
     
@@ -760,7 +766,8 @@ def format_time_from_start(seconds_from_start):
     seconds = int(seconds_from_start % 60)
     return f"{minutes}:{seconds:02d}"
 
-def merge_nearby_blinks(segments, merge_window_frames):
+# (merge_nearby_blinks is now imported from sleap.processing_functions)
+def merge_nearby_blinks_DEPRECATED(segments, merge_window_frames):
     """
     Merge blink segments that are within merge_window_frames of each other.
     """
@@ -816,7 +823,7 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
         print(f"  Using 10th percentile threshold: {blink_threshold_v1:.4f}")
     
     # Find blink segments
-    blink_segments_v1 = find_blink_segments(
+    blink_segments_v1 = pf.find_blink_segments(
         VideoData1['instance.score'], 
         blink_threshold_v1, 
         min_blink_frames, 
@@ -824,7 +831,7 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
     )
     
     # Merge nearby blinks
-    blink_segments_v1 = merge_nearby_blinks(blink_segments_v1, merge_window_frames)
+    blink_segments_v1 = pf.merge_nearby_blinks(blink_segments_v1, merge_window_frames)
     
     # Post-merge filter: Remove segments that don't meet minimum duration in actual milliseconds
     # (because merging might create segments that are still too short)
@@ -866,8 +873,8 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
             end_time_from_start = end_time - recording_start_time
             
             # Format times as MM:SS
-            start_time_str = format_time_from_start(start_time_from_start)
-            end_time_str = format_time_from_start(end_time_from_start)
+            start_time_str = pf.format_time_from_start(start_time_from_start)
+            end_time_str = pf.format_time_from_start(end_time_from_start)
             
             print(f"    Blink {i}: frames {start_idx}-{end_idx} ({blink['length']} frames, "
                   f"{duration_ms:.1f}ms) at {start_time_str}-{end_time_str}, "
@@ -913,7 +920,7 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
         print(f"  Using 10th percentile threshold: {blink_threshold_v2:.4f}")
     
     # Find blink segments
-    blink_segments_v2 = find_blink_segments(
+    blink_segments_v2 = pf.find_blink_segments(
         VideoData2['instance.score'], 
         blink_threshold_v2, 
         min_blink_frames, 
@@ -921,7 +928,7 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
     )
     
     # Merge nearby blinks
-    blink_segments_v2 = merge_nearby_blinks(blink_segments_v2, merge_window_frames)
+    blink_segments_v2 = pf.merge_nearby_blinks(blink_segments_v2, merge_window_frames)
     
     # Post-merge filter: Remove segments that don't meet minimum duration in actual milliseconds
     # (because merging might create segments that are still too short)
@@ -963,8 +970,8 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
             end_time_from_start = end_time - recording_start_time
             
             # Format times as MM:SS
-            start_time_str = format_time_from_start(start_time_from_start)
-            end_time_str = format_time_from_start(end_time_from_start)
+            start_time_str = pf.format_time_from_start(start_time_from_start)
+            end_time_str = pf.format_time_from_start(end_time_from_start)
             
             print(f"    Blink {i}: frames {start_idx}-{end_idx} ({blink['length']} frames, "
                   f"{duration_ms:.1f}ms) at {start_time_str}-{end_time_str}, "
@@ -2167,123 +2174,37 @@ fig.show()
 # This approach uses statistical methods to set adaptive thresholds based on the data itself,
 # which better captures both large and small saccades
 
-# 1. Calculate adaptive thresholds using statistical methods
-abs_vel = df['vel_x_smooth'].abs().dropna()
-vel_thresh = abs_vel.mean() + k * abs_vel.std()
-
-print(f"Adaptive velocity threshold: {vel_thresh:.2f} px/s")
-print(f"  (mean: {abs_vel.mean():.2f} px/s, std: {abs_vel.std():.2f} px/s, k={k})")
-print(f"Saccade duration parameter: {onset_offset_fraction} (saccade ends when velocity < {vel_thresh * onset_offset_fraction:.2f} px/s)")
-
-# 2. Find peaks using scipy's find_peaks with adaptive height
-# Find positive peaks (upward saccades)
-pos_peaks, pos_properties = find_peaks(
-    df['vel_x_smooth'],
-    height=vel_thresh,  # Minimum peak height
-    distance=int(FPS_1 * refractory_period),  # Minimum distance between peaks (~100ms refractory period)
-    width=1  # Minimum peak width in samples
+# Use saccade detection function from sleap.saccade_processing
+# (detect_saccades_adaptive function replaces the inline logic below)
+upward_saccades_df, downward_saccades_df, vel_thresh = sp.detect_saccades_adaptive(
+    df, 
+    position_col='X_smooth',
+    velocity_col='vel_x_smooth',
+    time_col='Seconds',
+    fps=FPS_1,
+    k=k,
+    refractory_period=refractory_period,
+    onset_offset_fraction=onset_offset_fraction,
+    verbose=True
 )
 
-# Find negative peaks (downward saccades) by inverting the signal
-neg_peaks, neg_properties = find_peaks(
-    -df['vel_x_smooth'],  # Invert to find troughs
-    height=vel_thresh,  # Same threshold
-    distance=int(FPS_1 * refractory_period),
-    width=1
-)
+# %%
+# EXTRACT PERI-SACCADE SEGMENTS
+#-------------------------------------------------------------------------------
+# Extract each detected saccade with 10 frames before and 20 frames after the threshold crossing (start_time)
+# This allows us to visualize saccade profiles and do QC on amplitude detection
+#-------------------------------------------------------------------------------
+# PARAMETERS: Peri-saccade segment extraction window
+#-------------------------------------------------------------------------------
+# NOTE: n_before and n_after are defined in Cell 2 (setup cell)
+# Parameters are being used from Cell 2: n_before={n_before}, n_after={n_after}
+# If you need to change these, edit Cell 2, not here
 
-# 3. Extract saccade information
-upward_saccades = []
-for peak_idx in pos_peaks:
-    peak_time = df.iloc[peak_idx]['Seconds']
-    peak_velocity = df.iloc[peak_idx]['vel_x_smooth']
-    
-    # Optional: find onset and offset by going backward/forward until velocity drops below threshold
-    start_idx = peak_idx
-    end_idx = peak_idx
-    
-    # Find onset (go backward)
-    while start_idx > 0 and abs(df.iloc[start_idx]['vel_x_smooth']) > vel_thresh * onset_offset_fraction:
-        start_idx -= 1
-    
-    # Find offset (go forward)
-    while end_idx < len(df) - 1 and abs(df.iloc[end_idx]['vel_x_smooth']) > vel_thresh * onset_offset_fraction:
-        end_idx += 1
-    
-    onset_time = df.iloc[start_idx]['Seconds']
-    offset_time = df.iloc[end_idx]['Seconds']
-    
-    # Calculate amplitude (absolute change in X position)
-    start_x = df.iloc[start_idx]['X_smooth']
-    end_x = df.iloc[end_idx]['X_smooth']
-    amplitude = abs(end_x - start_x)
-    
-    upward_saccades.append({
-        'time': peak_time,
-        'velocity': peak_velocity,
-        'start_time': onset_time,
-        'end_time': offset_time,
-        'duration': offset_time - onset_time,
-        'start_position': start_x,
-        'end_position': end_x,
-        'amplitude': amplitude
-    })
 
-downward_saccades = []
-for peak_idx in neg_peaks:
-    peak_time = df.iloc[peak_idx]['Seconds']
-    peak_velocity = df.iloc[peak_idx]['vel_x_smooth']
-    
-    # Find onset and offset
-    start_idx = peak_idx
-    end_idx = peak_idx
-    
-    # Find onset
-    while start_idx > 0 and abs(df.iloc[start_idx]['vel_x_smooth']) > vel_thresh * onset_offset_fraction:
-        start_idx -= 1
-    
-    # Find offset
-    while end_idx < len(df) - 1 and abs(df.iloc[end_idx]['vel_x_smooth']) > vel_thresh * onset_offset_fraction:
-        end_idx += 1
-    
-    onset_time = df.iloc[start_idx]['Seconds']
-    offset_time = df.iloc[end_idx]['Seconds']
-    
-    # Calculate amplitude (absolute change in X position)
-    start_x = df.iloc[start_idx]['X_smooth']
-    end_x = df.iloc[end_idx]['X_smooth']
-    amplitude = abs(end_x - start_x)
-    
-    downward_saccades.append({
-        'time': peak_time,
-        'velocity': peak_velocity,
-        'start_time': onset_time,
-        'end_time': offset_time,
-        'duration': offset_time - onset_time,
-        'start_position': start_x,
-        'end_position': end_x,
-        'amplitude': amplitude
-    })
+# Initialize storage for peri-saccade segments
+peri_saccades = []
 
-# Convert to DataFrames for easier handling
-upward_saccades_df = pd.DataFrame(upward_saccades)
-downward_saccades_df = pd.DataFrame(downward_saccades)
-
-print(f"\n✅ Detected {len(pos_peaks)} upward saccades")
-print(f"✅ Detected {len(neg_peaks)} downward saccades")
-
-# Print summary statistics
-if len(upward_saccades) > 0:
-    print(f"\nUpward saccades - mean velocity: {upward_saccades_df['velocity'].mean():.2f} px/s")
-    print(f"Upward saccades - mean duration: {upward_saccades_df['duration'].mean():.3f} s")
-    print(f"Upward saccades - mean amplitude: {upward_saccades_df['amplitude'].mean():.2f} px")
-    print(f"Upward saccades - std amplitude: {upward_saccades_df['amplitude'].std():.2f} px")
-
-if len(downward_saccades) > 0:
-    print(f"\nDownward saccades - mean velocity: {downward_saccades_df['velocity'].mean():.2f} px/s")
-    print(f"Downward saccades - mean duration: {downward_saccades_df['duration'].mean():.3f} s")
-    print(f"Downward saccades - mean amplitude: {downward_saccades_df['amplitude'].mean():.2f} px")
-    print(f"Downward saccades - std amplitude: {downward_saccades_df['amplitude'].std():.2f} px")
+# (extract_saccade_segment is now imported from sleap.saccade_processing)
 
 
 # %%
@@ -2303,88 +2224,10 @@ if len(downward_saccades) > 0:
 # Initialize storage for peri-saccade segments
 peri_saccades = []
 
-def extract_saccade_segment(sacc_df, direction='upward'):
-    """Extract peri-saccade segment for a single saccade
-    Uses start_time (threshold crossing) as center point: n_before points before, n_after points after
-    Excludes segments with unreasonable time ranges (validation)"""
-    segments = []
-    excluded_segments = []  # Track excluded segments for reporting
-    
-    for idx, sacc in sacc_df.iterrows():
-        start_time = sacc['start_time']
-        end_time = sacc['end_time']
-        peak_time = sacc['time']
-        amplitude = sacc['amplitude']
-        
-        # Find threshold crossing index (start_time)
-        # Find the closest index to start_time
-        start_idx = df['Seconds'].sub(start_time).abs().idxmin()
-        
-        # Calculate pre/post indices centered on threshold crossing
-        pre_start = max(0, start_idx - n_before)
-        post_end = min(len(df) - 1, start_idx + n_after)
-        
-        # Extract segment
-        segment = df.iloc[pre_start:post_end + 1].copy()
-        
-        # Normalize time relative to threshold crossing (start_time)
-        segment['Time_rel_threshold'] = segment['Seconds'] - start_time
-        
-        # Validate time range
-        time_range_min = segment['Time_rel_threshold'].min()
-        time_range_max = segment['Time_rel_threshold'].max()
-        
-        # Calculate expected time span based on n_before + n_after points (110% tolerance)
-        time_span = time_range_max - time_range_min
-        if len(segment) > 1:
-            dt_estimate = time_span / (len(segment) - 1)
-        else:
-            dt_estimate = 0.0167  # Default to ~60Hz if segment too short
-        # Expected total points: n_before (before peak) + 1 (peak itself) + n_after (after peak)
-        expected_total_points = n_before + 1 + n_after
-        # Expected time span = (n_points - 1) intervals * dt per interval
-        expected_time_span = (expected_total_points - 1) * dt_estimate
-        max_allowed_time_span = expected_time_span * 1.1  # 110% of expected
-        
-        # Check if time range is reasonable (110% of expected span) or if point count is wrong
-        # Allow some flexibility for edge cases where we can't extract full window
-        is_valid = True
-        if time_span > max_allowed_time_span:
-            is_valid = False  # Time span too large (likely data gaps)
-        elif len(segment) < expected_total_points * 0.9:
-            is_valid = False  # Too few points (likely truncated at edges or data gaps)
-        
-        if not is_valid:
-            excluded_segments.append({
-                'saccade_id': idx,
-                'direction': direction,
-                'time_range': (time_range_min, time_range_max),
-                'n_points': len(segment),
-                'threshold_time': start_time,
-                'peak_time': peak_time,
-                'amplitude': amplitude
-            })
-            continue  # Skip this segment
-        
-        segment['Time_rel_saccade_start'] = segment['Seconds'] - start_time
-        segment['Time_rel_saccade_end'] = segment['Seconds'] - end_time
-        
-        # Add metadata
-        segment['saccade_id'] = idx
-        segment['saccade_direction'] = direction
-        segment['saccade_amplitude'] = amplitude
-        segment['saccade_peak_velocity'] = sacc['velocity']
-        segment['saccade_duration'] = sacc['duration']
-        segment['is_saccade_period'] = (segment['Seconds'] >= start_time) & (segment['Seconds'] <= end_time)
-        
-        segments.append(segment)
-    
-    return segments, excluded_segments
-
 # Extract upward saccades
 all_excluded = []
 if len(upward_saccades_df) > 0:
-    upward_segments, upward_excluded = extract_saccade_segment(upward_saccades_df, direction='upward')
+    upward_segments, upward_excluded = sp.extract_saccade_segment(df, upward_saccades_df, n_before, n_after, direction='upward')
     peri_saccades.extend(upward_segments)
     all_excluded.extend(upward_excluded)
     print(f"✅ Extracted {len(upward_segments)} upward saccade segments")
@@ -2393,7 +2236,7 @@ if len(upward_saccades_df) > 0:
 
 # Extract downward saccades
 if len(downward_saccades_df) > 0:
-    downward_segments, downward_excluded = extract_saccade_segment(downward_saccades_df, direction='downward')
+    downward_segments, downward_excluded = sp.extract_saccade_segment(df, downward_saccades_df, n_before, n_after, direction='downward')
     peri_saccades.extend(downward_segments)
     all_excluded.extend(downward_excluded)
     print(f"✅ Extracted {len(downward_segments)} downward saccade segments")
@@ -2427,7 +2270,12 @@ baseline_n_points = 5  # Number of points before threshold crossing to use for b
 baseline_start = -n_before  # Relative to threshold crossing (start of extracted window)
 baseline_end = -(n_before - baseline_n_points)  # Relative to threshold crossing (baseline_n_points before threshold crossing)
 
-for segment in peri_saccades:
+# Use baselining function from sleap.saccade_processing
+peri_saccades = sp.baseline_saccade_segments(peri_saccades, n_before, baseline_n_points=5)
+
+# (The loop below was replaced by the function call above)
+"""
+for segment_DEPRECATED in peri_saccades:
     # Baseline window: We want to use the last baseline_n_points points before threshold crossing
     # The segment structure: [points before threshold crossing (n_before points), threshold crossing, points after threshold crossing (n_after points)]
     # Index 0 is the earliest pre-threshold point (Time_rel_threshold = -n_before * dt approximately)
@@ -2467,7 +2315,8 @@ for segment in peri_saccades:
             segment['baseline_value'] = 0.0
             print(f"⚠️  Warning: Saccade {segment['saccade_id'].iloc[0]} has no points for baselining")
 
-print(f"✅ Baselined all {len(peri_saccades)} saccade segments using points {baseline_start} to {baseline_end} relative to peak")
+print(f"✅ Baselined all {len(peri_saccades)} saccade segments using {baseline_n_points} points before threshold crossing")
+"""
 
 # Store as a list of dataframes for easy iteration and analysis
 # Each element in peri_saccades is a dataframe containing one saccade's peri-event window
@@ -2515,7 +2364,8 @@ upward_segments_all = [seg for seg in peri_saccades if seg['saccade_direction'].
 downward_segments_all = [seg for seg in peri_saccades if seg['saccade_direction'].iloc[0] == 'downward']
 
 # Remove outlier saccades based on amplitude and extreme position/velocity values
-def filter_outliers(segments, direction_name):
+# (filter_outlier_saccades is now imported from sleap.saccade_processing)
+def filter_outliers_DEPRECATED(segments, direction_name):
     """Filter out outlier segments using IQR method on amplitude and extreme values"""
     if len(segments) == 0:
         return [], []
@@ -2575,8 +2425,8 @@ def filter_outliers(segments, direction_name):
     return filtered, outliers_metadata, outlier_segments
 
 # Filter outliers
-upward_segments, upward_outliers_meta, upward_outlier_segments = filter_outliers(upward_segments_all, 'upward')
-downward_segments, downward_outliers_meta, downward_outlier_segments = filter_outliers(downward_segments_all, 'downward')
+upward_segments, upward_outliers_meta, upward_outlier_segments = sp.filter_outlier_saccades(upward_segments_all, 'upward')
+downward_segments, downward_outliers_meta, downward_outlier_segments = sp.filter_outlier_saccades(downward_segments_all, 'downward')
 
 print(f"Plotting {len(upward_segments)} upward and {len(downward_segments)} downward saccades...")
 if len(upward_outliers_meta) > 0 or len(downward_outliers_meta) > 0:
@@ -3134,7 +2984,8 @@ def extract_qc_segments_DEPRECATED(sacc_df, direction='upward', n_points_before=
 # Old extraction calls removed - now using peri_saccades directly (see above)
 
 # Function to create color mapping for outlier detection
-def get_color_mapping(amplitudes):
+# (get_color_mapping is now imported from sleap.saccade_processing)
+def get_color_mapping_DEPRECATED(amplitudes):
     """Create color mapping from min to max amplitude"""
     amps = np.array(amplitudes)
     min_amp = np.min(amps)
@@ -3154,7 +3005,7 @@ def get_color_mapping(amplitudes):
 # Plot upward segments
 if len(upward_segments_all) > 0:
     upward_amplitudes = [seg['saccade_amplitude'].iloc[0] for seg in upward_segments_all]
-    upward_colors, upward_min_amp, upward_max_amp = get_color_mapping(upward_amplitudes)
+    upward_colors, upward_min_amp, upward_max_amp = sp.get_color_mapping(upward_amplitudes)
     
     for i, (segment, color) in enumerate(zip(upward_segments_all, upward_colors)):
         fig_qc.add_trace(
@@ -3204,7 +3055,7 @@ if len(upward_segments_all) > 0:
 # Plot downward segments
 if len(downward_segments_all) > 0:
     downward_amplitudes = [seg['saccade_amplitude'].iloc[0] for seg in downward_segments_all]
-    downward_colors, downward_min_amp, downward_max_amp = get_color_mapping(downward_amplitudes)
+    downward_colors, downward_min_amp, downward_max_amp = sp.get_color_mapping(downward_amplitudes)
     
     for i, (segment, color) in enumerate(zip(downward_segments_all, downward_colors)):
         fig_qc.add_trace(
@@ -3276,15 +3127,15 @@ fig_qc.show()
 
 # Print correlation statistics
 print("\n=== SACCADE AMPLITUDE-DURATION CORRELATION ===\n")
-if len(upward_saccades) > 0:
-    print(f"Upward saccades (n={len(upward_saccades)}):")
+if upward_saccades_df is not None and len(upward_saccades_df) > 0:
+    print(f"Upward saccades (n={len(upward_saccades_df)}):")
     print(f"  Correlation (amplitude vs duration): {corr_up:.3f}")
     print(f"  Mean amplitude: {upward_saccades_df['amplitude'].mean():.2f} px")
     print(f"  Mean duration: {upward_saccades_df['duration'].mean():.3f} s")
     print(f"  Amp range: {upward_saccades_df['amplitude'].min():.2f} - {upward_saccades_df['amplitude'].max():.2f} px")
 
-if len(downward_saccades) > 0:
-    print(f"\nDownward saccades (n={len(downward_saccades)}):")
+if downward_saccades_df is not None and len(downward_saccades_df) > 0:
+    print(f"\nDownward saccades (n={len(downward_saccades_df)}):")
     print(f"  Correlation (amplitude vs duration): {corr_down:.3f}")
     print(f"  Mean amplitude: {downward_saccades_df['amplitude'].mean():.2f} px")
     print(f"  Mean duration: {downward_saccades_df['duration'].mean():.3f} s")
