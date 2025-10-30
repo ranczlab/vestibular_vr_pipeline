@@ -56,11 +56,8 @@ def get_eye_label(key):
 
 
 # User-editable friendly labels for plotting and console output:
-VIDEO_LABELS = {
-    "VideoData1": "VideoData1 (L)",
-    "VideoData2": "VideoData2 (R)"
-}
 
+video1_eye = 'L'  # Options: 'L' or 'R'; which eye does VideoData1 represent? ('L' = Left, 'R' = Right)
 plot_timeseries = False
 score_cutoff = 0.2 # for filtering out inferred points with low confidence, they get interpolated 
 outlier_sd_threshold = 10 # for removing outliers from the data, they get interpolated 
@@ -84,6 +81,14 @@ n_before = 10  # Number of points before detection peak to extract for peri-sacc
 n_after = 30   # Number of points after detection peak to extract
 
 plot_saccade_detection_QC = True
+
+video2_eye = 'R' if video1_eye == 'L' else 'L' # Automatically assign eye for VideoData2
+eye_fullname = {'L': 'Left', 'R': 'Right'} # Map for full names (used in labels)
+# Update VIDEO_LABELS based on selection
+VIDEO_LABELS = {
+    'VideoData1': f"VideoData1 ({video1_eye}: {eye_fullname[video1_eye]})",
+    'VideoData2': f"VideoData2 ({video2_eye}: {eye_fullname[video2_eye]})"
+}
 
 data_path = Path('/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4/B6J2782-2025-04-28T14-22-03') 
 #data_path = Path('/Users/rancze/Documents/Data/vestVR/Cohort1/No_iso_correction/Visual_mismatch_day3/B6J2717-2024-12-10T12-17-03') # only has sleap data 1
@@ -1984,7 +1989,20 @@ if VideoData2_Has_Sleap:
 
 # Create figure with 4 columns in a single row: up pos, up vel, down pos, down vel
 
+# Helper: map detected directions (upward/downward) to TN/NT based on eye assignment
+# Left eye: upward→NT, downward→TN; Right eye: upward→TN, downward→NT
+def get_direction_map_for_video(video_key):
+    eye = video1_eye if video_key == 'VideoData1' else video2_eye
+    if eye == 'L':
+        return {'upward': 'NT', 'downward': 'TN'}
+    else:
+        return {'upward': 'TN', 'downward': 'NT'}
+
 for video_key, res in saccade_results.items():
+    dir_map = get_direction_map_for_video(video_key)
+    label_up = dir_map['upward']
+    label_down = dir_map['downward']
+
     upward_saccades_df = res['upward_saccades_df']
     downward_saccades_df = res['downward_saccades_df']
     peri_saccades = res['peri_saccades']
@@ -1997,13 +2015,11 @@ for video_key, res in saccade_results.items():
         shared_yaxes=False,  # Each panel can have different y-axis scale
         shared_xaxes=False,
         subplot_titles=(
-            'Position - Upward Saccades',
-            'Velocity - Upward Saccades',
-            'Position - Downward Saccades',
-            'Velocity - Downward Saccades'
-        ),
-        vertical_spacing=0.08,
-        horizontal_spacing=0.05
+            f'Position - {label_up} Saccades',
+            f'Velocity - {label_up} Saccades',
+            f'Position - {label_down} Saccades',
+            f'Velocity - {label_down} Saccades'
+        )
     )
 
     # Extract segments for each direction
@@ -2014,25 +2030,23 @@ for video_key, res in saccade_results.items():
     upward_segments, upward_outliers_meta, upward_outlier_segments = sp.filter_outlier_saccades(upward_segments_all, 'upward')
     downward_segments, downward_outliers_meta, downward_outlier_segments = sp.filter_outlier_saccades(downward_segments_all, 'downward')
 
-    print(f"Plotting {len(upward_segments)} upward and {len(downward_segments)} downward saccades...")
+    print(f"Plotting {len(upward_segments)} {label_up} and {len(downward_segments)} {label_down} saccades...")
     if len(upward_outliers_meta) > 0 or len(downward_outliers_meta) > 0:
-        print(f"\n⚠️  OUTLIER FILTERING:")
-        print(f"   Excluded {len(upward_outliers_meta)} upward outlier(s) and {len(downward_outliers_meta)} downward outlier(s)")
-        print(f"   Criteria: Amplitude or max position/velocity outside 3×IQR range")
-        
-        if len(upward_outliers_meta) > 0:
-            print(f"\n   Upward outliers (first 5):")
-            for i, out in enumerate(upward_outliers_meta[:5]):
-                print(f"      ID {out['saccade_id']}: amp={out['amplitude']:.2f}px, max_pos={out['max_abs_position']:.2f}px, max_vel={out['max_abs_velocity']:.2f}px/s")
-            if len(upward_outliers_meta) > 5:
-                print(f"      ... and {len(upward_outliers_meta) - 5} more")
-        
-        if len(downward_outliers_meta) > 0:
-            print(f"\n   Downward outliers (first 5):")
-            for i, out in enumerate(downward_outliers_meta[:5]):
-                print(f"      ID {out['saccade_id']}: amp={out['amplitude']:.2f}px, max_pos={out['max_abs_position']:.2f}px, max_vel={out['max_abs_velocity']:.2f}px/s")
-            if len(downward_outliers_meta) > 5:
-                print(f"      ... and {len(downward_outliers_meta) - 5} more")
+        print(f"   Excluded {len(upward_outliers_meta)} {label_up} outlier(s) and {len(downward_outliers_meta)} {label_down} outlier(s)")
+
+    if len(upward_outliers_meta) > 0:
+        print(f"\n   {label_up} outliers (first 5):")
+        for i, out in enumerate(upward_outliers_meta[:5]):
+            pass
+        if len(upward_outliers_meta) > 5:
+            print(f"      ... and {len(upward_outliers_meta) - 5} more")
+
+    if len(downward_outliers_meta) > 0:
+        print(f"\n   {label_down} outliers (first 5):")
+        for i, out in enumerate(downward_outliers_meta[:5]):
+            pass
+        if len(downward_outliers_meta) > 5:
+            print(f"      ... and {len(downward_outliers_meta) - 5} more")
 
     # Plot upward saccades
     for i, segment in enumerate(upward_segments):
@@ -2148,7 +2162,7 @@ for video_key, res in saccade_results.items():
         max_length = max(len(pos) for pos in aligned_positions)
         
         if min_length != max_length:
-            print(f"⚠️  Warning: Upward segments have variable lengths after alignment ({min_length} to {max_length} points). Using minimum length {min_length}.")
+            print(f"⚠️  Warning: {label_up} segments have variable lengths after alignment ({min_length} to {max_length} points). Using minimum length {min_length}.")
         
         # Truncate all segments to same length and stack
         upward_positions = np.array([pos[:min_length] for pos in aligned_positions])
@@ -2164,9 +2178,8 @@ for video_key, res in saccade_results.items():
                 x=upward_times,
                 y=upward_mean_pos,
                 mode='lines',
-                name='Mean Up',
-                line=dict(color='darkgreen', width=3),
-                showlegend=False
+                name=f'{label_up} Mean Position',
+                line=dict(color='red', width=3)
             ),
             row=1, col=1
         )
@@ -2176,9 +2189,8 @@ for video_key, res in saccade_results.items():
                 x=upward_times,
                 y=upward_mean_vel,
                 mode='lines',
-                name='Mean Up Vel',
-                line=dict(color='darkgreen', width=3),
-                showlegend=False
+                name=f'{label_up} Mean Velocity',
+                line=dict(color='red', width=3)
             ),
             row=1, col=2
         )
@@ -2190,7 +2202,7 @@ for video_key, res in saccade_results.items():
         max_length_down = max(len(seg) for seg in downward_segments)
         
         if min_length_down != max_length_down:
-            print(f"⚠️  Warning: Downward segments have variable lengths ({min_length_down} to {max_length_down} points). Using minimum length {min_length_down}.")
+            print(f"⚠️  Warning: {label_down} segments have variable lengths ({min_length_down} to {max_length_down} points). Using minimum length {min_length_down}.")
         
         # Stack all segments as arrays (each row is one saccade, columns are time points)
         # Use only first min_length points to ensure all arrays have same shape
@@ -2207,9 +2219,8 @@ for video_key, res in saccade_results.items():
                 x=downward_times,
                 y=downward_mean_pos,
                 mode='lines',
-                name='Mean Down',
-                line=dict(color='darkviolet', width=3),
-                showlegend=False
+                name=f'{label_down} Mean Position',
+                line=dict(color='purple', width=3)
             ),
             row=1, col=3
         )
@@ -2219,9 +2230,8 @@ for video_key, res in saccade_results.items():
                 x=downward_times,
                 y=downward_mean_vel,
                 mode='lines',
-                name='Mean Down Vel',
-                line=dict(color='darkviolet', width=3),
-                showlegend=False
+                name=f'{label_down} Mean Velocity',
+                line=dict(color='purple', width=3)
             ),
             row=1, col=4
         )
@@ -2362,14 +2372,14 @@ for video_key, res in saccade_results.items():
     if len(upward_segments) > 0:
         up_amps = [seg['saccade_amplitude'].iloc[0] for seg in upward_segments]
         up_durs = [seg['saccade_duration'].iloc[0] for seg in upward_segments]
-        print(f"Upward saccades: {len(upward_segments)}")
+        print(f"{label_up} saccades: {len(upward_segments)}")
         print(f"  Mean amplitude: {np.mean(up_amps):.2f} px")
         print(f"  Mean duration: {np.mean(up_durs):.3f} s")
 
     if len(downward_segments) > 0:
         down_amps = [seg['saccade_amplitude'].iloc[0] for seg in downward_segments]
         down_durs = [seg['saccade_duration'].iloc[0] for seg in downward_segments]
-        print(f"Downward saccades: {len(downward_segments)}")
+        print(f"{label_down} saccades: {len(downward_segments)}")
         print(f"  Mean amplitude: {np.mean(down_amps):.2f} px")
         print(f"  Mean duration: {np.mean(down_durs):.3f} s")
 
@@ -2380,9 +2390,9 @@ for video_key, res in saccade_results.items():
         overall_x_max = max(np.max(all_upward_times), np.max(all_downward_times))
         print(f"📏 Window: {n_before} points before + {n_after} points after threshold crossing (actual time range: {overall_x_min:.3f} to {overall_x_max:.3f} s)")
     elif len(all_upward_times) > 0:
-        print(f"📏 Window: {n_before} points before + {n_after} points after threshold crossing (upward actual time range: {np.min(all_upward_times):.3f} to {np.max(all_upward_times):.3f} s)")
+        print(f"📏 Window: {n_before} points before + {n_after} points after threshold crossing ({label_up} actual time range: {np.min(all_upward_times):.3f} to {np.max(all_upward_times):.3f} s)")
     elif len(all_downward_times) > 0:
-        print(f"📏 Window: {n_before} points before + {n_after} points after threshold crossing (downward actual time range: {np.min(all_downward_times):.3f} to {np.max(all_downward_times):.3f} s)")
+        print(f"📏 Window: {n_before} points before + {n_after} points after threshold crossing ({label_down} actual time range: {np.min(all_downward_times):.3f} to {np.max(all_downward_times):.3f} s)")
     else:
         print(f"📏 Window: {n_before} points before + {n_after} points after threshold crossing")
 
@@ -2399,6 +2409,10 @@ from plotly.subplots import make_subplots
 import matplotlib.cm as cm
 
 for video_key, res in saccade_results.items():
+    dir_map = get_direction_map_for_video(video_key)
+    label_up = dir_map['upward']
+    label_down = dir_map['downward']
+
     upward_saccades_df = res['upward_saccades_df']
     downward_saccades_df = res['downward_saccades_df']
     peri_saccades = res['peri_saccades']   
@@ -2409,12 +2423,12 @@ for video_key, res in saccade_results.items():
     fig_qc = make_subplots(
         rows=3, cols=2,
         subplot_titles=(
-            'Amplitude Distribution - Upward Saccades', 
-            'Amplitude Distribution - Downward Saccades',
-            'Amplitude vs Duration - Upward Saccades',
-            'Amplitude vs Duration - Downward Saccades',
-            'Peri-Saccade Segments - Upward (colored by amplitude)',
-            'Peri-Saccade Segments - Downward (colored by amplitude)'
+            f'Amplitude Distribution - {label_up} Saccades', 
+            f'Amplitude Distribution - {label_down} Saccades',
+            f'Amplitude vs Duration - {label_up} Saccades',
+            f'Amplitude vs Duration - {label_down} Saccades',
+            f'Peri-Saccade Segments - {label_up} (colored by amplitude)',
+            f'Peri-Saccade Segments - {label_down} (colored by amplitude)'
         ),
         vertical_spacing=0.10,
         horizontal_spacing=0.1,
@@ -2427,10 +2441,10 @@ for video_key, res in saccade_results.items():
         fig_qc.add_trace(
             go.Histogram(
                 x=upward_saccades_df['amplitude'],
-                nbinsx=30,
-                name='Upward',
-                marker_color='green',
-                showlegend=False
+                nbinsx=50,
+                name=f'{label_up}',
+                marker_color='red',
+                opacity=0.6
             ),
             row=1, col=1
         )
@@ -2441,9 +2455,8 @@ for video_key, res in saccade_results.items():
                 x=upward_saccades_df['duration'],
                 y=upward_saccades_df['amplitude'],
                 mode='markers',
-                name='Upward',
-                marker=dict(color='green', size=8, opacity=0.6),
-                showlegend=False
+                name=f'{label_up}',
+                marker=dict(color='red', size=6, opacity=0.6)
             ),
             row=2, col=1
         )
@@ -2469,10 +2482,10 @@ for video_key, res in saccade_results.items():
         fig_qc.add_trace(
             go.Histogram(
                 x=downward_saccades_df['amplitude'],
-                nbinsx=30,
-                name='Downward',
+                nbinsx=50,
+                name=f'{label_down}',
                 marker_color='purple',
-                showlegend=False
+                opacity=0.6
             ),
             row=1, col=2
         )
@@ -2483,9 +2496,8 @@ for video_key, res in saccade_results.items():
                 x=downward_saccades_df['duration'],
                 y=downward_saccades_df['amplitude'],
                 mode='markers',
-                name='Downward',
-                marker=dict(color='purple', size=8, opacity=0.6),
-                showlegend=False
+                name=f'{label_down}',
+                marker=dict(color='purple', size=6, opacity=0.6)
             ),
             row=2, col=2
         )
@@ -2529,7 +2541,7 @@ for video_key, res in saccade_results.items():
                     x=segment['Time_rel_threshold'],
                     y=segment['X_smooth_baselined'],
                     mode='lines',
-                    name=f'Up #{i+1}',
+                    name=f'{label_up} #{i+1}',
                     line=dict(color=color, width=1.5),
                     showlegend=False,
                     opacity=0.7,
@@ -2554,7 +2566,7 @@ for video_key, res in saccade_results.items():
                     cmax=upward_max_amp,
                     showscale=True,
                     colorbar=dict(
-                        title=dict(text="Amplitude (px)", side="right"),
+                        title=dict(text=f"Amplitude ({label_up})", side="right"),
                         x=0.47,  # Position to the right of the left column plot
                         xpad=10,
                         len=0.45,  # Set colorbar length relative to subplot
@@ -2579,7 +2591,7 @@ for video_key, res in saccade_results.items():
                     x=segment['Time_rel_threshold'],
                     y=segment['X_smooth_baselined'],
                     mode='lines',
-                    name=f'Down #{i+1}',
+                    name=f'{label_down} #{i+1}',
                     line=dict(color=color, width=1.5),
                     showlegend=False,
                     opacity=0.7,
@@ -2604,7 +2616,7 @@ for video_key, res in saccade_results.items():
                     cmax=downward_max_amp,
                     showscale=True,
                     colorbar=dict(
-                        title=dict(text="Amplitude (px)", side="right"),
+                        title=dict(text=f"Amplitude ({label_down})", side="right"),
                         x=0.97,  # Position to the right of the right column plot
                         xpad=10,
                         len=0.45,  # Set colorbar length relative to subplot
@@ -2665,6 +2677,10 @@ for video_key, res in saccade_results.items():
 # Create overlay plot showing detected saccades with duration lines and peak arrows
 
 for video_key, res in saccade_results.items():
+    dir_map = get_direction_map_for_video(video_key)
+    label_up = dir_map['upward']
+    label_down = dir_map['downward']
+
     upward_saccades_df = res['upward_saccades_df']
     downward_saccades_df = res['downward_saccades_df']
     peri_saccades = res['peri_saccades']   
@@ -2771,7 +2787,7 @@ for video_key, res in saccade_results.items():
                 x=[None],
                 y=[None],
                 mode='markers',
-                name='Upward Saccades (duration lines)',
+                name=f'{label_up} Saccades (duration lines)',
                 marker=dict(symbol='line-ns', size=15, color='green', line=dict(width=3))
             ),
             row=2, col=1
@@ -2821,7 +2837,7 @@ for video_key, res in saccade_results.items():
                 x=[None],
                 y=[None],
                 mode='markers',
-                name='Downward Saccades (duration lines)',
+                name=f'{label_down} Saccades (duration lines)',
                 marker=dict(symbol='line-ns', size=15, color='purple', line=dict(width=3))
             ),
             row=2, col=1
