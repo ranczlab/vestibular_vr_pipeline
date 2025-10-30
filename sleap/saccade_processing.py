@@ -435,3 +435,90 @@ def get_color_mapping(amplitudes):
     colors = cm.plasma(normalized_amps)
     return ['rgb({}, {}, {})'.format(int(r*255), int(g*255), int(b*255)) for r, g, b, _ in colors], min_amp, max_amp
 
+
+def analyze_eye_video_saccades(
+    df,
+    fps,
+    video_label,
+    k=5,
+    refractory_period=0.1,
+    onset_offset_fraction=0.2,
+    n_before=10,
+    n_after=30,
+    baseline_n_points=5,
+):
+    """
+    Analyze saccades for a given eye video dataframe.
+    Performs smoothing, velocity computation, adaptive saccade detection, peri-event extraction, baselining, outlier filtering.
+    Returns dict of results including all relevant outputs for stats/plots.
+    """
+    import numpy as np
+    import pandas as pd
+    # sp is this module (sleap.saccade_processing): use local functions
+
+    # Smoothing
+    df = df.copy()
+    df['X_smooth'] = (
+        df['Ellipse.Center.X']
+        .rolling(window=5, center=True)
+        .median()
+        .bfill()
+        .ffill()
+    )
+
+    # Compute instantaneous velocity
+    df['dt'] = df['Seconds'].diff()
+    df['vel_x_original'] = df['Ellipse.Center.X'].diff() / df['dt']
+    df['vel_x_smooth'] = df['X_smooth'].diff() / df['dt']
+
+    # Saccade detection
+    upward_saccades_df, downward_saccades_df, vel_thresh = detect_saccades_adaptive(
+        df,
+        position_col='X_smooth',
+        velocity_col='vel_x_smooth',
+        time_col='Seconds',
+        fps=fps,
+        k=k,
+        refractory_period=refractory_period,
+        onset_offset_fraction=onset_offset_fraction,
+        verbose=True
+    )
+
+    # Peri-saccade segment extraction
+    peri_saccades = []
+    all_excluded = []
+    if len(upward_saccades_df) > 0:
+        upward_segments, upward_excluded = extract_saccade_segment(df, upward_saccades_df, n_before, n_after, direction='upward')
+        peri_saccades.extend(upward_segments)
+        all_excluded.extend(upward_excluded)
+    if len(downward_saccades_df) > 0:
+        downward_segments, downward_excluded = extract_saccade_segment(df, downward_saccades_df, n_before, n_after, direction='downward')
+        peri_saccades.extend(downward_segments)
+        all_excluded.extend(downward_excluded)
+
+    # Baselining
+    peri_saccades = baseline_saccade_segments(peri_saccades, n_before, baseline_n_points=baseline_n_points)
+
+    # Filter outliers
+    upward_segments_all = [seg for seg in peri_saccades if seg['saccade_direction'].iloc[0] == 'upward']
+    downward_segments_all = [seg for seg in peri_saccades if seg['saccade_direction'].iloc[0] == 'downward']
+    upward_segments, upward_outliers_meta, upward_outlier_segments = filter_outlier_saccades(upward_segments_all, 'upward')
+    downward_segments, downward_outliers_meta, downward_outlier_segments = filter_outlier_saccades(downward_segments_all, 'downward')
+
+    summary = {
+        'upward_saccades_df': upward_saccades_df,
+        'downward_saccades_df': downward_saccades_df,
+        'peri_saccades': peri_saccades,
+        'upward_segments': upward_segments,
+        'upward_outliers_meta': upward_outliers_meta,
+        'upward_outlier_segments': upward_outlier_segments,
+        'downward_segments': downward_segments,
+        'downward_outliers_meta': downward_outliers_meta,
+        'downward_outlier_segments': downward_outlier_segments,
+        'vel_thresh': vel_thresh,
+        'video_label': video_label,
+        'all_excluded': all_excluded,
+        'df': df
+    }
+    return summary
+
