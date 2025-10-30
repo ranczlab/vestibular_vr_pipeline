@@ -167,7 +167,7 @@ def detect_saccades_adaptive(df, position_col='X_smooth', velocity_col='vel_x_sm
 
 
 def extract_saccade_segment(df, sacc_df, n_before, n_after, direction='upward',
-                            position_col='X_smooth', time_col='Seconds'):
+                           position_col='X_smooth', time_col='Seconds'):
     """
     Extract peri-saccade segment for saccades.
     Uses start_time (threshold crossing) as center point: n_before points before, n_after points after.
@@ -199,19 +199,27 @@ def extract_saccade_segment(df, sacc_df, n_before, n_after, direction='upward',
     segments = []
     excluded_segments = []  # Track excluded segments for reporting
     
+    # Use a global dt estimate for validation (robust to bad slices)
+    if len(df) > 1:
+        dt_global = df[time_col].diff().median()
+        if pd.isna(dt_global) or dt_global <= 0:
+            dt_global = df[time_col].diff().mean()
+    else:
+        dt_global = 0.0167
+
     for idx, sacc in sacc_df.iterrows():
         start_time = sacc['start_time']
         end_time = sacc['end_time']
         peak_time = sacc['time']
         amplitude = sacc['amplitude']
         
-        # Find threshold crossing index (start_time)
-        # Find the closest index to start_time
-        start_idx = df[time_col].sub(start_time).abs().idxmin()
+        # Find threshold crossing position (start_time)
+        # Work in positional indices to avoid label/position mismatches
+        start_pos = int(np.argmin(np.abs(df[time_col].to_numpy() - start_time)))
         
-        # Calculate pre/post indices centered on threshold crossing
-        pre_start = max(0, start_idx - n_before)
-        post_end = min(len(df) - 1, start_idx + n_after)
+        # Calculate pre/post positions centered on threshold crossing
+        pre_start = max(0, start_pos - n_before)
+        post_end = min(len(df) - 1, start_pos + n_after)
         
         # Extract segment
         segment = df.iloc[pre_start:post_end + 1].copy()
@@ -223,16 +231,10 @@ def extract_saccade_segment(df, sacc_df, n_before, n_after, direction='upward',
         time_range_min = segment['Time_rel_threshold'].min()
         time_range_max = segment['Time_rel_threshold'].max()
         
-        # Calculate expected time span based on n_before + n_after points (110% tolerance)
+        # Calculate expected time span based on global dt and desired window (110% tolerance)
         time_span = time_range_max - time_range_min
-        if len(segment) > 1:
-            dt_estimate = time_span / (len(segment) - 1)
-        else:
-            dt_estimate = 0.0167  # Default to ~60Hz if segment too short
-        # Expected total points: n_before (before peak) + 1 (peak itself) + n_after (after peak)
         expected_total_points = n_before + 1 + n_after
-        # Expected time span = (n_points - 1) intervals * dt per interval
-        expected_time_span = (expected_total_points - 1) * dt_estimate
+        expected_time_span = (expected_total_points - 1) * float(dt_global)
         max_allowed_time_span = expected_time_span * 1.1  # 110% of expected
         
         # Check if time range is reasonable (110% of expected span) or if point count is wrong
@@ -458,6 +460,8 @@ def analyze_eye_video_saccades(
 
     # Smoothing
     df = df.copy()
+    # Ensure a clean positional index to avoid label/position confusion downstream
+    df = df.reset_index(drop=True)
     df['X_smooth'] = (
         df['Ellipse.Center.X']
         .rolling(window=5, center=True)
