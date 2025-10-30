@@ -532,21 +532,6 @@ def create_flipped_videos(path, what_to_flip='VideoData1'):
         for avi in avis:
             horizontal_flip_script.horizontal_flip_avi(path / what_to_flip / avi, path / what_to_flip / f'{avi[:-4]}.flipped.avi')
 
-def find_sequential_groups(arr):
-
-    groups = []
-    current_group = [arr[0]]
-    
-    for i in range(1, len(arr)):
-        if arr[i] == arr[i-1] + 1:
-            current_group.append(arr[i])
-        else:
-            groups.append(current_group)
-            current_group = [arr[i]]
-    groups.append(current_group)
-    
-    return groups
-
 def detect_saccades_with_threshold(eye_data_stream, threshold_std_times=1):
 
     harp_time_inds, absolute_positions = eye_data_stream.index, eye_data_stream.values
