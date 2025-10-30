@@ -3292,8 +3292,8 @@ for video_key, res in saccade_results.items():
     # Add smoothed X position to the first subplot
     fig.add_trace(
         go.Scatter(
-            x=df['Seconds'],
-            y=df['X_smooth'],
+            x=res['df']['Seconds'],
+            y=res['df']['X_smooth'],
             mode='lines',
             name='Smoothed X',
             line=dict(color='blue', width=2)
@@ -3304,8 +3304,8 @@ for video_key, res in saccade_results.items():
     # Add smoothed velocity to the second subplot
     fig.add_trace(
         go.Scatter(
-            x=df['Seconds'],
-            y=df['vel_x_smooth'],
+            x=res['df']['Seconds'],
+            y=res['df']['vel_x_smooth'],
             mode='lines',
             name='Smoothed Velocity',
             line=dict(color='red', width=2)
@@ -3315,16 +3315,16 @@ for video_key, res in saccade_results.items():
 
     # Add adaptive threshold lines for reference
     fig.add_hline(
-        y=vel_thresh,
+        y=res['vel_thresh'],
         line_dash="dash",
         line_color="green",
         opacity=0.5,
-        annotation_text=f"Adaptive threshold (±{vel_thresh:.0f} px/s)",
+        annotation_text=f"Adaptive threshold (±{res['vel_thresh']:.0f} px/s)",
         row=2, col=1
     )
 
     fig.add_hline(
-        y=-vel_thresh,
+        y=-res['vel_thresh'],
         line_dash="dash",
         line_color="green",
         opacity=0.5,
@@ -3332,8 +3332,8 @@ for video_key, res in saccade_results.items():
     )
 
     # Set offset for saccade indicator lines (above the trace for upward, below for downward)
-    vel_max = df['vel_x_smooth'].max()
-    vel_min = df['vel_x_smooth'].min()
+    vel_max = res['df']['vel_x_smooth'].max()
+    vel_min = res['df']['vel_x_smooth'].min()
     vel_range = vel_max - vel_min
     line_offset = vel_range * 0.15  # 15% of velocity range
 
