@@ -788,7 +788,7 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
             if 'frame_idx' in VideoData1.columns:
                 actual_start_frame = int(VideoData1['frame_idx'].iloc[start_idx])
                 actual_end_frame = int(VideoData1['frame_idx'].iloc[end_idx])
-                frame_info = f"frames {actual_start_frame}-{actual_end_frame} (pandas idx {start_idx}-{end_idx})"
+                frame_info = f"frames {actual_start_frame}-{actual_end_frame}"
             else:
                 # Fallback: use pandas index if frame_idx column doesn't exist
                 actual_start_frame = start_idx
@@ -897,7 +897,7 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
             if 'frame_idx' in VideoData2.columns:
                 actual_start_frame = int(VideoData2['frame_idx'].iloc[start_idx])
                 actual_end_frame = int(VideoData2['frame_idx'].iloc[end_idx])
-                frame_info = f"frames {actual_start_frame}-{actual_end_frame} (pandas idx {start_idx}-{end_idx})"
+                frame_info = f"frames {actual_start_frame}-{actual_end_frame}"
             else:
                 # Fallback: use pandas index if frame_idx column doesn't exist
                 actual_start_frame = start_idx

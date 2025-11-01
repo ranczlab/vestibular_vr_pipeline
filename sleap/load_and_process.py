@@ -117,27 +117,53 @@ def load_videography_data(path):
             # Also track SLEAP frame_idx max for internal consistency (if needed elsewhere)
             last_sleap_frame_idx_vd2 = read_vd2_sleap_dfs[-1]['frame_idx'].iloc[-1] + 1
     
-    # CRITICAL FIX: Reset VideoData frame_idx BEFORE concatenation using cumulative actual video frame counts
-    # This ensures frame_idx aligns with concatenated video frame numbers (where frame numbers are continuous across all files)
+    # CRITICAL FIX: Reset VideoData frame_idx BEFORE concatenation
+    # Value.ChunkData.FrameID is a continuous camera counter across files (doesn't restart at 0)
+    # We need to map it to concatenated video frame numbers: [0, 1, 2, ..., N-1]
+    # Strategy: Track the starting FrameID of each file and map it to the cumulative position in concatenated video
+    
     vd1_offset = 0
     vd2_offset = 0
     
     # Reset frame_idx for each VideoData file before concatenation
     for i in range(len(read_vd1_dfs)):
         read_vd1_dfs[i] = read_vd1_dfs[i].rename(columns={"Value.ChunkData.FrameID": "frame_idx"})
+        first_frame_id = read_vd1_dfs[i]['frame_idx'].iloc[0]  # Starting FrameID value (e.g., 26654)
+        
         if i == 0:
-            read_vd1_dfs[i]['frame_idx'] = read_vd1_dfs[i]['frame_idx'] - read_vd1_dfs[i]['frame_idx'].iloc[0]
+            # First file: map starting FrameID to 0 (concatenated video frame 0)
+            # FrameID [26654, 26655, ...] → frame_idx [0, 1, ...]
+            read_vd1_dfs[i]['frame_idx'] = read_vd1_dfs[i]['frame_idx'] - first_frame_id
         else:
-            # Use cumulative offset from actual video frame counts to match concatenated video
-            read_vd1_dfs[i]['frame_idx'] = read_vd1_dfs[i]['frame_idx'] - read_vd1_dfs[i]['frame_idx'].iloc[0] + vd1_offset
+            # Subsequent files: FrameID continues from previous file
+            # We need to map to continuous concatenated video frame numbers
+            # File 1: FrameID [26654, ..., 31653] → frame_idx [0, ..., 4999] (5000 frames)
+            # File 2: FrameID [31654, ..., 36653] → frame_idx [5000, ..., 9999] (5000 frames)
+            # Map: new_frame_idx = old_FrameID - first_FrameID_of_file1 + cumulative_offset
+            # But since FrameID continues, we can map directly: new_frame_idx = old_FrameID - first_FrameID_of_file1 + offset
+            first_frame_id_file0 = read_vd1_dfs[0]['frame_idx'].iloc[0] if i > 0 else 0
+            # Get the original FrameID before any modification
+            original_frame_ids = read_vd1_dfs[i]['frame_idx'].values.copy()
+            # Calculate offset: previous file's last frame_idx + 1
+            # But we need to map from continuous FrameID space to continuous concatenated video frame space
+            # The gap in FrameID between files should be preserved in frame_idx
+            read_vd1_dfs[i]['frame_idx'] = original_frame_ids - first_frame_id_file0 + vd1_offset
+        
         vd1_offset += video_frame_counts_vd1[i] if i < len(video_frame_counts_vd1) else len(read_vd1_dfs[i])
     
     for i in range(len(read_vd2_dfs)):
         read_vd2_dfs[i] = read_vd2_dfs[i].rename(columns={"Value.ChunkData.FrameID": "frame_idx"})
+        first_frame_id = read_vd2_dfs[i]['frame_idx'].iloc[0]  # Starting FrameID value
+        
         if i == 0:
-            read_vd2_dfs[i]['frame_idx'] = read_vd2_dfs[i]['frame_idx'] - read_vd2_dfs[i]['frame_idx'].iloc[0]
+            # First file: map starting FrameID to 0
+            read_vd2_dfs[i]['frame_idx'] = read_vd2_dfs[i]['frame_idx'] - first_frame_id
         else:
-            read_vd2_dfs[i]['frame_idx'] = read_vd2_dfs[i]['frame_idx'] - read_vd2_dfs[i]['frame_idx'].iloc[0] + vd2_offset
+            # Subsequent files: map continuous FrameID to continuous concatenated video frame numbers
+            first_frame_id_file0 = read_vd2_dfs[0]['frame_idx'].iloc[0] if i > 0 else 0
+            original_frame_ids = read_vd2_dfs[i]['frame_idx'].values.copy()
+            read_vd2_dfs[i]['frame_idx'] = original_frame_ids - first_frame_id_file0 + vd2_offset
+        
         vd2_offset += video_frame_counts_vd2[i] if i < len(video_frame_counts_vd2) else len(read_vd2_dfs[i])
     
     # Now concatenate with properly aligned frame_idx values (matching concatenated video frame numbers)
@@ -149,6 +175,7 @@ def load_videography_data(path):
     #print('Reading dataframes finished.')
     
     # Filling in the skipped frames (if there are any) with NaN rows
+    # CRITICAL FIX: After gap filling, extend to total actual video frame count to match concatenated video
     if vd1_has_sleap:
         if read_vd1_sleap_dfs.index[-1] != read_vd1_sleap_dfs['frame_idx'].iloc[-1]:
             #print(f'VideoData1 SLEAP output: {read_vd1_sleap_dfs['frame_idx'].iloc[-1] + 1} frames registered, but {read_vd1_sleap_dfs.index[-1] + 1} rows found inside file. Filling with empty rows.')
@@ -157,6 +184,28 @@ def load_videography_data(path):
             dropped_frames_vd1 = frame_count - row_count
             print(f"ℹ️ VideoData1 has {dropped_frames_vd1} dropped frames. Filling missing frames with empty rows.")
             read_vd1_sleap_dfs = fill_with_empty_rows_based_on_index(read_vd1_sleap_dfs)
+        
+        # CRITICAL FIX: Extend dataframe to total actual video frame count (concatenated video includes ALL frames)
+        # Calculate total actual frame count from all video files
+        total_actual_frames_vd1 = sum(video_frame_counts_vd1) if video_frame_counts_vd1 else 0
+        max_frame_idx_vd1 = read_vd1_sleap_dfs['frame_idx'].max()
+        
+        # If SLEAP max frame_idx is less than total actual frames, extend with NaN rows
+        if max_frame_idx_vd1 < total_actual_frames_vd1 - 1:
+            missing_frames = total_actual_frames_vd1 - 1 - max_frame_idx_vd1
+            print(f"ℹ️ VideoData1: Extending SLEAP dataframe by {missing_frames} frames to match concatenated video frame count ({total_actual_frames_vd1} total frames)")
+            # Create additional rows with NaN values for missing frame_idx values
+            extended_frame_idx = pd.Series(range(max_frame_idx_vd1 + 1, total_actual_frames_vd1))
+            extended_df = pd.DataFrame({'frame_idx': extended_frame_idx})
+            # Add NaN columns for all other SLEAP columns
+            for col in read_vd1_sleap_dfs.columns:
+                if col != 'frame_idx':
+                    extended_df[col] = np.nan
+            # Concatenate with existing dataframe
+            read_vd1_sleap_dfs = pd.concat([read_vd1_sleap_dfs, extended_df], ignore_index=True)
+            # Sort by frame_idx to maintain order
+            read_vd1_sleap_dfs = read_vd1_sleap_dfs.sort_values('frame_idx').reset_index(drop=True)
+    
     if vd2_has_sleap:
         if read_vd2_sleap_dfs.index[-1] != read_vd2_sleap_dfs['frame_idx'].iloc[-1]:
             #print(f'VideoData2 SLEAP output: {read_vd2_sleap_dfs['frame_idx'].iloc[-1] + 1} frames registered, but {read_vd2_sleap_dfs.index[-1] + 1} rows found inside file. Filling with empty rows.')
@@ -165,6 +214,27 @@ def load_videography_data(path):
             dropped_frames_vd2 = frame_count - row_count
             print(f"ℹ️ VideoData2 has {dropped_frames_vd2} dropped frames. Filling missing frames with empty rows.")
             read_vd2_sleap_dfs = fill_with_empty_rows_based_on_index(read_vd2_sleap_dfs)
+        
+        # CRITICAL FIX: Extend dataframe to total actual video frame count (concatenated video includes ALL frames)
+        # Calculate total actual frame count from all video files
+        total_actual_frames_vd2 = sum(video_frame_counts_vd2) if video_frame_counts_vd2 else 0
+        max_frame_idx_vd2 = read_vd2_sleap_dfs['frame_idx'].max()
+        
+        # If SLEAP max frame_idx is less than total actual frames, extend with NaN rows
+        if max_frame_idx_vd2 < total_actual_frames_vd2 - 1:
+            missing_frames = total_actual_frames_vd2 - 1 - max_frame_idx_vd2
+            print(f"ℹ️ VideoData2: Extending SLEAP dataframe by {missing_frames} frames to match concatenated video frame count ({total_actual_frames_vd2} total frames)")
+            # Create additional rows with NaN values for missing frame_idx values
+            extended_frame_idx = pd.Series(range(max_frame_idx_vd2 + 1, total_actual_frames_vd2))
+            extended_df = pd.DataFrame({'frame_idx': extended_frame_idx})
+            # Add NaN columns for all other SLEAP columns
+            for col in read_vd2_sleap_dfs.columns:
+                if col != 'frame_idx':
+                    extended_df[col] = np.nan
+            # Concatenate with existing dataframe
+            read_vd2_sleap_dfs = pd.concat([read_vd2_sleap_dfs, extended_df], ignore_index=True)
+            # Sort by frame_idx to maintain order
+            read_vd2_sleap_dfs = read_vd2_sleap_dfs.sort_values('frame_idx').reset_index(drop=True)
     
     # Merging VideoData csv files and sleap outputs to get access to the HARP timestamps
     vd1_out, vd2_out = read_vd1_dfs[['frame_idx', 'Seconds']], read_vd2_dfs[['frame_idx', 'Seconds']]
