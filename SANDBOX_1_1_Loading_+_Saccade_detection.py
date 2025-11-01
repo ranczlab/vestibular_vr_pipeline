@@ -20,12 +20,17 @@
 import numpy as np
 from pathlib import Path
 import os
+import sys
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import plotly.io as pio
 import gc
+import io
+from contextlib import redirect_stdout
 
 from matplotlib.lines import Line2D
 from matplotlib.colors import LogNorm
@@ -41,6 +46,7 @@ from sleap import load_and_process as lp
 from sleap import processing_functions as pf
 from sleap import saccade_processing as sp
 from sleap.saccade_processing import analyze_eye_video_saccades
+
 
 def get_eye_label(key):
     """Return mapped user-viewable eye label for video key."""
@@ -428,9 +434,6 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
 # Likely problem is that when instance score is low, that's because of a blink or similar, as there are long sequences of low scores
 # which is perfeect to exclude and linearly interpolate (or keep it NaN?) -> but need to make sure it is really a blink an not model-issues 
 # Now using an adaptive percentile threshold to ensure the maximum number of consecutively excluded frames <= max_consecutive_lowscore (default=6)
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
 
 max_consecutive_lowscore = 120  # in frames TODO make it depend on FPS_1 and FPS_2 
 
@@ -674,6 +677,27 @@ else:
 # Blink detection using instance.score - mark blinks and set coordinates to NaN (keep them as NaN, no interpolation)
 ############################################################################################################
 
+# Capture all print output to save to file
+
+class TeeOutput:
+    """Output to both stdout and a string buffer"""
+    def __init__(self, stdout, buffer):
+        self.stdout = stdout
+        self.buffer = buffer
+    
+    def write(self, s):
+        self.stdout.write(s)
+        self.buffer.write(s)
+    
+    def flush(self):
+        self.stdout.flush()
+        self.buffer.flush()
+
+output_buffer = io.StringIO()
+original_stdout = sys.stdout
+sys.stdout = TeeOutput(original_stdout, output_buffer)
+
+# Run blink detection code with output captured
 print("\n=== Blink Detection ===")
 
 # VideoData1 blink detection
@@ -759,7 +783,19 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
             start_time_str = pf.format_time_from_start(start_time_from_start)
             end_time_str = pf.format_time_from_start(end_time_from_start)
             
-            print(f"    Blink {i}: frames {start_idx}-{end_idx} ({blink['length']} frames, "
+            # Get actual frame numbers from frame_idx column (for video frame correspondence)
+            # If frame_idx doesn't exist, fall back to pandas index positions
+            if 'frame_idx' in VideoData1.columns:
+                actual_start_frame = int(VideoData1['frame_idx'].iloc[start_idx])
+                actual_end_frame = int(VideoData1['frame_idx'].iloc[end_idx])
+                frame_info = f"frames {actual_start_frame}-{actual_end_frame} (pandas idx {start_idx}-{end_idx})"
+            else:
+                # Fallback: use pandas index if frame_idx column doesn't exist
+                actual_start_frame = start_idx
+                actual_end_frame = end_idx
+                frame_info = f"frames {actual_start_frame}-{actual_end_frame}"
+            
+            print(f"    Blink {i}: {frame_info}, {blink['length']} frames, "
                   f"{duration_ms:.1f}ms) at {start_time_str}-{end_time_str}, "
                   f"mean score: {blink['mean_score']:.4f}")
         
@@ -856,7 +892,19 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
             start_time_str = pf.format_time_from_start(start_time_from_start)
             end_time_str = pf.format_time_from_start(end_time_from_start)
             
-            print(f"    Blink {i}: frames {start_idx}-{end_idx} ({blink['length']} frames, "
+            # Get actual frame numbers from frame_idx column (for video frame correspondence)
+            # If frame_idx doesn't exist, fall back to pandas index positions
+            if 'frame_idx' in VideoData2.columns:
+                actual_start_frame = int(VideoData2['frame_idx'].iloc[start_idx])
+                actual_end_frame = int(VideoData2['frame_idx'].iloc[end_idx])
+                frame_info = f"frames {actual_start_frame}-{actual_end_frame} (pandas idx {start_idx}-{end_idx})"
+            else:
+                # Fallback: use pandas index if frame_idx column doesn't exist
+                actual_start_frame = start_idx
+                actual_end_frame = end_idx
+                frame_info = f"frames {actual_start_frame}-{actual_end_frame}"
+            
+            print(f"    Blink {i}: {frame_info}, {blink['length']} frames, "
                   f"{duration_ms:.1f}ms) at {start_time_str}-{end_time_str}, "
                   f"mean score: {blink['mean_score']:.4f}")
         
@@ -871,6 +919,20 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
         print("  No blinks detected")
 
 print("\n✅ Blink detection complete. Blink periods remain as NaN (not interpolated).")
+
+# Restore original stdout and save captured output to file
+sys.stdout = original_stdout
+
+# Get the captured output
+captured_output = output_buffer.getvalue()
+
+# Save to file in data_path folder
+output_file = data_path / "blink_detection_QC.txt"
+output_file.parent.mkdir(parents=True, exist_ok=True)
+with open(output_file, 'w') as f:
+    f.write(captured_output)
+
+print(f"\n✅ Blink detection output saved to: {output_file}")
 
 
 
@@ -1178,36 +1240,36 @@ print("✅ Done calculating pupil diameter and angle for both VideoData1 and Vid
 ############################################################################################################
 
 if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
-    # Create subplots for both comparison and cross-correlation
-    fig = make_subplots(
-        rows=2, cols=1,
-        subplot_titles=["Pupil Diameter Comparison", "Cross-Correlation Analysis"],
-        vertical_spacing=0.15
-    )
+    # # Create subplots for both comparison and cross-correlation
+    # fig = make_subplots(
+    #     rows=2, cols=1,
+    #     subplot_titles=["Pupil Diameter Comparison", "Cross-Correlation Analysis"],
+    #     vertical_spacing=0.15
+    # )
 
-    # Add SleapVideoData1 pupil diameter
-    fig.add_trace(
-        go.Scatter(
-            x=SleapVideoData1['Seconds'],
-            y=SleapVideoData1['Ellipse.Diameter'],
-            mode='lines',
-            name=f"VideoData1 Pupil Diameter",
-            line=dict(color='blue')
-        ),
-        row=1, col=1
-    )
+    # # Add SleapVideoData1 pupil diameter
+    # fig.add_trace(
+    #     go.Scatter(
+    #         x=SleapVideoData1['Seconds'],
+    #         y=SleapVideoData1['Ellipse.Diameter'],
+    #         mode='lines',
+    #         name=f"VideoData1 Pupil Diameter",
+    #         line=dict(color='blue')
+    #     ),
+    #     row=1, col=1
+    # )
 
-    # Add SleapVideoData2 pupil diameter
-    fig.add_trace(
-        go.Scatter(
-            x=SleapVideoData2['Seconds'],
-            y=SleapVideoData2['Ellipse.Diameter'],
-            mode='lines',
-            name=f"VideoData2 Pupil Diameter",
-            line=dict(color='red')
-        ),
-        row=1, col=1
-    )
+    # # Add SleapVideoData2 pupil diameter
+    # fig.add_trace(
+    #     go.Scatter(
+    #         x=SleapVideoData2['Seconds'],
+    #         y=SleapVideoData2['Ellipse.Diameter'],
+    #         mode='lines',
+    #         name=f"VideoData2 Pupil Diameter",
+    #         line=dict(color='red')
+    #     ),
+    #     row=1, col=1
+    # )
 
     # Cross-correlation analysis
     print("=== Cross-Correlation Analysis ===")
@@ -1270,53 +1332,53 @@ if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
                 correlation_normalized = correlation
                 peak_correlation_normalized = 0
             
-            # Plot cross-correlation
-            fig.add_trace(
-                go.Scatter(
-                    x=lag_times,
-                    y=correlation_normalized,
-                    mode='lines',
-                    name="Cross-Correlation",
-                    line=dict(color='green')
-                ),
-                row=2, col=1
-            )
+            # # Plot cross-correlation
+            # fig.add_trace(
+            #     go.Scatter(
+            #         x=lag_times,
+            #         y=correlation_normalized,
+            #         mode='lines',
+            #         name="Cross-Correlation",
+            #         line=dict(color='green')
+            #     ),
+            #     row=2, col=1
+            # )
             
-            # Add vertical line at peak
-            fig.add_vline(
-                x=peak_lag_time,
-                line_dash="dash",
-                line_color="red",
-                annotation_text=f"Peak: {peak_correlation_normalized:.3f}",
-                row=2, col=1
-            )
+            # # Add vertical line at peak
+            # fig.add_vline(
+            #     x=peak_lag_time,
+            #     line_dash="dash",
+            #     line_color="red",
+            #     annotation_text=f"Peak: {peak_correlation_normalized:.3f}",
+            #     row=2, col=1
+            # )
             
         except Exception as e:
             print(f"❌ Error in cross-correlation calculation: {e}")
-            # Add empty trace to maintain plot structure
-            fig.add_trace(
-                go.Scatter(
-                    x=[0], y=[0],
-                    mode='lines',
-                    name="Cross-Correlation (Error)",
-                    line=dict(color='gray')
-                ),
-                row=2, col=1
-            )
+            # # Add empty trace to maintain plot structure
+            # fig.add_trace(
+            #     go.Scatter(
+            #         x=[0], y=[0],
+            #         mode='lines',
+            #         name="Cross-Correlation (Error)",
+            #         line=dict(color='gray')
+            #     ),
+            #     row=2, col=1
+            # )
 
-    # Update axes labels
-    fig.update_xaxes(title_text="Time (seconds)", row=1, col=1)
-    fig.update_yaxes(title_text="Pupil Diameter", row=1, col=1)
-    fig.update_xaxes(title_text="Lag (seconds)", row=2, col=1)
-    fig.update_yaxes(title_text="Normalized Correlation", row=2, col=1)
+    # # Update axes labels
+    # fig.update_xaxes(title_text="Time (seconds)", row=1, col=1)
+    # fig.update_yaxes(title_text="Pupil Diameter", row=1, col=1)
+    # fig.update_xaxes(title_text="Lag (seconds)", row=2, col=1)
+    # fig.update_yaxes(title_text="Normalized Correlation", row=2, col=1)
 
-    fig.update_layout(
-        height=800,
-        width=1000,
-        title_text=f"SLEAP Pupil Diameter Analysis: Comparison & Cross-Correlation"
-    )
+    # fig.update_layout(
+    #     height=800,
+    #     width=1000,
+    #     title_text=f"SLEAP Pupil Diameter Analysis: Comparison & Cross-Correlation"
+    # )
 
-    fig.show()
+    # fig.show()
 
     # Additional correlation statistics
     if len(pupil1_clean) >= 2 and len(pupil2_clean) >= 2:
@@ -2404,9 +2466,6 @@ for video_key, res in saccade_results.items():
 # 1. Distribution of saccade amplitudes
 # 2. Correlation between saccade amplitude and duration
 # 3. Peri-saccade segments colored by amplitude (outlier detection)
-
-from plotly.subplots import make_subplots
-import matplotlib.cm as cm
 
 for video_key, res in saccade_results.items():
     dir_map = get_direction_map_for_video(video_key)

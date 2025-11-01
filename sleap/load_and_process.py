@@ -62,37 +62,91 @@ def load_videography_data(path):
         print('-',ts)
     
     # Reading the csv files in the chronological order
+    # Track actual video frame counts for proper offset calculation (fixes concatenated video frame number mismatch)
+    # The issue: SLEAP frame_idx is offset by processed frame count, but concatenated video includes ALL frames
+    # Solution: Track actual video file frame counts and use them to create proper mapping
+    video_frame_counts_vd1, video_frame_counts_vd2 = [], []  # Track frame counts per file
+    last_video_frame_offset_vd1, last_video_frame_offset_vd2 = 0, 0  # Cumulative offsets for concatenated video
     last_sleap_frame_idx_vd1, last_sleap_frame_idx_vd2 = 0, 0 # to add to consecutive SLEAP logs because frame_idx restarts at 0 in each file
+    
     for row in sorted_vd1_files:
-        read_vd1_dfs.append(pd.read_csv(path/'VideoData1'/f"VideoData1_{row.strftime('%Y-%m-%dT%H-%M-%S')}.csv"))
+        vd1_df = pd.read_csv(path/'VideoData1'/f"VideoData1_{row.strftime('%Y-%m-%dT%H-%M-%S')}.csv")
+        read_vd1_dfs.append(vd1_df)
+        
+        # Calculate actual frame count from VideoData CSV (before reset)
+        # Value.ChunkData.FrameID represents actual video frame numbers from acquisition system
+        # The number of rows represents all frames in the original video file
+        actual_frame_count = len(vd1_df)  # This represents all frames in the original video file
+        video_frame_counts_vd1.append(actual_frame_count)
+        
         if vd1_has_sleap: 
             #read_vd1_sleap_dfs.append(pd.read_csv(path/'VideoData1'/f'VideoData1_{row.strftime('%Y-%m-%dT%H-%M-%S')}.sleap.csv'))
-            read_vd1_sleap_dfs.append(
-                pd.read_csv(
-                    path / 'VideoData1' / f"VideoData1_{row.strftime('%Y-%m-%dT%H-%M-%S')}.sleap.csv"
-                )
+            sleap_df = pd.read_csv(
+                path / 'VideoData1' / f"VideoData1_{row.strftime('%Y-%m-%dT%H-%M-%S')}.sleap.csv"
             )
-            read_vd1_sleap_dfs[-1]['frame_idx'] = read_vd1_sleap_dfs[-1]['frame_idx'] + last_sleap_frame_idx_vd1
+            read_vd1_sleap_dfs.append(sleap_df)
+            
+            # CRITICAL FIX: Use actual video frame count offset, not SLEAP processed frame count
+            # This ensures frame_idx aligns with concatenated video frame numbers where all frames are included
+            read_vd1_sleap_dfs[-1]['frame_idx'] = read_vd1_sleap_dfs[-1]['frame_idx'] + last_video_frame_offset_vd1
+            
+            # Update offset for next file: use actual video frame count (not SLEAP processed count)
+            last_video_frame_offset_vd1 += actual_frame_count
+            
+            # Also track SLEAP frame_idx max for internal consistency (if needed elsewhere)
             last_sleap_frame_idx_vd1 = read_vd1_sleap_dfs[-1]['frame_idx'].iloc[-1] + 1
+            
     for row in sorted_vd2_files:
-        read_vd2_dfs.append(pd.read_csv(path/'VideoData2'/f"VideoData2_{row.strftime('%Y-%m-%dT%H-%M-%S')}.csv"))
+        vd2_df = pd.read_csv(path/'VideoData2'/f"VideoData2_{row.strftime('%Y-%m-%dT%H-%M-%S')}.csv")
+        read_vd2_dfs.append(vd2_df)
+        
+        # Calculate actual frame count from VideoData CSV (before reset)
+        actual_frame_count = len(vd2_df)
+        video_frame_counts_vd2.append(actual_frame_count)
+            
         if vd2_has_sleap: 
-            read_vd2_sleap_dfs.append(pd.read_csv(path/'VideoData2'/f"VideoData2_{row.strftime('%Y-%m-%dT%H-%M-%S')}.sleap.csv"))
-            read_vd2_sleap_dfs[-1]['frame_idx'] = read_vd2_sleap_dfs[-1]['frame_idx'] + last_sleap_frame_idx_vd2
+            sleap_df = pd.read_csv(path/'VideoData2'/f"VideoData2_{row.strftime('%Y-%m-%dT%H-%M-%S')}.sleap.csv")
+            read_vd2_sleap_dfs.append(sleap_df)
+            
+            # CRITICAL FIX: Use actual video frame count offset, not SLEAP processed frame count
+            read_vd2_sleap_dfs[-1]['frame_idx'] = read_vd2_sleap_dfs[-1]['frame_idx'] + last_video_frame_offset_vd2
+            
+            # Update offset for next file: use actual video frame count (not SLEAP processed count)
+            last_video_frame_offset_vd2 += actual_frame_count
+            
+            # Also track SLEAP frame_idx max for internal consistency (if needed elsewhere)
             last_sleap_frame_idx_vd2 = read_vd2_sleap_dfs[-1]['frame_idx'].iloc[-1] + 1
+    
+    # CRITICAL FIX: Reset VideoData frame_idx BEFORE concatenation using cumulative actual video frame counts
+    # This ensures frame_idx aligns with concatenated video frame numbers (where frame numbers are continuous across all files)
+    vd1_offset = 0
+    vd2_offset = 0
+    
+    # Reset frame_idx for each VideoData file before concatenation
+    for i in range(len(read_vd1_dfs)):
+        read_vd1_dfs[i] = read_vd1_dfs[i].rename(columns={"Value.ChunkData.FrameID": "frame_idx"})
+        if i == 0:
+            read_vd1_dfs[i]['frame_idx'] = read_vd1_dfs[i]['frame_idx'] - read_vd1_dfs[i]['frame_idx'].iloc[0]
+        else:
+            # Use cumulative offset from actual video frame counts to match concatenated video
+            read_vd1_dfs[i]['frame_idx'] = read_vd1_dfs[i]['frame_idx'] - read_vd1_dfs[i]['frame_idx'].iloc[0] + vd1_offset
+        vd1_offset += video_frame_counts_vd1[i] if i < len(video_frame_counts_vd1) else len(read_vd1_dfs[i])
+    
+    for i in range(len(read_vd2_dfs)):
+        read_vd2_dfs[i] = read_vd2_dfs[i].rename(columns={"Value.ChunkData.FrameID": "frame_idx"})
+        if i == 0:
+            read_vd2_dfs[i]['frame_idx'] = read_vd2_dfs[i]['frame_idx'] - read_vd2_dfs[i]['frame_idx'].iloc[0]
+        else:
+            read_vd2_dfs[i]['frame_idx'] = read_vd2_dfs[i]['frame_idx'] - read_vd2_dfs[i]['frame_idx'].iloc[0] + vd2_offset
+        vd2_offset += video_frame_counts_vd2[i] if i < len(video_frame_counts_vd2) else len(read_vd2_dfs[i])
+    
+    # Now concatenate with properly aligned frame_idx values (matching concatenated video frame numbers)
     read_vd1_dfs = pd.concat(read_vd1_dfs).reset_index().drop(columns='index')
     read_vd2_dfs = pd.concat(read_vd2_dfs).reset_index().drop(columns='index')
     if vd1_has_sleap: read_vd1_sleap_dfs = pd.concat(read_vd1_sleap_dfs).reset_index().drop(columns='index')
     if vd2_has_sleap: read_vd2_sleap_dfs = pd.concat(read_vd2_sleap_dfs).reset_index().drop(columns='index')
         
     #print('Reading dataframes finished.')
-    
-    read_vd1_dfs = read_vd1_dfs.rename(columns={"Value.ChunkData.FrameID": "frame_idx"})
-    read_vd2_dfs = read_vd2_dfs.rename(columns={"Value.ChunkData.FrameID": "frame_idx"})
-    
-    # Resetting frame_idx to start at 0
-    read_vd1_dfs['frame_idx'] = read_vd1_dfs['frame_idx'] - read_vd1_dfs['frame_idx'].iloc[0]
-    read_vd2_dfs['frame_idx'] = read_vd2_dfs['frame_idx'] - read_vd2_dfs['frame_idx'].iloc[0]
     
     # Filling in the skipped frames (if there are any) with NaN rows
     if vd1_has_sleap:
