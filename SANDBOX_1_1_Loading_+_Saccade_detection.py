@@ -630,9 +630,10 @@ if has_v1:
     plt.hist(VideoData1['instance.score'].dropna(), bins=30, color='skyblue', edgecolor='black')
     plt.axvline(blink_instance_score_threshold, color='red', linestyle='--', linewidth=2, 
                 label=f'Hard threshold = {blink_instance_score_threshold}')
+    plt.yscale('log')
     plt.title("Distribution of instance.score (VideoData1)")
     plt.xlabel("instance.score")
-    plt.ylabel("Frequency")
+    plt.ylabel("Frequency (log scale)")
     plt.legend()
     plot_index += 1
 
@@ -641,9 +642,10 @@ if has_v2:
     plt.hist(VideoData2['instance.score'].dropna(), bins=30, color='salmon', edgecolor='black')
     plt.axvline(blink_instance_score_threshold, color='red', linestyle='--', linewidth=2,
                 label=f'Hard threshold = {blink_instance_score_threshold}')
+    plt.yscale('log')
     plt.title("Distribution of instance.score (VideoData2)")
     plt.xlabel("instance.score")
-    plt.ylabel("Frequency")
+    plt.ylabel("Frequency (log scale)")
     plt.legend()
     plot_index += 1
 
@@ -1300,6 +1302,13 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
         blink_df_v2.to_csv(blink_csv_path_v2, index=False)
         print(f"\n✅ Blink detection results (VideoData2) saved to: {blink_csv_path_v2}")
         print(f"   Saved {len(blink_data_v2)} blinks")
+
+print("\n" + "="*80)
+print("📹 MANUAL QC CHECK:")
+print("="*80)
+print("For instructions on how to prepare videos for manual blink detection QC,")
+print("see: https://github.com/ranczlab/vestibular_vr_pipeline/issues/86")
+print("="*80)
 
 # Restore original stdout and save captured output to file
 sys.stdout = original_stdout
