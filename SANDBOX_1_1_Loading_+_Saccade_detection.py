@@ -73,7 +73,8 @@ cutoff = 10  # Hz for pupil diameter filtering
 # Parameters for blink detection
 min_blink_duration_ms = 50  # minimum blink duration in milliseconds
 blink_merge_window_ms = 100  # NOT CURRENTLY USED: merge window was removed to preserve good data between separate blinks
-long_blink_warning_ms = 2000  # warn if blinks exceed this duration (in ms) - user should verify these are real blinks 
+long_blink_warning_ms = 2000  # warn if blinks exceed this duration (in ms) - user should verify these are real blinks
+blink_instance_score_threshold = 4.6  # hard threshold for blink detection - frames with instance.score below this value are considered blinks 
 
 # for saccades
 refractory_period = 0.1  # sec
@@ -515,59 +516,6 @@ else:
 
 
 # %%
-# QC: Detect and print consecutive NaN frames
-############################################################################################################
-
-columns_of_interest = ['left.x','left.y','center.x','center.y','right.x','right.y','p1.x','p1.y','p2.x','p2.y','p3.x','p3.y','p4.x','p4.y','p5.x','p5.y','p6.x','p6.y','p7.x','p7.y','p8.x','p8.y']
-
-# VideoData1 NaN analysis
-if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
-    all_nan_df = VideoData1[VideoData1[columns_of_interest].isnull().all(1)]
-    all_nan_index_array = all_nan_df.index.values
-
-    # print the groups of sequential NaNs
-    group_counts = {'1-5': 0, '6-10': 0, '>10': 0}
-    i = 1
-    for group in lp.find_sequential_groups(all_nan_index_array):
-        #print(f'NaN frame group {i} with {len(group)} elements')
-        if 1 <= len(group) <= 5:
-            group_counts['1-5'] += 1
-        elif 6 <= len(group) <= 10:
-            group_counts['6-10'] += 1
-        else:
-            group_counts['>10'] += 1
-            print(f'\n⚠️ VideoData1 Framegroup {i} has {len(group)} consecutive all NaN frames  with indices {group}. If this is a long group, consider rerunning SLEAP inference.')
-        i += 1
-
-    print(f"\nVideoData1 - Framegroups with 1-5 consecutive all NaN frames: {group_counts['1-5']}")
-    print(f"VideoData1 - Framegroups with 6-10 consecutive all NaN frames: {group_counts['6-10']}")
-    print(f"VideoData1 - Framegroups with >10 consecutive all NaN frames: {group_counts['>10']}")
-
-# VideoData2 NaN analysis
-if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
-    all_nan_df2 = VideoData2[VideoData2[columns_of_interest].isnull().all(1)]
-    all_nan_index_array2 = all_nan_df2.index.values
-
-    # print the groups of sequential NaNs for VideoData2
-    group_counts2 = {'1-5': 0, '6-10': 0, '>10': 0}
-    i = 1
-    for group in lp.find_sequential_groups(all_nan_index_array2):
-        #print(f'NaN frame group {i} with {len(group)} elements')
-        if 1 <= len(group) <= 5:
-            group_counts2['1-5'] += 1
-        elif 6 <= len(group) <= 10:
-            group_counts2['6-10'] += 1
-        else:
-            group_counts2['>10'] += 1
-            print(f'\n⚠️ VideoData2 Framegroup {i} has {len(group)} consecutive all NaN frames  with indices {group}. If this is a long group, consider rerunning SLEAP inference.')
-        i += 1
-
-    print(f"\nVideoData2 - Framegroups with 1-5 consecutive all NaN frames: {group_counts2['1-5']}")
-    print(f"VideoData2 - Framegroups with 6-10 consecutive all NaN frames: {group_counts2['6-10']}")
-    print(f"VideoData2 - Framegroups with >10 consecutive all NaN frames: {group_counts2['>10']}")
-
-
-# %%
 # QC: Detect and print confidence scores analysis
 ############################################################################################################
 
@@ -637,32 +585,51 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
 
 
 # %%
-# Instance.score distribution and adaptive threshold for blink detection
+# Instance.score distribution and hard threshold for blink detection
 ############################################################################################################
-# Plotting the distribution of instance scores and calculating adaptive threshold for blink detection.
+# Plotting the distribution of instance scores and using hard threshold for blink detection.
 # When instance score is low, that's typically because of a blink or similar occlusion, as there are long sequences of low scores.
-# This is perfect to exclude and linearly interpolate (or keep as NaN). We need to make sure it is really a blink and not model-issues.
-# Using an adaptive percentile threshold to ensure the maximum number of consecutively excluded frames <= max_consecutive_lowscore
+# Frames with instance.score below the hard threshold are considered potential blinks.
 
-max_consecutive_lowscore = 120  # in frames TODO make it depend on FPS_1 and FPS_2 
-
-# ---- User parameter: maximum allowed consecutive low-score frames ----
+print("=" * 80)
+print("INSTANCE.SCORE DISTRIBUTION AND BLINK DETECTION THRESHOLD")
+print("=" * 80)
+print(f"\nHard threshold: instance.score < {blink_instance_score_threshold}")
+print(f"  Frames with instance.score below this threshold will be considered potential blinks.")
+print("=" * 80)
 
 # Only analyze for dataset(s) that exist
 has_v1 = "VideoData1_Has_Sleap" in globals() and VideoData1_Has_Sleap
 has_v2 = "VideoData2_Has_Sleap" in globals() and VideoData2_Has_Sleap
 
+# Get FPS for time calculations
+if has_v1:
+    if 'FPS_1' in globals():
+        fps_1_for_threshold = FPS_1
+    else:
+        fps_1_for_threshold = 1 / VideoData1["Seconds"].diff().mean()
+else:
+    fps_1_for_threshold = None
+
+if has_v2:
+    if 'FPS_2' in globals():
+        fps_2_for_threshold = FPS_2
+    else:
+        fps_2_for_threshold = 1 / VideoData2["Seconds"].diff().mean()
+else:
+    fps_2_for_threshold = None
+
+# Plot histograms with hard threshold marked
 fig = None
 if has_v1 or has_v2:
     plt.figure(figsize=(12,5))
     plot_index = 1
 
-# Find adaptive percentile and threshold for each present VideoData
 if has_v1:
-    adaptive_pct_v1, adaptive_thr_v1 = pf.find_percentile_for_consecutive_limit(VideoData1['instance.score'], max_consecutive_lowscore)
     plt.subplot(1, 2 if has_v2 else 1, plot_index)
     plt.hist(VideoData1['instance.score'].dropna(), bins=30, color='skyblue', edgecolor='black')
-    plt.axvline(adaptive_thr_v1, color='red', linestyle='--', label=f'Adaptive threshold ({adaptive_pct_v1*100:.2f} percentile)\nlimit {max_consecutive_lowscore} consecutive')
+    plt.axvline(blink_instance_score_threshold, color='red', linestyle='--', linewidth=2, 
+                label=f'Hard threshold = {blink_instance_score_threshold}')
     plt.title("Distribution of instance.score (VideoData1)")
     plt.xlabel("instance.score")
     plt.ylabel("Frequency")
@@ -670,10 +637,10 @@ if has_v1:
     plot_index += 1
 
 if has_v2:
-    adaptive_pct_v2, adaptive_thr_v2 = pf.find_percentile_for_consecutive_limit(VideoData2['instance.score'], max_consecutive_lowscore)
     plt.subplot(1, 2 if has_v1 else 1, plot_index)
     plt.hist(VideoData2['instance.score'].dropna(), bins=30, color='salmon', edgecolor='black')
-    plt.axvline(adaptive_thr_v2, color='red', linestyle='--', label=f'Adaptive threshold ({adaptive_pct_v2*100:.2f} percentile)\nlimit {max_consecutive_lowscore} consecutive')
+    plt.axvline(blink_instance_score_threshold, color='red', linestyle='--', linewidth=2,
+                label=f'Hard threshold = {blink_instance_score_threshold}')
     plt.title("Distribution of instance.score (VideoData2)")
     plt.xlabel("instance.score")
     plt.ylabel("Frequency")
@@ -686,31 +653,89 @@ if has_v1 or has_v2:
 
 # Report the statistics for available VideoData
 if has_v1:
-    v1_num_low = (VideoData1['instance.score'] < adaptive_thr_v1).sum()
-    print(f"\nVideoData1: Total number of points with instance.score < adaptive threshold: {v1_num_low}")
-if has_v2:
-    v2_num_low = (VideoData2['instance.score'] < adaptive_thr_v2).sum()
-    print(f"VideoData2: Total number of points with instance.score < adaptive threshold: {v2_num_low}")
+    print(f"\n{'='*80}")
+    print(f"VideoData1 Results:")
+    print(f"{'='*80}")
+    print(f"  Hard threshold: {blink_instance_score_threshold}")
+    
+    # Calculate percentile for reference
+    v1_percentile = (VideoData1['instance.score'] < blink_instance_score_threshold).sum() / len(VideoData1) * 100
+    print(f"  Percentile: {v1_percentile:.2f}% (i.e., {v1_percentile:.2f}% of frames have instance.score < {blink_instance_score_threshold})")
+    
+    v1_num_low = (VideoData1['instance.score'] < blink_instance_score_threshold).sum()
+    v1_total = len(VideoData1)
+    v1_pct_low = (v1_num_low / v1_total) * 100
+    print(f"  Frames below threshold: {v1_num_low} / {v1_total} ({v1_pct_low:.2f}%)")
+    
+    # Find longest consecutive segments
+    low_sections_v1 = pf.find_longest_lowscore_sections(VideoData1['instance.score'], blink_instance_score_threshold, top_n=1)
+    longest_consecutive_v1 = low_sections_v1[0]['length'] if low_sections_v1 else 0
+    longest_consecutive_v1_ms = (longest_consecutive_v1 / fps_1_for_threshold) * 1000 if fps_1_for_threshold and longest_consecutive_v1 > 0 else None
+    print(f"  Longest consecutive segment below threshold: {longest_consecutive_v1} frames", end="")
+    if longest_consecutive_v1_ms:
+        print(f" ({longest_consecutive_v1_ms:.1f}ms)")
+    else:
+        print()
+    
+    # Report the top 5 longest consecutive sections
+    low_sections_v1 = pf.find_longest_lowscore_sections(VideoData1['instance.score'], blink_instance_score_threshold, top_n=5)
+    if len(low_sections_v1) > 0:
+        print(f"\n  Top 5 longest consecutive sections where instance.score < threshold:")
+        for i, sec in enumerate(low_sections_v1, 1):
+            start_idx = sec['start_idx']
+            end_idx = sec['end_idx']
+            start_time = VideoData1.index[start_idx] if isinstance(VideoData1.index, pd.DatetimeIndex) else start_idx
+            end_time = VideoData1.index[end_idx] if isinstance(VideoData1.index, pd.DatetimeIndex) else end_idx
+            sec_duration_ms = (sec['length'] / fps_1_for_threshold) * 1000 if fps_1_for_threshold else None
+            if sec_duration_ms:
+                print(f"    Section {i}: index {start_idx}-{end_idx} (length {sec['length']} frames, {sec_duration_ms:.1f}ms)")
+            else:
+                print(f"    Section {i}: index {start_idx}-{end_idx} (length {sec['length']} frames)")
 
-# Report the top 5 longest consecutive sections with instance.score < adaptive threshold
-if has_v1:
-    print(f"\nVideoData1: Top 5 longest consecutive sections where instance.score < adaptive threshold:")
-    low_sections_v1 = pf.find_longest_lowscore_sections(VideoData1['instance.score'], adaptive_thr_v1, top_n=5)
-    for i, sec in enumerate(low_sections_v1, 1):
-        start_idx = sec['start_idx']
-        end_idx = sec['end_idx']
-        start_time = VideoData1.index[start_idx] if isinstance(VideoData1.index, pd.DatetimeIndex) else start_idx
-        end_time = VideoData1.index[end_idx] if isinstance(VideoData1.index, pd.DatetimeIndex) else end_idx
-        print(f"  Section {i}: index {start_idx}-{end_idx} (length {sec['length']})")
 if has_v2:
-    print(f"\nVideoData2: Top 5 longest consecutive sections where instance.score < adaptive threshold:")
-    low_sections_v2 = pf.find_longest_lowscore_sections(VideoData2['instance.score'], adaptive_thr_v2, top_n=5)
-    for i, sec in enumerate(low_sections_v2, 1):
-        start_idx = sec['start_idx']
-        end_idx = sec['end_idx']
-        start_time = VideoData2.index[start_idx] if isinstance(VideoData2.index, pd.DatetimeIndex) else start_idx
-        end_time = VideoData2.index[end_idx] if isinstance(VideoData2.index, pd.DatetimeIndex) else end_idx
-        print(f"  Section {i}: index {start_idx}-{end_idx} (length {sec['length']})")
+    print(f"\n{'='*80}")
+    print(f"VideoData2 Results:")
+    print(f"{'='*80}")
+    print(f"  Hard threshold: {blink_instance_score_threshold}")
+    
+    # Calculate percentile for reference
+    v2_percentile = (VideoData2['instance.score'] < blink_instance_score_threshold).sum() / len(VideoData2) * 100
+    print(f"  Percentile: {v2_percentile:.2f}% (i.e., {v2_percentile:.2f}% of frames have instance.score < {blink_instance_score_threshold})")
+    
+    v2_num_low = (VideoData2['instance.score'] < blink_instance_score_threshold).sum()
+    v2_total = len(VideoData2)
+    v2_pct_low = (v2_num_low / v2_total) * 100
+    print(f"  Frames below threshold: {v2_num_low} / {v2_total} ({v2_pct_low:.2f}%)")
+    
+    # Find longest consecutive segments
+    low_sections_v2 = pf.find_longest_lowscore_sections(VideoData2['instance.score'], blink_instance_score_threshold, top_n=1)
+    longest_consecutive_v2 = low_sections_v2[0]['length'] if low_sections_v2 else 0
+    longest_consecutive_v2_ms = (longest_consecutive_v2 / fps_2_for_threshold) * 1000 if fps_2_for_threshold and longest_consecutive_v2 > 0 else None
+    print(f"  Longest consecutive segment below threshold: {longest_consecutive_v2} frames", end="")
+    if longest_consecutive_v2_ms:
+        print(f" ({longest_consecutive_v2_ms:.1f}ms)")
+    else:
+        print()
+    
+    # Report the top 5 longest consecutive sections
+    low_sections_v2 = pf.find_longest_lowscore_sections(VideoData2['instance.score'], blink_instance_score_threshold, top_n=5)
+    if len(low_sections_v2) > 0:
+        print(f"\n  Top 5 longest consecutive sections where instance.score < threshold:")
+        for i, sec in enumerate(low_sections_v2, 1):
+            start_idx = sec['start_idx']
+            end_idx = sec['end_idx']
+            start_time = VideoData2.index[start_idx] if isinstance(VideoData2.index, pd.DatetimeIndex) else start_idx
+            end_time = VideoData2.index[end_idx] if isinstance(VideoData2.index, pd.DatetimeIndex) else end_idx
+            sec_duration_ms = (sec['length'] / fps_2_for_threshold) * 1000 if fps_2_for_threshold else None
+            if sec_duration_ms:
+                print(f"    Section {i}: index {start_idx}-{end_idx} (length {sec['length']} frames, {sec_duration_ms:.1f}ms)")
+            else:
+                print(f"    Section {i}: index {start_idx}-{end_idx} (length {sec['length']} frames)")
+
+print(f"\n{'='*80}")
+print("Note: This threshold will be used for blink detection in the next cell.")
+print("      Frames with instance.score below this threshold are considered potential blinks.")
+print("=" * 80)
 
 
 
@@ -756,14 +781,9 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
     print(f"  FPS: {fps_1:.2f}")
     print(f"  Long blink warning threshold: {long_blink_warning_frames} frames ({long_blink_warning_ms}ms)")
     
-    # Use adaptive threshold from cell 6 if available, otherwise use percentile
-    if 'adaptive_thr_v1' in globals():
-        blink_threshold_v1 = adaptive_thr_v1
-        print(f"  Using adaptive threshold: {blink_threshold_v1:.4f} (from cell 6)")
-    else:
-        # Calculate 10th percentile as fallback
-        blink_threshold_v1 = VideoData1['instance.score'].quantile(0.10)
-        print(f"  Using 10th percentile threshold: {blink_threshold_v1:.4f}")
+    # Use hard threshold from user parameters
+    blink_threshold_v1 = blink_instance_score_threshold
+    print(f"  Using hard threshold: {blink_threshold_v1:.4f}")
     
     # Find all blink segments - use very lenient min_frames (1) to capture all segments
     # No filtering by frame count - short blinks are OK to interpolate
@@ -780,7 +800,8 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
     # Filter out blinks shorter than 4 frames
     min_frames_threshold = 4
     blink_segments_v1 = [blink for blink in all_blink_segments_v1 if blink['length'] >= min_frames_threshold]
-    print(f"  After filtering <{min_frames_threshold} frames: {len(blink_segments_v1)} blink segment(s)")
+    short_blink_segments_v1 = [blink for blink in all_blink_segments_v1 if blink['length'] < min_frames_threshold]
+    print(f"  After filtering <{min_frames_threshold} frames: {len(blink_segments_v1)} blink segment(s), {len(short_blink_segments_v1)} short segment(s) will be interpolated")
     
     # Check for long blinks and warn if needed
     long_blinks_warnings_v1 = []
@@ -849,35 +870,49 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
             print(f"      Auto-detected blinks: {len(auto_blinks_v1)}")
             
             # Match manual blinks to auto-detected ones (find overlapping frames)
+            # Allow matching with multiple auto-detected blinks if manual blink is over-merged
             print(f"\n   Manual → Auto matching (overlap analysis):")
             for manual in manual_blinks_v1:
-                best_match = None
-                best_overlap = 0
-                best_overlap_pct = 0
+                manual_length = manual['end'] - manual['start'] + 1
+                total_overlap = 0
+                matching_auto_blinks = []
                 
+                # Find all auto-detected blinks that overlap with this manual blink
                 for auto in auto_blinks_v1:
-                    # Calculate overlap
                     overlap_start = max(manual['start'], auto['start'])
                     overlap_end = min(manual['end'], auto['end'])
                     if overlap_start <= overlap_end:
                         overlap_frames = overlap_end - overlap_start + 1
-                        manual_length = manual['end'] - manual['start'] + 1
-                        auto_length = auto['end'] - auto['start'] + 1
-                        overlap_pct = (overlap_frames / manual_length) * 100
-                        
-                        if overlap_frames > best_overlap:
-                            best_overlap = overlap_frames
-                            best_match = auto
-                            best_overlap_pct = overlap_pct
+                        total_overlap += overlap_frames
+                        matching_auto_blinks.append({
+                            'auto': auto,
+                            'overlap': overlap_frames
+                        })
                 
-                if best_match and best_overlap_pct >= 50:  # At least 50% overlap
-                    start_diff = best_match['start'] - manual['start']
-                    end_diff = best_match['end'] - manual['end']
-                    match_str = f"✅ MATCH: Auto blink {best_match['num']} (frames {best_match['start']}-{best_match['end']})"
-                    match_str += f", {best_overlap} frames overlap ({best_overlap_pct:.1f}%)"
-                    if start_diff != 0 or end_diff != 0:
-                        match_str += f", offset: start={start_diff:+d}, end={end_diff:+d}"
-                    print(f"      Manual {manual['num']}: {manual['start']}-{manual['end']} → {match_str}")
+                # Calculate total overlap percentage
+                total_overlap_pct = (total_overlap / manual_length) * 100 if manual_length > 0 else 0
+                
+                # Match if total overlap is >= 40% (less stringent to handle over-merged manual blinks)
+                if total_overlap >= manual_length * 0.40:  # At least 40% overlap
+                    if len(matching_auto_blinks) == 1:
+                        # Single match
+                        match_info = matching_auto_blinks[0]
+                        best_match = match_info['auto']
+                        overlap = match_info['overlap']
+                        start_diff = best_match['start'] - manual['start']
+                        end_diff = best_match['end'] - manual['end']
+                        match_str = f"✅ MATCH: Auto blink {best_match['num']} (frames {best_match['start']}-{best_match['end']})"
+                        match_str += f", {overlap} frames overlap ({total_overlap_pct:.1f}%)"
+                        if start_diff != 0 or end_diff != 0:
+                            match_str += f", offset: start={start_diff:+d}, end={end_diff:+d}"
+                        print(f"      Manual {manual['num']}: {manual['start']}-{manual['end']} → {match_str}")
+                    else:
+                        # Multiple matches (manual blink is over-merged)
+                        auto_nums = [m['auto']['num'] for m in matching_auto_blinks]
+                        auto_ranges = [f"{m['auto']['start']}-{m['auto']['end']}" for m in matching_auto_blinks]
+                        match_str = f"✅ MATCH: Auto blinks {auto_nums} (frames: {', '.join(auto_ranges)})"
+                        match_str += f", total {total_overlap} frames overlap ({total_overlap_pct:.1f}%)"
+                        print(f"      Manual {manual['num']}: {manual['start']}-{manual['end']} → {match_str}")
                 else:
                     print(f"      Manual {manual['num']}: {manual['start']}-{manual['end']} → ❌ NO MATCH FOUND")
             
@@ -892,8 +927,8 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
                     if overlap_start <= overlap_end:
                         overlap_frames = overlap_end - overlap_start + 1
                         manual_length = manual['end'] - manual['start'] + 1
-                        overlap_pct = (overlap_frames / manual_length) * 100
-                        if overlap_pct >= 50:
+                        # Use same threshold as matching logic (40% of manual blink)
+                        if overlap_frames >= manual_length * 0.40:
                             has_match = True
                             break
                 if not has_match:
@@ -907,7 +942,25 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
         else:
             print(f"\n   ⚠️ WARNING: Manual blink comparison skipped - Video1_manual_blinks.csv not found in data_path")
         
-        # Mark blinks by setting coordinates to NaN
+        # Interpolate over short blinks (keep long blinks as NaN)
+        print(f"\n  Interpolating short blinks (< {min_frames_threshold} frames):")
+        short_blink_frames_v1 = 0
+        if len(short_blink_segments_v1) > 0:
+            # Mark short blinks as NaN
+            for blink in short_blink_segments_v1:
+                start_idx = blink['start_idx']
+                end_idx = blink['end_idx']
+                VideoData1.loc[VideoData1.index[start_idx:end_idx+1], columns_of_interest] = np.nan
+                short_blink_frames_v1 += blink['length']
+            
+            # Interpolate all NaNs (this fills short blinks)
+            VideoData1[columns_of_interest] = VideoData1[columns_of_interest].interpolate(method='linear', limit_direction='both')
+            
+            print(f"    Interpolated {short_blink_frames_v1} frames from {len(short_blink_segments_v1)} short blink segment(s)")
+        else:
+            print(f"    No short blinks to interpolate")
+        
+        # Mark long blinks by setting coordinates to NaN (these remain as NaN, not interpolated)
         recording_start_time = VideoData1['Seconds'].iloc[0]
         total_blink_frames_v1 = 0
         for blink in blink_segments_v1:
@@ -916,7 +969,7 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
             VideoData1.loc[VideoData1.index[start_idx:end_idx+1], columns_of_interest] = np.nan
             total_blink_frames_v1 += blink['length']
         
-        print(f"  Total blink frames marked: {total_blink_frames_v1} frames "
+        print(f"  Total long blink frames marked (kept as NaN): {total_blink_frames_v1} frames "
               f"({total_blink_frames_v1/fps_1*1000:.1f}ms)")
         
         # Calculate blink rate
@@ -941,14 +994,9 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
     print(f"  FPS: {fps_2:.2f}")
     print(f"  Long blink warning threshold: {long_blink_warning_frames} frames ({long_blink_warning_ms}ms)")
     
-    # Use adaptive threshold from cell 6 if available, otherwise use percentile
-    if 'adaptive_thr_v2' in globals():
-        blink_threshold_v2 = adaptive_thr_v2
-        print(f"  Using adaptive threshold: {blink_threshold_v2:.4f} (from cell 6)")
-    else:
-        # Calculate 10th percentile as fallback
-        blink_threshold_v2 = VideoData2['instance.score'].quantile(0.10)
-        print(f"  Using 10th percentile threshold: {blink_threshold_v2:.4f}")
+    # Use hard threshold from user parameters
+    blink_threshold_v2 = blink_instance_score_threshold
+    print(f"  Using hard threshold: {blink_threshold_v2:.4f}")
     
     # Find all blink segments - use very lenient min_frames (1) to capture all segments
     # No filtering by frame count - short blinks are OK to interpolate
@@ -965,7 +1013,8 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
     # Filter out blinks shorter than 4 frames
     min_frames_threshold = 4
     blink_segments_v2 = [blink for blink in all_blink_segments_v2 if blink['length'] >= min_frames_threshold]
-    print(f"  After filtering <{min_frames_threshold} frames: {len(blink_segments_v2)} blink segment(s)")
+    short_blink_segments_v2 = [blink for blink in all_blink_segments_v2 if blink['length'] < min_frames_threshold]
+    print(f"  After filtering <{min_frames_threshold} frames: {len(blink_segments_v2)} blink segment(s), {len(short_blink_segments_v2)} short segment(s) will be interpolated")
     
     # Check for long blinks and warn if needed
     long_blinks_warnings_v2 = []
@@ -1034,35 +1083,49 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
             print(f"      Auto-detected blinks: {len(auto_blinks_v2)}")
             
             # Match manual blinks to auto-detected ones (find overlapping frames)
+            # Allow matching with multiple auto-detected blinks if manual blink is over-merged
             print(f"\n   Manual → Auto matching (overlap analysis):")
             for manual in manual_blinks_v2:
-                best_match = None
-                best_overlap = 0
-                best_overlap_pct = 0
+                manual_length = manual['end'] - manual['start'] + 1
+                total_overlap = 0
+                matching_auto_blinks = []
                 
+                # Find all auto-detected blinks that overlap with this manual blink
                 for auto in auto_blinks_v2:
-                    # Calculate overlap
                     overlap_start = max(manual['start'], auto['start'])
                     overlap_end = min(manual['end'], auto['end'])
                     if overlap_start <= overlap_end:
                         overlap_frames = overlap_end - overlap_start + 1
-                        manual_length = manual['end'] - manual['start'] + 1
-                        auto_length = auto['end'] - auto['start'] + 1
-                        overlap_pct = (overlap_frames / manual_length) * 100
-                        
-                        if overlap_frames > best_overlap:
-                            best_overlap = overlap_frames
-                            best_match = auto
-                            best_overlap_pct = overlap_pct
+                        total_overlap += overlap_frames
+                        matching_auto_blinks.append({
+                            'auto': auto,
+                            'overlap': overlap_frames
+                        })
                 
-                if best_match and best_overlap_pct >= 50:  # At least 50% overlap
-                    start_diff = best_match['start'] - manual['start']
-                    end_diff = best_match['end'] - manual['end']
-                    match_str = f"✅ MATCH: Auto blink {best_match['num']} (frames {best_match['start']}-{best_match['end']})"
-                    match_str += f", {best_overlap} frames overlap ({best_overlap_pct:.1f}%)"
-                    if start_diff != 0 or end_diff != 0:
-                        match_str += f", offset: start={start_diff:+d}, end={end_diff:+d}"
-                    print(f"      Manual {manual['num']}: {manual['start']}-{manual['end']} → {match_str}")
+                # Calculate total overlap percentage
+                total_overlap_pct = (total_overlap / manual_length) * 100 if manual_length > 0 else 0
+                
+                # Match if total overlap is >= 40% (less stringent to handle over-merged manual blinks)
+                if total_overlap >= manual_length * 0.40:  # At least 40% overlap
+                    if len(matching_auto_blinks) == 1:
+                        # Single match
+                        match_info = matching_auto_blinks[0]
+                        best_match = match_info['auto']
+                        overlap = match_info['overlap']
+                        start_diff = best_match['start'] - manual['start']
+                        end_diff = best_match['end'] - manual['end']
+                        match_str = f"✅ MATCH: Auto blink {best_match['num']} (frames {best_match['start']}-{best_match['end']})"
+                        match_str += f", {overlap} frames overlap ({total_overlap_pct:.1f}%)"
+                        if start_diff != 0 or end_diff != 0:
+                            match_str += f", offset: start={start_diff:+d}, end={end_diff:+d}"
+                        print(f"      Manual {manual['num']}: {manual['start']}-{manual['end']} → {match_str}")
+                    else:
+                        # Multiple matches (manual blink is over-merged)
+                        auto_nums = [m['auto']['num'] for m in matching_auto_blinks]
+                        auto_ranges = [f"{m['auto']['start']}-{m['auto']['end']}" for m in matching_auto_blinks]
+                        match_str = f"✅ MATCH: Auto blinks {auto_nums} (frames: {', '.join(auto_ranges)})"
+                        match_str += f", total {total_overlap} frames overlap ({total_overlap_pct:.1f}%)"
+                        print(f"      Manual {manual['num']}: {manual['start']}-{manual['end']} → {match_str}")
                 else:
                     print(f"      Manual {manual['num']}: {manual['start']}-{manual['end']} → ❌ NO MATCH FOUND")
             
@@ -1077,8 +1140,8 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
                     if overlap_start <= overlap_end:
                         overlap_frames = overlap_end - overlap_start + 1
                         manual_length = manual['end'] - manual['start'] + 1
-                        overlap_pct = (overlap_frames / manual_length) * 100
-                        if overlap_pct >= 50:
+                        # Use same threshold as matching logic (40% of manual blink)
+                        if overlap_frames >= manual_length * 0.40:
                             has_match = True
                             break
                 if not has_match:
@@ -1092,7 +1155,25 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
         else:
             print(f"\n   ⚠️ WARNING: Manual blink comparison skipped - Video2_manual_blinks.csv not found in data_path")
         
-        # Mark blinks by setting coordinates to NaN
+        # Interpolate over short blinks (keep long blinks as NaN)
+        print(f"\n  Interpolating short blinks (< {min_frames_threshold} frames):")
+        short_blink_frames_v2 = 0
+        if len(short_blink_segments_v2) > 0:
+            # Mark short blinks as NaN
+            for blink in short_blink_segments_v2:
+                start_idx = blink['start_idx']
+                end_idx = blink['end_idx']
+                VideoData2.loc[VideoData2.index[start_idx:end_idx+1], columns_of_interest] = np.nan
+                short_blink_frames_v2 += blink['length']
+            
+            # Interpolate all NaNs (this fills short blinks)
+            VideoData2[columns_of_interest] = VideoData2[columns_of_interest].interpolate(method='linear', limit_direction='both')
+            
+            print(f"    Interpolated {short_blink_frames_v2} frames from {len(short_blink_segments_v2)} short blink segment(s)")
+        else:
+            print(f"    No short blinks to interpolate")
+        
+        # Mark long blinks by setting coordinates to NaN (these remain as NaN, not interpolated)
         recording_start_time = VideoData2['Seconds'].iloc[0]
         total_blink_frames_v2 = 0
         for blink in blink_segments_v2:
@@ -1101,7 +1182,7 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
             VideoData2.loc[VideoData2.index[start_idx:end_idx+1], columns_of_interest] = np.nan
             total_blink_frames_v2 += blink['length']
         
-        print(f"  Total blink frames marked: {total_blink_frames_v2} frames "
+        print(f"  Total long blink frames marked (kept as NaN): {total_blink_frames_v2} frames "
               f"({total_blink_frames_v2/fps_2*1000:.1f}ms)")
         
         # Calculate blink rate
@@ -1118,7 +1199,7 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
     if len(blink_segments_v1) > 0:
         # Helper function to check if an auto-detected blink matches any manual blink
         def check_manual_match(auto_start, auto_end, manual_blinks_list):
-            """Check if auto-detected blink matches any manual blink (>=50% overlap)"""
+            """Check if auto-detected blink matches any manual blink (>=40% overlap to handle over-merged manual blinks)"""
             if manual_blinks_list is None:
                 return 0
             for manual in manual_blinks_list:
@@ -1127,8 +1208,8 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
                 if overlap_start <= overlap_end:
                     overlap_frames = overlap_end - overlap_start + 1
                     manual_length = manual['end'] - manual['start'] + 1
-                    overlap_pct = (overlap_frames / manual_length) * 100
-                    if overlap_pct >= 50:
+                    # Use 40% threshold to match the diagnostic comparison logic
+                    if overlap_frames >= manual_length * 0.40:
                         return 1
             return 0
         
@@ -1171,7 +1252,7 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
     if len(blink_segments_v2) > 0:
         # Helper function to check if an auto-detected blink matches any manual blink
         def check_manual_match(auto_start, auto_end, manual_blinks_list):
-            """Check if auto-detected blink matches any manual blink (>=50% overlap)"""
+            """Check if auto-detected blink matches any manual blink (>=40% overlap to handle over-merged manual blinks)"""
             if manual_blinks_list is None:
                 return 0
             for manual in manual_blinks_list:
@@ -1180,8 +1261,8 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
                 if overlap_start <= overlap_end:
                     overlap_frames = overlap_end - overlap_start + 1
                     manual_length = manual['end'] - manual['start'] + 1
-                    overlap_pct = (overlap_frames / manual_length) * 100
-                    if overlap_pct >= 50:
+                    # Use 40% threshold to match the diagnostic comparison logic
+                    if overlap_frames >= manual_length * 0.40:
                         return 1
             return 0
         
