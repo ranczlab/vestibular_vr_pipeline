@@ -30,26 +30,24 @@ def load_videography_data(path):
     #print('RESULTS:')
     
     # Listing filenames in the folders
+    # Exclude: .avi files, .sleap files, .slp files, and any hidden files (starting with .)
     vd1_files, read_vd1_dfs, read_vd1_sleap_dfs = [], [], []
     vd2_files, read_vd2_dfs, read_vd2_sleap_dfs = [], [], []
     
     for e in os.listdir(path/'VideoData1'):
-        if not '.avi' in e and not '.sleap' in e and e[-4:] != '.slp':
+        if not '.avi' in e and not '.sleap' in e and e[-4:] != '.slp' and not e.startswith('.'):
             vd1_files.append(e)
     for e in os.listdir(path/'VideoData2'):
-        if not '.avi' in e and not '.sleap' in e and e[-4:] != '.slp':
+        if not '.avi' in e and not '.sleap' in e and e[-4:] != '.slp' and not e.startswith('.'):
             vd2_files.append(e)
 
     vd1_has_sleap, vd2_has_sleap = False, False
     for e in os.listdir(path/'VideoData1'):
-        if '.sleap' in e: vd1_has_sleap = True
+        if not e.startswith('.') and '.sleap' in e: vd1_has_sleap = True
     for e in os.listdir(path/'VideoData2'):
-        if '.sleap' in e : vd2_has_sleap = True
+        if not e.startswith('.') and '.sleap' in e : vd2_has_sleap = True
     print(f'\nOutputs of SLEAP found in VideoData1: {vd1_has_sleap}')
     print(f'Outputs of SLEAP found in VideoData2: {vd2_has_sleap}')
-    # Remove '.DS_Store' if found in the lists
-    vd1_files = [f for f in vd1_files if f != '.DS_Store']
-    vd2_files = [f for f in vd2_files if f != '.DS_Store']
 
     # Sorting filenames chronologically
     #sorted_vd1_files = pd.to_datetime(pd.Series([x.split('_')[1].split('.')[0] for x in vd1_files])).sort_values()

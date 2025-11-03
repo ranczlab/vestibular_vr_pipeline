@@ -65,7 +65,10 @@ plot_QC_timeseries = False
 score_cutoff = 0.2 # for filtering out inferred points with low confidence, they get interpolated 
 outlier_sd_threshold = 10 # for removing outliers from the data, they get interpolated 
 NaNs_removed = False # for checking if NaNs already removed in the notebook
-cutoff = 10  # Hz for pupil diameter filtering 
+
+# Pupil diameter filter settings (Butterworth low-pass)
+pupil_filter_cutoff_hz = 10  # Hz
+pupil_filter_order = 6
 
 # Parameters for blink detection
 min_blink_duration_ms = 50  # minimum blink duration in milliseconds
@@ -1801,17 +1804,17 @@ if VideoData2_Has_Sleap:
     SleapVideoData2 = process.convert_arrays_to_dataframe(['Seconds', 'Ellipse.Diameter', 'Ellipse.Angle', 'Ellipse.Center.X', 'Ellipse.Center.Y'], [VideoData2['Seconds'].values, average_diameter2, ellipse_parameters_data2[:,2], ellipse_center_points_data2[:,0], ellipse_center_points_data2[:,1]])
 
 ############################################################################################################
-# some aggressive filtering of the pupil diameter
+# Filter pupil diameter using 10 Hz Butterworth low-pass filter
 ############################################################################################################
 
 # VideoData1 filtering
 if VideoData1_Has_Sleap:
     print(f"\n=== VideoData1 Filtering ===")
-    # Butterworth filter parameters
+    # Butterworth filter parameters - 10 Hz low-pass filter
     fs1 = 1 / np.median(np.diff(SleapVideoData1['Seconds']))  # Sampling frequency (Hz)
-    order = 6
+    order = pupil_filter_order
 
-    b1, a1 = butter(order, cutoff / (0.5 * fs1), btype='low')
+    b1, a1 = butter(order, pupil_filter_cutoff_hz / (0.5 * fs1), btype='low')
     
     # Handle NaN values before filtering (from blink detection)
     # Replace NaN with forward-fill for filtering purposes only (to avoid filtfilt issues)
@@ -1819,7 +1822,7 @@ if VideoData1_Has_Sleap:
     # Use ffill() and bfill() instead of deprecated fillna(method='ffill')
     diameter_data_filled = diameter_data.ffill().bfill()
     
-    # Apply filter
+    # Apply Butterworth filter
     if not diameter_data_filled.isna().all():
         filtered = filtfilt(b1, a1, diameter_data_filled)
         # Restore NaN values at original NaN positions (from blinks)
@@ -1830,15 +1833,14 @@ if VideoData1_Has_Sleap:
         # If all values are NaN, just copy
         SleapVideoData1['Ellipse.Diameter.Filt'] = diameter_data
 
-    SleapVideoData1['Ellipse.Diameter'] = SleapVideoData1['Ellipse.Diameter'].rolling(window=12, center=True, min_periods=1).median()
-
 # VideoData2 filtering
 if VideoData2_Has_Sleap:
     print(f"=== VideoData2 Filtering ===")
+    # Butterworth filter parameters - 10 Hz low-pass filter
     fs2 = 1 / np.median(np.diff(SleapVideoData2['Seconds']))  # Sampling frequency (Hz)
-    order = 6
+    order = pupil_filter_order
 
-    b2, a2 = butter(order, cutoff / (0.5 * fs2), btype='low')
+    b2, a2 = butter(order, pupil_filter_cutoff_hz / (0.5 * fs2), btype='low')
     
     # Handle NaN values before filtering (from blink detection)
     # Replace NaN with forward-fill for filtering purposes only (to avoid filtfilt issues)
@@ -1846,7 +1848,7 @@ if VideoData2_Has_Sleap:
     # Use ffill() and bfill() instead of deprecated fillna(method='ffill')
     diameter_data_filled = diameter_data.ffill().bfill()
     
-    # Apply filter
+    # Apply Butterworth filter
     if not diameter_data_filled.isna().all():
         filtered = filtfilt(b2, a2, diameter_data_filled)
         # Restore NaN values at original NaN positions (from blinks)
@@ -1856,8 +1858,6 @@ if VideoData2_Has_Sleap:
     else:
         # If all values are NaN, just copy
         SleapVideoData2['Ellipse.Diameter.Filt'] = diameter_data
-
-    SleapVideoData2['Ellipse.Diameter'] = SleapVideoData2['Ellipse.Diameter'].rolling(window=12, center=True, min_periods=1).median()
 
 print("✅ Done calculating pupil diameter and angle for both VideoData1 and VideoData2")
 
@@ -1926,12 +1926,31 @@ if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
     if len(pupil1_clean) < 2 or len(pupil2_clean) < 2:
         print("❌ Error: Not enough valid data points for correlation analysis")
     else:
-        # Calculate cross-correlation
+        # Z-score normalize both signals before cross-correlation
+        # This accounts for different camera magnifications/orientations by comparing relative changes
+        # Formula: z = (x - mean) / std
+        pupil1_mean = np.mean(pupil1_clean)
+        pupil1_std = np.std(pupil1_clean)
+        pupil2_mean = np.mean(pupil2_clean)
+        pupil2_std = np.std(pupil2_clean)
+        
+        if pupil1_std > 0 and pupil2_std > 0:
+            pupil1_z = (pupil1_clean - pupil1_mean) / pupil1_std
+            pupil2_z = (pupil2_clean - pupil2_mean) / pupil2_std
+            print(f"Applied z-score normalization to pupil diameter signals (accounts for different camera magnifications)")
+            print(f"  VideoData1: mean={pupil1_mean:.2f}, std={pupil1_std:.2f}")
+            print(f"  VideoData2: mean={pupil2_mean:.2f}, std={pupil2_std:.2f}")
+        else:
+            print("⚠️ Warning: Zero variance detected, using raw signals (no normalization)")
+            pupil1_z = pupil1_clean
+            pupil2_z = pupil2_clean
+        
+        # Calculate cross-correlation using z-scored signals
         try:
-            correlation = correlate(pupil1_clean, pupil2_clean, mode='full')
+            correlation = correlate(pupil1_z, pupil2_z, mode='full')
             
             # Calculate lags (in samples)
-            lags = np.arange(-len(pupil2_clean) + 1, len(pupil1_clean))
+            lags = np.arange(-len(pupil2_z) + 1, len(pupil1_z))
             
             # Convert lags to time (assuming same sampling rate)
             dt = np.median(np.diff(SleapVideoData1['Seconds']))
@@ -1947,8 +1966,8 @@ if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
             print(f"Peak lag (time): {peak_lag_time:.4f} seconds")
 
         
-            # Normalize correlation to [-1, 1] range
-            norm_factor = np.sqrt(np.sum(pupil1_clean**2) * np.sum(pupil2_clean**2))
+            # Normalize correlation to [-1, 1] range (for z-scored signals, this is standard normalization)
+            norm_factor = np.sqrt(np.sum(pupil1_z**2) * np.sum(pupil2_z**2))
             if norm_factor > 0:
                 correlation_normalized = correlation / norm_factor
                 peak_correlation_normalized = correlation_normalized[peak_idx]
@@ -2009,8 +2028,9 @@ if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
     # Additional correlation statistics
     if len(pupil1_clean) >= 2 and len(pupil2_clean) >= 2:
         try:
-            # Calculate Pearson correlation coefficient
-            pearson_r, pearson_p = pearsonr(pupil1_clean, pupil2_clean)
+            # Calculate Pearson correlation coefficient on z-scored signals
+            # Note: For z-scored signals, Pearson correlation is equivalent to the normalized cross-correlation at zero lag
+            pearson_r, pearson_p = pearsonr(pupil1_z, pupil2_z)
             pearson_r_display = pearson_r
             pearson_p_display = pearson_p
             
