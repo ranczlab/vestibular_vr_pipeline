@@ -74,7 +74,7 @@ cutoff = 10  # Hz for pupil diameter filtering
 min_blink_duration_ms = 50  # minimum blink duration in milliseconds
 blink_merge_window_ms = 100  # NOT CURRENTLY USED: merge window was removed to preserve good data between separate blinks
 long_blink_warning_ms = 2000  # warn if blinks exceed this duration (in ms) - user should verify these are real blinks
-blink_instance_score_threshold = 4.6  # hard threshold for blink detection - frames with instance.score below this value are considered blinks 
+blink_instance_score_threshold = 3.8  # hard threshold for blink detection - frames with instance.score below this value are considered blinks, calculated as 9 pupil points *0.2 + left/right as 1   
 
 # for saccades
 refractory_period = 0.1  # sec
@@ -805,6 +805,11 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
     short_blink_segments_v1 = [blink for blink in all_blink_segments_v1 if blink['length'] < min_frames_threshold]
     print(f"  After filtering <{min_frames_threshold} frames: {len(blink_segments_v1)} blink segment(s), {len(short_blink_segments_v1)} short segment(s) will be interpolated")
     
+    # Merge blinks within 10 frames into blink bouts
+    merge_window_frames = 10
+    blink_bouts_v1 = pf.merge_nearby_blinks(blink_segments_v1, merge_window_frames)
+    print(f"  After merging blinks within {merge_window_frames} frames: {len(blink_bouts_v1)} blink bout(s)")
+    
     # Check for long blinks and warn if needed
     long_blinks_warnings_v1 = []
     for i, blink in enumerate(blink_segments_v1, 1):
@@ -1018,6 +1023,11 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
     short_blink_segments_v2 = [blink for blink in all_blink_segments_v2 if blink['length'] < min_frames_threshold]
     print(f"  After filtering <{min_frames_threshold} frames: {len(blink_segments_v2)} blink segment(s), {len(short_blink_segments_v2)} short segment(s) will be interpolated")
     
+    # Merge blinks within 10 frames into blink bouts
+    merge_window_frames = 10
+    blink_bouts_v2 = pf.merge_nearby_blinks(blink_segments_v2, merge_window_frames)
+    print(f"  After merging blinks within {merge_window_frames} frames: {len(blink_bouts_v2)} blink bout(s)")
+    
     # Check for long blinks and warn if needed
     long_blinks_warnings_v2 = []
     for i, blink in enumerate(blink_segments_v2, 1):
@@ -1195,6 +1205,204 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
         print("  No blinks detected")
 
 print("\n✅ Blink detection complete. Blink periods remain as NaN (not interpolated).")
+
+# Compare blink bout timing between VideoData1 and VideoData2 (between eyes)
+if ('VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap and 
+    'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap):
+    print("\n" + "="*80)
+    print("BLINK BOUT TIMING COMPARISON: VideoData1 vs VideoData2 (Between Eyes)")
+    print("="*80)
+    
+    # Get blink bout frame ranges for both videos (if they exist)
+    if ('blink_bouts_v1' in globals() and len(blink_bouts_v1) > 0 and 
+        'blink_bouts_v2' in globals() and len(blink_bouts_v2) > 0):
+        
+        # Convert bout indices to frame numbers
+        bouts_v1 = []
+        for i, bout in enumerate(blink_bouts_v1, 1):
+            start_idx = bout['start_idx']
+            end_idx = bout['end_idx']
+            if 'frame_idx' in VideoData1.columns:
+                start_frame = int(VideoData1['frame_idx'].iloc[start_idx])
+                end_frame = int(VideoData1['frame_idx'].iloc[end_idx])
+            else:
+                start_frame = start_idx
+                end_frame = end_idx
+            bouts_v1.append({
+                'num': i,
+                'start_frame': start_frame,
+                'end_frame': end_frame,
+                'start_idx': start_idx,
+                'end_idx': end_idx,
+                'length': bout['length']
+            })
+        
+        bouts_v2 = []
+        for i, bout in enumerate(blink_bouts_v2, 1):
+            start_idx = bout['start_idx']
+            end_idx = bout['end_idx']
+            if 'frame_idx' in VideoData2.columns:
+                start_frame = int(VideoData2['frame_idx'].iloc[start_idx])
+                end_frame = int(VideoData2['frame_idx'].iloc[end_idx])
+            else:
+                start_frame = start_idx
+                end_frame = end_idx
+            bouts_v2.append({
+                'num': i,
+                'start_frame': start_frame,
+                'end_frame': end_frame,
+                'start_idx': start_idx,
+                'end_idx': end_idx,
+                'length': bout['length']
+            })
+        
+        # Find concurrent bouts (overlapping frames)
+        concurrent_bouts = []
+        v1_independent = []
+        v2_independent = []
+        
+        v2_matched = set()  # Track which VideoData2 bouts have been matched
+        
+        for bout1 in bouts_v1:
+            found_match = False
+            for bout2 in bouts_v2:
+                # Check if bouts overlap (any overlapping frames)
+                overlap_start = max(bout1['start_frame'], bout2['start_frame'])
+                overlap_end = min(bout1['end_frame'], bout2['end_frame'])
+                
+                if overlap_start <= overlap_end:
+                    # Concurrent - they overlap
+                    concurrent_bouts.append({
+                        'v1_num': bout1['num'],
+                        'v1_start': bout1['start_frame'],
+                        'v1_end': bout1['end_frame'],
+                        'v2_num': bout2['num'],
+                        'v2_start': bout2['start_frame'],
+                        'v2_end': bout2['end_frame'],
+                        'overlap_start': overlap_start,
+                        'overlap_end': overlap_end,
+                        'overlap_frames': overlap_end - overlap_start + 1
+                    })
+                    v2_matched.add(bout2['num'])
+                    found_match = True
+                    break
+            
+            if not found_match:
+                v1_independent.append(bout1)
+        
+        # Find VideoData2 bouts that don't have matches
+        for bout2 in bouts_v2:
+            if bout2['num'] not in v2_matched:
+                v2_independent.append(bout2)
+        
+        # Calculate statistics
+        total_v1_bouts = len(bouts_v1)
+        total_v2_bouts = len(bouts_v2)
+        total_concurrent = len(concurrent_bouts)
+        total_v1_independent = len(v1_independent)
+        total_v2_independent = len(v2_independent)
+        
+        print(f"\nBlink bout counts:")
+        print(f"  VideoData1: {total_v1_bouts} blink bout(s)")
+        print(f"  VideoData2: {total_v2_bouts} blink bout(s)")
+        print(f"  Concurrent: {total_concurrent} bout(s) (overlapping frames)")
+        print(f"  VideoData1 only: {total_v1_independent} bout(s)")
+        print(f"  VideoData2 only: {total_v2_independent} bout(s)")
+        
+        if total_v1_bouts > 0 and total_v2_bouts > 0:
+            concurrent_pct_v1 = (total_concurrent / total_v1_bouts) * 100
+            concurrent_pct_v2 = (total_concurrent / total_v2_bouts) * 100
+            print(f"\nConcurrency percentage:")
+            print(f"  {concurrent_pct_v1:.1f}% of VideoData1 bouts are concurrent with VideoData2")
+            print(f"  {concurrent_pct_v2:.1f}% of VideoData2 bouts are concurrent with VideoData1")
+            
+            # Calculate timing offsets for concurrent bouts
+            if len(concurrent_bouts) > 0:
+                time_offsets_ms = []
+                for cb in concurrent_bouts:
+                    # Get actual bout objects
+                    bout1 = next(b for b in bouts_v1 if b['num'] == cb['v1_num'])
+                    bout2 = next(b for b in bouts_v2 if b['num'] == cb['v2_num'])
+                    
+                    # Get time from start_idx using Seconds column
+                    v1_start_time = VideoData1['Seconds'].iloc[bout1['start_idx']]
+                    v2_start_time = VideoData2['Seconds'].iloc[bout2['start_idx']]
+                    offset_ms = (v1_start_time - v2_start_time) * 1000
+                    time_offsets_ms.append(offset_ms)
+                    cb['time_offset_ms'] = offset_ms
+                
+                mean_offset = np.mean(time_offsets_ms)
+                std_offset = np.std(time_offsets_ms)
+                print(f"\nTiming offset for concurrent bouts:")
+                print(f"  Mean offset (VideoData1 - VideoData2): {mean_offset:.2f} ms")
+                print(f"  Std offset: {std_offset:.2f} ms")
+                print(f"  Range: {min(time_offsets_ms):.2f} to {max(time_offsets_ms):.2f} ms")
+        
+        # Create visualization: Timeline plot
+        if len(bouts_v1) > 0 or len(bouts_v2) > 0:
+            fig, ax = plt.subplots(figsize=(14, 6))
+            
+            # Plot VideoData1 bouts
+            y1 = 1
+            for bout in bouts_v1:
+                start_time = VideoData1['Seconds'].iloc[bout['start_idx']]
+                end_time = VideoData1['Seconds'].iloc[bout['end_idx']]
+                duration = end_time - start_time
+                
+                # Check if concurrent
+                is_concurrent = any(cb['v1_num'] == bout['num'] for cb in concurrent_bouts)
+                color = 'blue' if is_concurrent else 'lightblue'
+                alpha = 0.7 if is_concurrent else 0.4
+                
+                ax.barh(y1, duration, left=start_time, height=0.3, color=color, alpha=alpha, 
+                       edgecolor='black', linewidth=0.5)
+            
+            # Plot VideoData2 bouts
+            y2 = 2
+            for bout in bouts_v2:
+                start_time = VideoData2['Seconds'].iloc[bout['start_idx']]
+                end_time = VideoData2['Seconds'].iloc[bout['end_idx']]
+                duration = end_time - start_time
+                
+                # Check if concurrent
+                is_concurrent = any(cb['v2_num'] == bout['num'] for cb in concurrent_bouts)
+                color = 'red' if is_concurrent else 'salmon'
+                alpha = 0.7 if is_concurrent else 0.4
+                
+                ax.barh(y2, duration, left=start_time, height=0.3, color=color, alpha=alpha,
+                       edgecolor='black', linewidth=0.5)
+            
+            # Draw lines connecting concurrent bouts
+            for cb in concurrent_bouts:
+                # Find the actual bout objects
+                bout1 = next(b for b in bouts_v1 if b['num'] == cb['v1_num'])
+                bout2 = next(b for b in bouts_v2 if b['num'] == cb['v2_num'])
+                
+                v1_start_time = VideoData1['Seconds'].iloc[bout1['start_idx']]
+                v2_start_time = VideoData2['Seconds'].iloc[bout2['start_idx']]
+                
+                # Draw connecting line
+                ax.plot([v1_start_time, v2_start_time], [y1 + 0.15, y2 - 0.15], 
+                       'gray', linewidth=0.5, alpha=0.3, linestyle='--')
+            
+            ax.set_yticks([y1, y2])
+            ax.set_yticklabels([get_eye_label('VideoData1'), get_eye_label('VideoData2')])
+            ax.set_xlabel('Time (seconds)')
+            ax.set_title('Blink Bout Timing Comparison: Concurrent (opaque) vs Independent (transparent)')
+            ax.grid(True, alpha=0.3)
+            ax.legend([plt.Rectangle((0,0),1,1, facecolor='blue', alpha=0.7, edgecolor='black'),
+                      plt.Rectangle((0,0),1,1, facecolor='lightblue', alpha=0.4, edgecolor='black'),
+                      plt.Rectangle((0,0),1,1, facecolor='red', alpha=0.7, edgecolor='black'),
+                      plt.Rectangle((0,0),1,1, facecolor='salmon', alpha=0.4, edgecolor='black')],
+                     [f'{get_eye_label("VideoData1")} concurrent', f'{get_eye_label("VideoData1")} independent',
+                      f'{get_eye_label("VideoData2")} concurrent', f'{get_eye_label("VideoData2")} independent'],
+                     loc='upper right')
+            plt.tight_layout()
+            plt.show()
+        
+        print("="*80)
+    else:
+        print("\n⚠️ Cannot compare blink bouts - one or both videos have no blink bouts detected")
 
 # Save blink detection results to CSV files
 if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
