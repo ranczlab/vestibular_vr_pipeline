@@ -47,7 +47,6 @@ from sleap import processing_functions as pf
 from sleap import saccade_processing as sp
 from sleap.saccade_processing import analyze_eye_video_saccades
 
-
 def get_eye_label(key):
     """Return mapped user-viewable eye label for video key."""
     return VIDEO_LABELS.get(key, key)
@@ -59,12 +58,10 @@ def get_eye_label(key):
 # set up variables and load data 
 ############################################################################################################
 
-
-
 # User-editable friendly labels for plotting and console output:
 
 video1_eye = 'L'  # Options: 'L' or 'R'; which eye does VideoData1 represent? ('L' = Left, 'R' = Right)
-plot_timeseries = False
+plot_QC_timeseries = False
 score_cutoff = 0.2 # for filtering out inferred points with low confidence, they get interpolated 
 outlier_sd_threshold = 10 # for removing outliers from the data, they get interpolated 
 NaNs_removed = False # for checking if NaNs already removed in the notebook
@@ -75,6 +72,7 @@ min_blink_duration_ms = 50  # minimum blink duration in milliseconds
 blink_merge_window_ms = 100  # NOT CURRENTLY USED: merge window was removed to preserve good data between separate blinks
 long_blink_warning_ms = 2000  # warn if blinks exceed this duration (in ms) - user should verify these are real blinks
 blink_instance_score_threshold = 3.8  # hard threshold for blink detection - frames with instance.score below this value are considered blinks, calculated as 9 pupil points *0.2 + left/right as 1   
+blink_reporting_detailed = 0 # 1 prints detailed blink reports and manual/auto comparisons if present 
 
 # for saccades
 refractory_period = 0.1  # sec
@@ -101,7 +99,6 @@ data_path = Path('/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/
 #data_path = Path('/Users/rancze/Documents/Data/vestVR/Cohort1/No_iso_correction/Visual_mismatch_day3/B6J2717-2024-12-10T12-17-03') # only has sleap data 1
 save_path = data_path.parent / f"{data_path.name}_processedData"
 
-print ("\n❗ 20251025 NOT sure I understand this Ede ---- if SleapData.csv was already saved in the VideoData folder, this may break. Delete the file if you want to rerun processing\n")
 VideoData1, VideoData2, VideoData1_Has_Sleap, VideoData2_Has_Sleap = lp.load_videography_data(data_path)
 
 # Load manual blink data if available
@@ -147,6 +144,7 @@ if VideoData1_Has_Sleap:
     VideoData1 = VideoData1.drop(columns=['track']) # drop the track column as it is empty
     coordinates_dict1_raw=lp.get_coordinates_dict(VideoData1, columns_of_interest)
     FPS_1 = 1 / VideoData1["Seconds"].diff().mean()  # frame rate for VideoData1 TODO where to save it, is it useful?
+    print ()
     print(f"{get_eye_label('VideoData1')}: FPS = {FPS_1}")
 
 if VideoData2_Has_Sleap:
@@ -159,7 +157,7 @@ if VideoData2_Has_Sleap:
 # %%
 # plot timeseries of coordinates in browser for both VideoData1 and VideoData2
 ############################################################################################################
-if plot_timeseries:
+if plot_QC_timeseries:
     print(f'⚠️ Check for long discontinuities and outliers in the data, we will try to deal with them later')
     print(f'ℹ️ Figures open in browser window, takes a bit of time.')
 
@@ -352,9 +350,71 @@ plt.show()
 # Center coordinates, filter low-confidence points, remove outliers, and interpolate
 ############################################################################################################
 
+# Detect and print confidence scores analysis (runs before any filtering)
+#########
+
+score_columns = ['left.score','center.score','right.score','p1.score','p2.score','p3.score','p4.score','p5.score','p6.score','p7.score','p8.score']
+
+# VideoData1 confidence score analysis
+if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
+    total_points1 = len(VideoData1)
+    print(f'\nℹ️ VideoData1 - Top 3 columns with most frames below {score_cutoff} confidence score:')
+
+    video1_stats = []
+    for col in score_columns:
+        if col in VideoData1.columns:
+            count_below = (VideoData1[col] < score_cutoff).sum()
+            pct_below = (count_below / total_points1) * 100 if total_points1 > 0 else 0
+
+            below_mask = VideoData1[col] < score_cutoff
+            longest = 0
+            run = 0
+            for val in below_mask:
+                if val:
+                    run += 1
+                    if run > longest:
+                        longest = run
+                else:
+                    run = 0
+            video1_stats.append((col, count_below, pct_below, longest))
+
+    video1_stats.sort(key=lambda x: x[1], reverse=True)
+    for i, (col, count, pct, longest) in enumerate(video1_stats[:3]):
+        print(f"VideoData1 - #{i+1}: {col} | Values below {score_cutoff}: {count} ({pct:.2f}%) | Longest consecutive frame series: {longest}")
+
+# VideoData2 confidence score analysis
+if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
+    total_points2 = len(VideoData2)
+    print(f'\nℹ️ VideoData2 - Top 3 columns with most frames below {score_cutoff} confidence score:')
+
+    video2_stats = []
+    for col in score_columns:
+        if col in VideoData2.columns:
+            count_below = (VideoData2[col] < score_cutoff).sum()
+            pct_below = (count_below / total_points2) * 100 if total_points2 > 0 else 0
+
+            below_mask = VideoData2[col] < score_cutoff
+            longest = 0
+            run = 0
+            for val in below_mask:
+                if val:
+                    run += 1
+                    if run > longest:
+                        longest = run
+                else:
+                    run = 0
+            video2_stats.append((col, count_below, pct_below, longest))
+
+    video2_stats.sort(key=lambda x: x[1], reverse=True)
+    for i, (col, count, pct, longest) in enumerate(video2_stats[:3]):
+        print(f"VideoData2 - #{i+1}: {col} | Values below {score_cutoff}: {count} ({pct:.2f}%) | Longest consecutive frame series: {longest}")
+
+
+## Center coordinates to the median pupil centre
 columns_of_interest = ['left.x','left.y','center.x','center.y','right.x','right.y','p1.x','p1.y','p2.x','p2.y','p3.x','p3.y','p4.x','p4.y','p5.x','p5.y','p6.x','p6.y','p7.x','p7.y','p8.x','p8.y']
 
-print("=== Centering ===")
+print ()
+print("=== Centering coordinates to the median pupil centre ===")
 # VideoData1 processing
 if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
     # Calculate the mean of the center x and y points
@@ -393,7 +453,7 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
 # remove low confidence points (score < threshold)
 ############################################################################################################
 if not NaNs_removed:
-    print("\n=== Score-based Filtering ===")
+    print("\n=== Score-based Filtering - point scores below threshold are replaced by interpolation ===")
     print(f"Score threshold: {score_cutoff}")
     # List of point names (without .x, .y, .score)
     point_names = ['left', 'right', 'center', 'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8']
@@ -453,7 +513,7 @@ if not NaNs_removed:
     # then interpolates on all NaN values (skipped frames, low confidence inference points, outliers)
     ############################################################################################################
 
-    print("\n=== Outlier Analysis ===")
+    print("\n=== Outlier Analysis - outlier points are replaced by interpolation ===")
 
     # VideoData1 outlier analysis and interpolation
     if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
@@ -837,8 +897,8 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
     
     print(f"  Detected {len(blink_segments_v1)} blink segment(s)\n")
     
-    # Print all detected blinks once
-    if len(blink_segments_v1) > 0:
+    # Print all detected blinks once (detailed)
+    if len(blink_segments_v1) > 0 and ('blink_reporting_detailed' in globals() and blink_reporting_detailed == 1):
         print(f"  Detected blinks:")
         for i, blink in enumerate(blink_segments_v1, 1):
             start_idx = blink['start_idx']
@@ -861,8 +921,8 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
             
             print(f"    Blink {i}: {frame_info}, {blink['length']} frames, {duration_ms:.1f}ms, mean score: {blink['mean_score']:.4f}")
         
-        # DIAGNOSTIC: Direct comparison of manual vs auto-detected blinks
-        if 'manual_blinks_v1' in globals() and manual_blinks_v1 is not None:
+        # DIAGNOSTIC: Direct comparison of manual vs auto-detected blinks (detailed)
+        if ('blink_reporting_detailed' in globals() and blink_reporting_detailed == 1) and ('manual_blinks_v1' in globals() and manual_blinks_v1 is not None):
             # Get auto-detected blink frame ranges
             auto_blinks_v1 = []
             for i, blink in enumerate(blink_segments_v1, 1):
@@ -946,7 +1006,7 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
                     print(f"      Auto {auto['num']}: frames {auto['start']}-{auto['end']}, length={auto['length']} frames")
             else:
                 print(f"      (all auto-detected blinks have manual matches)")
-        else:
+        elif 'blink_reporting_detailed' in globals() and blink_reporting_detailed == 1:
             print(f"\n   ⚠️ WARNING: Manual blink comparison skipped - Video1_manual_blinks.csv not found in data_path")
         
         # Interpolate over short blinks (keep long blinks as NaN)
@@ -1055,8 +1115,8 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
     
     print(f"  Detected {len(blink_segments_v2)} blink segment(s)\n")
     
-    # Print all detected blinks once
-    if len(blink_segments_v2) > 0:
+    # Print all detected blinks once (detailed)
+    if len(blink_segments_v2) > 0 and ('blink_reporting_detailed' in globals() and blink_reporting_detailed == 1):
         print(f"  Detected blinks:")
         for i, blink in enumerate(blink_segments_v2, 1):
             start_idx = blink['start_idx']
@@ -1079,8 +1139,8 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
             
             print(f"    Blink {i}: {frame_info}, {blink['length']} frames, {duration_ms:.1f}ms, mean score: {blink['mean_score']:.4f}")
         
-        # DIAGNOSTIC: Direct comparison of manual vs auto-detected blinks
-        if 'manual_blinks_v2' in globals() and manual_blinks_v2 is not None:
+        # DIAGNOSTIC: Direct comparison of manual vs auto-detected blinks (detailed)
+        if ('blink_reporting_detailed' in globals() and blink_reporting_detailed == 1) and ('manual_blinks_v2' in globals() and manual_blinks_v2 is not None):
             # Get auto-detected blink frame ranges
             auto_blinks_v2 = []
             for i, blink in enumerate(blink_segments_v2, 1):
@@ -1164,7 +1224,7 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
                     print(f"      Auto {auto['num']}: frames {auto['start']}-{auto['end']}, length={auto['length']} frames")
             else:
                 print(f"      (all auto-detected blinks have manual matches)")
-        else:
+        elif 'blink_reporting_detailed' in globals() and blink_reporting_detailed == 1:
             print(f"\n   ⚠️ WARNING: Manual blink comparison skipped - Video2_manual_blinks.csv not found in data_path")
         
         # Interpolate over short blinks (keep long blinks as NaN)
@@ -1357,65 +1417,7 @@ if ('VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap and
                 print(f"  Std offset: {std_offset:.2f} ms")
                 print(f"  Range: {min(time_offsets_ms):.2f} to {max(time_offsets_ms):.2f} ms")
         
-        # Create visualization: Timeline plot
-        if len(bouts_v1) > 0 or len(bouts_v2) > 0:
-            fig, ax = plt.subplots(figsize=(14, 6))
-            
-            # Plot VideoData1 bouts
-            y1 = 1
-            for bout in bouts_v1:
-                start_time = VideoData1['Seconds'].iloc[bout['start_idx']]
-                end_time = VideoData1['Seconds'].iloc[bout['end_idx']]
-                duration = end_time - start_time
-                
-                # Check if concurrent
-                is_concurrent = any(cb['v1_num'] == bout['num'] for cb in concurrent_bouts)
-                color = 'blue' if is_concurrent else 'lightblue'
-                alpha = 0.7 if is_concurrent else 0.4
-                
-                ax.barh(y1, duration, left=start_time, height=0.3, color=color, alpha=alpha, 
-                       edgecolor='black', linewidth=0.5)
-            
-            # Plot VideoData2 bouts
-            y2 = 2
-            for bout in bouts_v2:
-                start_time = VideoData2['Seconds'].iloc[bout['start_idx']]
-                end_time = VideoData2['Seconds'].iloc[bout['end_idx']]
-                duration = end_time - start_time
-                
-                # Check if concurrent
-                is_concurrent = any(cb['v2_num'] == bout['num'] for cb in concurrent_bouts)
-                color = 'red' if is_concurrent else 'salmon'
-                alpha = 0.7 if is_concurrent else 0.4
-                
-                ax.barh(y2, duration, left=start_time, height=0.3, color=color, alpha=alpha,
-                       edgecolor='black', linewidth=0.5)
-            
-            # Draw lines connecting concurrent bouts
-            for cb in concurrent_bouts:
-                # Use time info already in concurrent_bouts
-                v1_start_time = cb['v1_start_time']
-                v2_start_time = cb['v2_start_time']
-                
-                # Draw connecting line
-                ax.plot([v1_start_time, v2_start_time], [y1 + 0.15, y2 - 0.15], 
-                       'gray', linewidth=0.5, alpha=0.3, linestyle='--')
-            
-            ax.set_yticks([y1, y2])
-            ax.set_yticklabels([get_eye_label('VideoData1'), get_eye_label('VideoData2')])
-            ax.set_xlabel('Time (seconds)')
-            ax.set_title('Blink Bout Timing Comparison: Concurrent (opaque) vs Independent (transparent)')
-            ax.grid(True, alpha=0.3)
-            ax.legend([plt.Rectangle((0,0),1,1, facecolor='blue', alpha=0.7, edgecolor='black'),
-                      plt.Rectangle((0,0),1,1, facecolor='lightblue', alpha=0.4, edgecolor='black'),
-                      plt.Rectangle((0,0),1,1, facecolor='red', alpha=0.7, edgecolor='black'),
-                      plt.Rectangle((0,0),1,1, facecolor='salmon', alpha=0.4, edgecolor='black')],
-                     [f'{get_eye_label("VideoData1")} concurrent', f'{get_eye_label("VideoData1")} independent',
-                      f'{get_eye_label("VideoData2")} concurrent', f'{get_eye_label("VideoData2")} independent'],
-                     loc='upper right')
-            plt.tight_layout()
-            plt.show()
-        
+        # Visualization removed per request
         print("="*80)
     elif has_bouts_v1 or has_bouts_v2:
         print(f"\n⚠️ Cannot compare blink bouts - only one eye has blink bouts detected:")
@@ -1564,7 +1566,7 @@ print(f"\n✅ Blink detection output saved to: {output_file}")
 # QC plot timeseries of interpolation corrected NaN and (TODO low confidence coordinates in browser 
 ############################################################################################################
 
-if plot_timeseries:
+if plot_QC_timeseries:
     print(f'ℹ️ Figure opens in browser window, takes a bit of time.')
     
     # VideoData1 QC Plot

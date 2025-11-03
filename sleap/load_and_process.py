@@ -82,15 +82,16 @@ def load_videography_data(path):
         video_frame_counts_vd1.append(actual_frame_count)
         
         if vd1_has_sleap: 
+            vd1_sleap_filename = f"VideoData1_{row.strftime('%Y-%m-%dT%H-%M-%S')}.sleap.csv"
             sleap_df = pd.read_csv(
-                path / 'VideoData1' / f"VideoData1_{row.strftime('%Y-%m-%dT%H-%M-%S')}.sleap.csv"
+                path / 'VideoData1' / vd1_sleap_filename
             )
             
             # Determine if SLEAP frame_idx is 0-based (per-file) or FrameID-based (continuous camera counter)
             first_sleap_frame_idx = sleap_df['frame_idx'].iloc[0]
             if len(read_vd1_sleap_dfs) == 0:
                 # First file - log what we see to help diagnose
-                print(f"ℹ️ VideoData1 SLEAP file {len(read_vd1_sleap_dfs) + 1}: first frame_idx = {first_sleap_frame_idx}")
+                print(f"ℹ️ VideoData1 SLEAP file {len(read_vd1_sleap_dfs) + 1} ({vd1_sleap_filename}): first frame_idx = {first_sleap_frame_idx}")
             
             # CRITICAL FIX: Gap-fill PER FILE before offsetting to ensure gaps are filled within each file's range
             file_num = len(read_vd1_sleap_dfs) + 1
@@ -103,7 +104,7 @@ def load_videography_data(path):
             if sleap_row_count < max_sleap_frame_idx + 1:
                 # There are gaps within the processed range - fill them
                 dropped_frames = (max_sleap_frame_idx + 1) - sleap_row_count
-                print(f"   ⚠️ Found {dropped_frames} dropped frames within processed range [0-{max_sleap_frame_idx}]. Filling gaps.")
+                print(f"   ⚠️ Found {dropped_frames} dropped frames within processed range [0-{max_sleap_frame_idx}] in {vd1_sleap_filename}. Filling gaps.")
                 sleap_df = fill_with_empty_rows_based_on_index(sleap_df)
             
             if max_sleap_frame_idx + 1 < actual_frame_count:
@@ -132,13 +133,14 @@ def load_videography_data(path):
         video_frame_counts_vd2.append(actual_frame_count)
             
         if vd2_has_sleap: 
-            sleap_df = pd.read_csv(path/'VideoData2'/f"VideoData2_{row.strftime('%Y-%m-%dT%H-%M-%S')}.sleap.csv")
+            vd2_sleap_filename = f"VideoData2_{row.strftime('%Y-%m-%dT%H-%M-%S')}.sleap.csv"
+            sleap_df = pd.read_csv(path/'VideoData2'/vd2_sleap_filename)
             
             # Determine if SLEAP frame_idx is 0-based (per-file) or FrameID-based (continuous camera counter)
             first_sleap_frame_idx = sleap_df['frame_idx'].iloc[0]
             if len(read_vd2_sleap_dfs) == 0:
                 # First file - log what we see to help diagnose
-                print(f"ℹ️ VideoData2 SLEAP file {len(read_vd2_sleap_dfs) + 1}: first frame_idx = {first_sleap_frame_idx}")
+                print(f"ℹ️ VideoData2 SLEAP file {len(read_vd2_sleap_dfs) + 1} ({vd2_sleap_filename}): first frame_idx = {first_sleap_frame_idx}")
             
             # CRITICAL FIX: Gap-fill PER FILE before offsetting to ensure gaps are filled within each file's range
             file_num = len(read_vd2_sleap_dfs) + 1
@@ -151,7 +153,7 @@ def load_videography_data(path):
             if sleap_row_count < max_sleap_frame_idx + 1:
                 # There are gaps within the processed range - fill them
                 dropped_frames = (max_sleap_frame_idx + 1) - sleap_row_count
-                print(f"   ⚠️ Found {dropped_frames} dropped frames within processed range [0-{max_sleap_frame_idx}]. Filling gaps.")
+                print(f"   ⚠️ Found {dropped_frames} dropped frames within processed range [0-{max_sleap_frame_idx}] in {vd2_sleap_filename}. Filling gaps.")
                 sleap_df = fill_with_empty_rows_based_on_index(sleap_df)
             
             if max_sleap_frame_idx + 1 < actual_frame_count:
