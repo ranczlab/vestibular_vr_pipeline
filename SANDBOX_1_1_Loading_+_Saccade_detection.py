@@ -6,11 +6,11 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.18.1
+#       jupytext_version: 1.16.7
 #   kernelspec:
 #     display_name: aeon
 #     language: python
-#     name: aeon
+#     name: python3
 # ---
 
 # %% [markdown]
@@ -20,437 +20,2052 @@
 import numpy as np
 from pathlib import Path
 import os
+import sys
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import plotly.io as pio
 import gc
+import io
+from contextlib import redirect_stdout
 
 from matplotlib.lines import Line2D
 from matplotlib.colors import LogNorm
 from fastkde.fastKDE import fastKDE
 from scipy.stats import linregress
+from scipy.signal import butter, filtfilt
+from scipy.signal import correlate
+from scipy.stats import pearsonr
+from scipy.signal import find_peaks
 
 from harp_resources import process, utils
 from sleap import load_and_process as lp
+from sleap import processing_functions as pf
+from sleap import saccade_processing as sp
+from sleap.saccade_processing import analyze_eye_video_saccades
+
+def get_eye_label(key):
+    """Return mapped user-viewable eye label for video key."""
+    return VIDEO_LABELS.get(key, key)
+
 
 # symbols to use ✅ ℹ️ ⚠️ ❗
 
 # %%
-############################################################################################################
 # set up variables and load data 
 ############################################################################################################
 
-plot_timeseries = False
-score_cutoff = 0.2 # for checking prediction accuracy
-outlier_sd_threshold = 10 # for removing outliers from the data
+# User-editable friendly labels for plotting and console output:
+
+video1_eye = 'L'  # Options: 'L' or 'R'; which eye does VideoData1 represent? ('L' = Left, 'R' = Right)
+plot_QC_timeseries = False
+score_cutoff = 0.2 # for filtering out inferred points with low confidence, they get interpolated 
+outlier_sd_threshold = 10 # for removing outliers from the data, they get interpolated 
+NaNs_removed = False # for checking if NaNs already removed in the notebook
+
+# Pupil diameter filter settings (Butterworth low-pass)
+pupil_filter_cutoff_hz = 10  # Hz
+pupil_filter_order = 6
+
+# Parameters for blink detection
+min_blink_duration_ms = 50  # minimum blink duration in milliseconds
+blink_merge_window_ms = 100  # NOT CURRENTLY USED: merge window was removed to preserve good data between separate blinks
+long_blink_warning_ms = 2000  # warn if blinks exceed this duration (in ms) - user should verify these are real blinks
+blink_instance_score_threshold = 3.8  # hard threshold for blink detection - frames with instance.score below this value are considered blinks, calculated as 9 pupil points *0.2 + left/right as 1   
+blink_reporting_detailed = 0 # 1 prints detailed blink reports and manual/auto comparisons if present 
 
 # for saccades
-framerate = 59.77  # Hz (in the future, should come from saved data)
-threshold = 65  # px/s FIXME make this adaptive
-refractory_period = pd.Timedelta(milliseconds=100)  # msec, using pd.Timedelta for datetime index
+refractory_period = 0.1  # sec
+## Separate adaptive saccade threshold (k) for each video:
+k1 = 4  # for VideoData1 (L)
+k2 = 5  # for VideoData2 (R)
+
+# for adaptive saccade threshold - Number of standard deviations (adjustable: 2-4 range works well) 
+onset_offset_fraction = 0.2  # to determine saccade onset and offset, i.e. o.2 is 20% of the peak velocity
+n_before = 10  # Number of points before detection peak to extract for peri-saccade-segments, points, so independent of FPS 
+n_after = 30   # Number of points after detection peak to extract
+
 plot_saccade_detection_QC = True
 
-data_path = Path('/Users/rancze/Documents/Data/vestVR/Cohort1/Visual_mismatch_day3/B6J2717-2024-12-10T12-17-03')
+video2_eye = 'R' if video1_eye == 'L' else 'L' # Automatically assign eye for VideoData2
+eye_fullname = {'L': 'Left', 'R': 'Right'} # Map for full names (used in labels)
+# Update VIDEO_LABELS based on selection
+VIDEO_LABELS = {
+    'VideoData1': f"VideoData1 ({video1_eye}: {eye_fullname[video1_eye]})",
+    'VideoData2': f"VideoData2 ({video2_eye}: {eye_fullname[video2_eye]})"
+}
+
+data_path = Path('/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4/B6J2782-2025-04-28T14-22-03') 
+#data_path = Path('/Users/rancze/Documents/Data/vestVR/Cohort1/No_iso_correction/Visual_mismatch_day3/B6J2717-2024-12-10T12-17-03') # only has sleap data 1
 save_path = data_path.parent / f"{data_path.name}_processedData"
 
-
-print ("\n❗ if SleapData.csv was already saved in the VideoData folder, this may break. Delete the file if you want to rerun processing\n")
 VideoData1, VideoData2, VideoData1_Has_Sleap, VideoData2_Has_Sleap = lp.load_videography_data(data_path)
-VideoData1 = VideoData1.drop(columns=['track']) # drop the track column as it is empty
 
-columns_of_interest = ['left.x','left.y','center.x','center.y','right.x','right.y','p1.x','p1.y','p2.x','p2.y','p3.x','p3.y','p4.x','p4.y','p5.x','p5.y','p6.x','p6.y','p7.x','p7.y','p8.x','p8.y']
-coordinates_dict=lp.get_coordinates_dict(VideoData1, columns_of_interest)
+# Load manual blink data if available
+manual_blinks_v1 = None
+manual_blinks_v2 = None
 
-# %%
-1/VideoData1["Seconds"].diff().mean() # frame rate, add to df as inmutable variable before saving for later analysis
+manual_blinks_v1_path = data_path / "Video1_manual_blinks.csv"
+manual_blinks_v2_path = data_path / "Video2_manual_blinks.csv"
 
-# %%
-############################################################################################################
-# plot timeseries of coordinates in borwser 
-############################################################################################################
-if plot_timeseries:
-    print(f'⚠️ Check for long discontinouties and outsiders in the data, we will try to deal with them later')
-    print(f'ℹ️ Figure opens in browser window, takes a bit of time.')
-    fig = make_subplots(
-        rows=4, cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.05,
-        subplot_titles=(
-            "X coordinates for pupil centre add left-right eye corner",
-            "Y coordinates for pupil centre add left-right eye corner",
-            "X coordinates for iris points",
-            "Y coordinates for iris points"
-        )
-    )
-
-    # Row 1: Plot left.x, center.x, right.x
-    fig.add_trace(go.Scatter(x=VideoData1['Seconds'], y=VideoData1['left.x'], mode='lines', name='left.x'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=VideoData1['Seconds'], y=VideoData1['center.x'], mode='lines', name='center.x'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=VideoData1['Seconds'], y=VideoData1['right.x'], mode='lines', name='right.x'), row=1, col=1)
-
-    # Row 2: Plot left.y, center.y, right.y
-    fig.add_trace(go.Scatter(x=VideoData1['Seconds'], y=VideoData1['left.y'], mode='lines', name='left.y'), row=2, col=1)
-    fig.add_trace(go.Scatter(x=VideoData1['Seconds'], y=VideoData1['center.y'], mode='lines', name='center.y'), row=2, col=1)
-    fig.add_trace(go.Scatter(x=VideoData1['Seconds'], y=VideoData1['right.y'], mode='lines', name='right.y'), row=2, col=1)
-
-    # Row 3: Plot p.x coordinates for p1 to p8
-    for col in ['p1.x', 'p2.x', 'p3.x', 'p4.x', 'p5.x', 'p6.x', 'p7.x', 'p8.x']:
-        fig.add_trace(go.Scatter(x=VideoData1['Seconds'], y=VideoData1[col], mode='lines', name=col), row=3, col=1)
-
-    # Row 4: Plot p.y coordinates for p1 to p8
-    for col in ['p1.y', 'p2.y', 'p3.y', 'p4.y', 'p5.y', 'p6.y', 'p7.y', 'p8.y']:
-        fig.add_trace(go.Scatter(x=VideoData1['Seconds'], y=VideoData1[col], mode='lines', name=col), row=4, col=1)
-
-    fig.update_layout(
-        height=1200,
-        title_text="Time series subplots for coordinates",
-        showlegend=True
-    )
-    fig.update_xaxes(title_text="Seconds", row=4, col=1)
-    fig.update_yaxes(title_text="X Position", row=1, col=1)
-    fig.update_yaxes(title_text="Y Position", row=2, col=1)
-    fig.update_yaxes(title_text="X Position", row=3, col=1)
-    fig.update_yaxes(title_text="Y Position", row=4, col=1)
-
-    fig.show(renderer='browser')
-
-# %%
-columns_of_interest = ['left', 'right', 'center', 'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8']
-
-# Filter out NaN values and calculate the min and max values for X and Y coordinates
-x_min = min([coordinates_dict[f'{col}.x'][~np.isnan(coordinates_dict[f'{col}.x'])].min() for col in columns_of_interest])
-x_max = max([coordinates_dict[f'{col}.x'][~np.isnan(coordinates_dict[f'{col}.x'])].max() for col in columns_of_interest])
-y_min = min([coordinates_dict[f'{col}.y'][~np.isnan(coordinates_dict[f'{col}.y'])].min() for col in columns_of_interest])
-y_max = max([coordinates_dict[f'{col}.y'][~np.isnan(coordinates_dict[f'{col}.y'])].max() for col in columns_of_interest])
-
-fig, ax = plt.subplots(nrows=1, ncols=2, figsize=(15, 7))
-
-# Plot left, right, and center in the first plot
-ax[0].set_title('left, right, center')
-ax[0].scatter(coordinates_dict['left.x'], coordinates_dict['left.y'], color='black', label='left', s=10)
-ax[0].scatter(coordinates_dict['right.x'], coordinates_dict['right.y'], color='grey', label='right', s=10)
-ax[0].scatter(coordinates_dict['center.x'], coordinates_dict['center.y'], color='red', label='center', s=10)
-ax[0].set_xlim([x_min, x_max])
-ax[0].set_ylim([y_min, y_max])
-ax[0].set_xlabel('x coordinates (pixels)')
-ax[0].set_ylabel('y coordinates (pixels)')
-ax[0].legend(loc='upper right')
-
-# Plot p1 to p8 in the second plot with different colors and smaller markers
-colors = ['blue', 'green', 'red', 'cyan', 'magenta', 'yellow', 'black', 'orange']
-for idx, col in enumerate(columns_of_interest[3:]):
-    ax[1].scatter(coordinates_dict[f'{col}.x'], coordinates_dict[f'{col}.y'], color=colors[idx], label=col, s=5)
-
-ax[1].set_xlim([x_min, x_max])
-ax[1].set_ylim([y_min, y_max])
-ax[1].set_title('p1 to p8')
-ax[1].set_xlabel('x coordinates (pixels)')
-ax[1].set_ylabel('y coordinates (pixels)')
-ax[1].legend(loc='upper right')
-
-plt.tight_layout()
-plt.show()
-
-
-# %%
-############################################################################################################
-# deal with frames where all points are NaN
-############################################################################################################
-
-columns_of_interest = ['left.x','left.y','center.x','center.y','right.x','right.y','p1.x','p1.y','p2.x','p2.y','p3.x','p3.y','p4.x','p4.y','p5.x','p5.y','p6.x','p6.y','p7.x','p7.y','p8.x','p8.y']
-
-all_nan_df = VideoData1[VideoData1[columns_of_interest].isnull().all(1)]
-all_nan_index_array = all_nan_df.index.values
-
-# print the groups of sequential NaNs
-group_counts = {'1-5': 0, '6-10': 0, '>10': 0}
-i = 1
-for group in lp.find_sequential_groups(all_nan_index_array):
-    #print(f'NaN frame group {i} with {len(group)} elements')
-    if 1 <= len(group) <= 5:
-        group_counts['1-5'] += 1
-    elif 6 <= len(group) <= 10:
-        group_counts['6-10'] += 1
-    else:
-        group_counts['>10'] += 1
-        print(f'⚠️ Framegroup {i} has {len(group)} consecutive all NaN frames  with indices {group}. If this is a long group, consider checking the data.')
-    i += 1
-
-print(f"Framegroups with 1-5 consecutive all NaN frames: {group_counts['1-5']}")
-print(f"Framegroups with 6-10 consecutive all NaN frames: {group_counts['6-10']}")
-print(f"Framegroups with >10 consecutive all NaN frames: {group_counts['>10']}")
-
-############################################################################################################
-# check if we can use some filtering on scores to remove bad frames
-############################################################################################################
-
-score_cutoff = 0.2
-columns_of_interest = ['left.score','center.score','right.score','p1.score','p2.score','p3.score','p4.score','p5.score','p6.score','p7.score','p8.score']
-total_points = len(VideoData1)
-print(f'\nℹ️ Number of frames and consequitve sequences below {score_cutoff} confidence score.')
-
-for col in columns_of_interest:
-    count_below_threshold = (VideoData1[col] < score_cutoff).sum()
-    percentage_below_threshold = (count_below_threshold / total_points) * 100
-    
-    # Find the longest consecutive series below threshold
-    below_threshold = VideoData1[col] < score_cutoff
-    longest_series = 0
-    current_series = 0
-    
-    for value in below_threshold:
-        if value:
-            current_series += 1
-            if current_series > longest_series:
-                longest_series = current_series
+if manual_blinks_v1_path.exists():
+    try:
+        manual_blinks_df_v1 = pd.read_csv(manual_blinks_v1_path)
+        # Expected columns: blink_number, start_frame, end_frame
+        if all(col in manual_blinks_df_v1.columns for col in ['blink_number', 'start_frame', 'end_frame']):
+            manual_blinks_v1 = [
+                {'num': int(row['blink_number']), 'start': int(row['start_frame']), 'end': int(row['end_frame'])}
+                for _, row in manual_blinks_df_v1.iterrows()
+            ]
+            print(f"✅ Loaded {len(manual_blinks_v1)} manual blinks for VideoData1 from {manual_blinks_v1_path.name}")
         else:
-            current_series = 0
-    
-    print(f"Column: {col} | Values below {score_cutoff}: {count_below_threshold} ({percentage_below_threshold:.2f}%) | Longest consecutive frame series: {longest_series}")
+            print(f"⚠️ WARNING: {manual_blinks_v1_path.name} exists but doesn't have expected columns (blink_number, start_frame, end_frame)")
+    except Exception as e:
+        print(f"⚠️ WARNING: Failed to load {manual_blinks_v1_path.name}: {e}")
 
-
-
-# %% [markdown]
-# ### SLEAP processing
-
-# %%
-############################################################################################################
-# center coordinates on median pupil centre 
-############################################################################################################
+if manual_blinks_v2_path.exists():
+    try:
+        manual_blinks_df_v2 = pd.read_csv(manual_blinks_v2_path)
+        # Expected columns: blink_number, start_frame, end_frame
+        if all(col in manual_blinks_df_v2.columns for col in ['blink_number', 'start_frame', 'end_frame']):
+            manual_blinks_v2 = [
+                {'num': int(row['blink_number']), 'start': int(row['start_frame']), 'end': int(row['end_frame'])}
+                for _, row in manual_blinks_df_v2.iterrows()
+            ]
+            print(f"✅ Loaded {len(manual_blinks_v2)} manual blinks for VideoData2 from {manual_blinks_v2_path.name}")
+        else:
+            print(f"⚠️ WARNING: {manual_blinks_v2_path.name} exists but doesn't have expected columns (blink_number, start_frame, end_frame)")
+    except Exception as e:
+        print(f"⚠️ WARNING: Failed to load {manual_blinks_v2_path.name}: {e}")
 
 columns_of_interest = ['left.x','left.y','center.x','center.y','right.x','right.y','p1.x','p1.y','p2.x','p2.y','p3.x','p3.y','p4.x','p4.y','p5.x','p5.y','p6.x','p6.y','p7.x','p7.y','p8.x','p8.y']
 
-# Calculate the mean of the center x and y points
-mean_center_x = VideoData1['center.x'].median()
-mean_center_y = VideoData1['center.y'].median()
+if VideoData1_Has_Sleap:
+    VideoData1 = VideoData1.drop(columns=['track']) # drop the track column as it is empty
+    coordinates_dict1_raw=lp.get_coordinates_dict(VideoData1, columns_of_interest)
+    FPS_1 = 1 / VideoData1["Seconds"].diff().mean()  # frame rate for VideoData1 TODO where to save it, is it useful?
+    print ()
+    print(f"{get_eye_label('VideoData1')}: FPS = {FPS_1}")
 
-print(f"Mean center.x: {mean_center_x}, Mean center.y: {mean_center_y}")
+if VideoData2_Has_Sleap:
+    VideoData2 = VideoData2.drop(columns=['track']) # drop the track column as it is empty
+    coordinates_dict2_raw=lp.get_coordinates_dict(VideoData2, columns_of_interest)
+    FPS_2 = 1 / VideoData2["Seconds"].diff().mean()  # frame rate for VideoData2
+    print(f"{get_eye_label('VideoData2')}: FPS = {FPS_2}")
 
-# Translate the coordinates
-for col in columns_of_interest:
-    if '.x' in col:
-        VideoData1[col] = VideoData1[col] - mean_center_x
-    elif '.y' in col:
-        VideoData1[col] = VideoData1[col] - mean_center_y
-
-############################################################################################################
-# remove outliers (x times SD) and interpolate between the previous and subsequent non-NaN value
-############################################################################################################
-
-# Calculate the standard deviation for each column of interest
-std_devs = {col: VideoData1[col].std() for col in columns_of_interest}
-
-# Calculate the number of outliers for each column
-outliers = {col: ((VideoData1[col] - VideoData1[col].mean()).abs() > 10 * std_devs[col]).sum() for col in columns_of_interest}
-
-# Find the channel with the maximum number of outliers
-max_outliers_channel = max(outliers, key=outliers.get)
-max_outliers_count = outliers[max_outliers_channel]
-
-# Print the channel with the maximum number of outliers and the number
-print(f"Channel with the maximum number of outliers: {max_outliers_channel}, Number of outliers: {max_outliers_count}")
-
-# Print the total number of outliers
-total_outliers = sum(outliers.values())
-print(f"A total number of {total_outliers} outliers will be replaced by interpolation")
-
-# Replace outliers by interpolating between the previous and subsequent non-NaN value
-for col in columns_of_interest:
-    outlier_indices = VideoData1[((VideoData1[col] - VideoData1[col].mean()).abs() > outlier_sd_threshold * std_devs[col])].index
-    VideoData1.loc[outlier_indices, col] = np.nan
-
-#VideoData1.interpolate(inplace=True)
-VideoData1 = VideoData1.interpolate(method='linear', limit_direction='both')
 
 # %%
+# plot timeseries of coordinates in browser for both VideoData1 and VideoData2
 ############################################################################################################
-# plot timeseries of coordinates in borwser 
-############################################################################################################
+if plot_QC_timeseries:
+    print(f'⚠️ Check for long discontinuities and outliers in the data, we will try to deal with them later')
+    print(f'ℹ️ Figures open in browser window, takes a bit of time.')
 
-if plot_timeseries:
-    print(f'⚠️ Check for long discontinouties and outsiders in the data, we will try to deal with them later')
-    print(f'ℹ️ Figure opens in browser window, takes a bit of time.')
-    fig = make_subplots(
-        rows=4, cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.05,
-        subplot_titles=(
-            "X coordinates for pupil centre add left-right eye corner",
-            "Y coordinates for pupil centre add left-right eye corner",
-            "X coordinates for iris points",
-            "Y coordinates for iris points"
+    # Helper list variables
+    subplot_titles = (
+        "X coordinates for pupil centre and left-right eye corner",
+        "Y coordinates for pupil centre and left-right eye corner",
+        "X coordinates for iris points",
+        "Y coordinates for iris points"
+    )
+    eye_x = ['left.x', 'center.x', 'right.x']
+    eye_y = ['left.y', 'center.y', 'right.y']
+    iris_x = ['p1.x', 'p2.x', 'p3.x', 'p4.x', 'p5.x', 'p6.x', 'p7.x', 'p8.x']
+    iris_y = ['p1.y', 'p2.y', 'p3.y', 'p4.y', 'p5.y', 'p6.y', 'p7.y', 'p8.y']
+
+    # --- VideoData1 ---
+    if VideoData1_Has_Sleap:
+        fig1 = make_subplots(
+            rows=4, cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.05,
+            subplot_titles=subplot_titles
         )
-    )
 
-    # Row 1: Plot left.x, center.x, right.x
-    fig.add_trace(go.Scatter(x=VideoData1['Seconds'], y=VideoData1['left.x'], mode='lines', name='left.x'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=VideoData1['Seconds'], y=VideoData1['center.x'], mode='lines', name='center.x'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=VideoData1['Seconds'], y=VideoData1['right.x'], mode='lines', name='right.x'), row=1, col=1)
+        # Row 1: left.x, center.x, right.x
+        for col in eye_x:
+            fig1.add_trace(go.Scatter(x=VideoData1['Seconds'], y=VideoData1[col], mode='lines', name=col), row=1, col=1)
+        # Row 2: left.y, center.y, right.y
+        for col in eye_y:
+            fig1.add_trace(go.Scatter(x=VideoData1['Seconds'], y=VideoData1[col], mode='lines', name=col), row=2, col=1)
+        # Row 3: p1.x ... p8.x
+        for col in iris_x:
+            fig1.add_trace(go.Scatter(x=VideoData1['Seconds'], y=VideoData1[col], mode='lines', name=col), row=3, col=1)
+        # Row 4: p1.y ... p8.y
+        for col in iris_y:
+            fig1.add_trace(go.Scatter(x=VideoData1['Seconds'], y=VideoData1[col], mode='lines', name=col), row=4, col=1)
 
-    # Row 2: Plot left.y, center.y, right.y
-    fig.add_trace(go.Scatter(x=VideoData1['Seconds'], y=VideoData1['left.y'], mode='lines', name='left.y'), row=2, col=1)
-    fig.add_trace(go.Scatter(x=VideoData1['Seconds'], y=VideoData1['center.y'], mode='lines', name='center.y'), row=2, col=1)
-    fig.add_trace(go.Scatter(x=VideoData1['Seconds'], y=VideoData1['right.y'], mode='lines', name='right.y'), row=2, col=1)
+        fig1.update_layout(
+            height=1200,
+            title_text=f"Time series subplots for coordinates [{get_eye_label('VideoData1')}]",
+            showlegend=True
+        )
+        fig1.update_xaxes(title_text="Seconds", row=4, col=1)
+        fig1.update_yaxes(title_text="X Position", row=1, col=1)
+        fig1.update_yaxes(title_text="Y Position", row=2, col=1)
+        fig1.update_yaxes(title_text="X Position", row=3, col=1)
+        fig1.update_yaxes(title_text="Y Position", row=4, col=1)
 
-    # Row 3: Plot p.x coordinates for p1 to p8
-    for col in ['p1.x', 'p2.x', 'p3.x', 'p4.x', 'p5.x', 'p6.x', 'p7.x', 'p8.x']:
-        fig.add_trace(go.Scatter(x=VideoData1['Seconds'], y=VideoData1[col], mode='lines', name=col), row=3, col=1)
+        fig1.show(renderer='browser')
 
-    # Row 4: Plot p.y coordinates for p1 to p8
-    for col in ['p1.y', 'p2.y', 'p3.y', 'p4.y', 'p5.y', 'p6.y', 'p7.y', 'p8.y']:
-        fig.add_trace(go.Scatter(x=VideoData1['Seconds'], y=VideoData1[col], mode='lines', name=col), row=4, col=1)
+    # --- VideoData2 ---
+    if VideoData2_Has_Sleap:
+        fig2 = make_subplots(
+            rows=4, cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.05,
+            subplot_titles=subplot_titles
+        )
+        # Row 1: left.x, center.x, right.x
+        for col in eye_x:
+            fig2.add_trace(go.Scatter(x=VideoData2['Seconds'], y=VideoData2[col], mode='lines', name=col), row=1, col=1)
+        # Row 2: left.y, center.y, right.y
+        for col in eye_y:
+            fig2.add_trace(go.Scatter(x=VideoData2['Seconds'], y=VideoData2[col], mode='lines', name=col), row=2, col=1)
+        # Row 3: p1.x ... p8.x
+        for col in iris_x:
+            fig2.add_trace(go.Scatter(x=VideoData2['Seconds'], y=VideoData2[col], mode='lines', name=col), row=3, col=1)
+        # Row 4: p1.y ... p8.y
+        for col in iris_y:
+            fig2.add_trace(go.Scatter(x=VideoData2['Seconds'], y=VideoData2[col], mode='lines', name=col), row=4, col=1)
 
-    fig.update_layout(
-        height=1200,
-        title_text="Time series subplots for coordinates",
-        showlegend=True
-    )
-    fig.update_xaxes(title_text="Seconds", row=4, col=1)
-    fig.update_yaxes(title_text="X Position", row=1, col=1)
-    fig.update_yaxes(title_text="Y Position", row=2, col=1)
-    fig.update_yaxes(title_text="X Position", row=3, col=1)
-    fig.update_yaxes(title_text="Y Position", row=4, col=1)
+        fig2.update_layout(
+            height=1200,
+            title_text=f"Time series subplots for coordinates [{get_eye_label('VideoData2')}]",
+            showlegend=True
+        )
+        fig2.update_xaxes(title_text="Seconds", row=4, col=1)
+        fig2.update_yaxes(title_text="X Position", row=1, col=1)
+        fig2.update_yaxes(title_text="Y Position", row=2, col=1)
+        fig2.update_yaxes(title_text="X Position", row=3, col=1)
+        fig2.update_yaxes(title_text="Y Position", row=4, col=1)
 
-    fig.show(renderer='browser')
+        fig2.show(renderer='browser')
 
 # %%
-columns_of_interest = ['left.x','left.y','center.x','center.y','right.x','right.y','p1.x','p1.y','p2.x','p2.y','p3.x','p3.y','p4.x','p4.y','p5.x','p5.y','p6.x','p6.y','p7.x','p7.y','p8.x','p8.y']
-coordinates_dict=lp.get_coordinates_dict(VideoData1, columns_of_interest)
+# QC plot XY coordinate distributions to visualize outliers 
+############################################################################################################
 
 columns_of_interest = ['left', 'right', 'center', 'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8']
 
-# Filter out NaN values and calculate the min and max values for X and Y coordinates
-x_min = min([coordinates_dict[f'{col}.x'][~np.isnan(coordinates_dict[f'{col}.x'])].min() for col in columns_of_interest])
-x_max = max([coordinates_dict[f'{col}.x'][~np.isnan(coordinates_dict[f'{col}.x'])].max() for col in columns_of_interest])
-y_min = min([coordinates_dict[f'{col}.y'][~np.isnan(coordinates_dict[f'{col}.y'])].min() for col in columns_of_interest])
-y_max = max([coordinates_dict[f'{col}.y'][~np.isnan(coordinates_dict[f'{col}.y'])].max() for col in columns_of_interest])
+# Filter out NaN values and calculate the min and max values for X and Y coordinates for both dict1 and dict2
 
-fig, ax = plt.subplots(nrows=1, ncols=2, figsize=(15, 7))
+def min_max_dict(coordinates_dict):
+    x_min = min([coordinates_dict[f'{col}.x'][~np.isnan(coordinates_dict[f'{col}.x'])].min() for col in columns_of_interest])
+    x_max = max([coordinates_dict[f'{col}.x'][~np.isnan(coordinates_dict[f'{col}.x'])].max() for col in columns_of_interest])
+    y_min = min([coordinates_dict[f'{col}.y'][~np.isnan(coordinates_dict[f'{col}.y'])].min() for col in columns_of_interest])
+    y_max = max([coordinates_dict[f'{col}.y'][~np.isnan(coordinates_dict[f'{col}.y'])].max() for col in columns_of_interest])
+    return x_min, x_max, y_min, y_max
 
-# Plot left, right, and center in the first plot
-ax[0].set_title('left, right, center')
-ax[0].scatter(coordinates_dict['left.x'], coordinates_dict['left.y'], color='black', label='left', s=10)
-ax[0].scatter(coordinates_dict['right.x'], coordinates_dict['right.y'], color='grey', label='right', s=10)
-ax[0].scatter(coordinates_dict['center.x'], coordinates_dict['center.y'], color='red', label='center', s=10)
-ax[0].set_xlim([x_min, x_max])
-ax[0].set_ylim([y_min, y_max])
-ax[0].set_xlabel('x coordinates (pixels)')
-ax[0].set_ylabel('y coordinates (pixels)')
-ax[0].legend(loc='upper right')
+# Only plot panels for 1 and 2 if VideoData1_Has_Sleap and/or VideoData2_Has_Sleap are true
 
-# Plot p1 to p8 in the second plot with different colors and smaller markers
+# Compute min/max as before for global axes limits
+if VideoData1_Has_Sleap:
+    x_min1, x_max1, y_min1, y_max1 = pf.min_max_dict(coordinates_dict1_raw, columns_of_interest)
+if VideoData2_Has_Sleap:
+    x_min2, x_max2, y_min2, y_max2 = pf.min_max_dict(coordinates_dict2_raw, columns_of_interest)
+
+# Use global min and max for consistency only if both VideoData1_Has_Sleap and VideoData2_Has_Sleap are True
+if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
+    x_min = min(x_min1, x_min2)
+    x_max = max(x_max1, x_max2)
+    y_min = min(y_min1, y_min2)
+    y_max = max(y_max1, y_max2)
+elif VideoData1_Has_Sleap:
+    x_min, x_max, y_min, y_max = x_min1, x_max1, y_min1, y_max1
+elif VideoData2_Has_Sleap:
+    x_min, x_max, y_min, y_max = x_min2, x_max2, y_min2, y_max2
+else:
+    raise ValueError("Neither VideoData1 nor VideoData2 has Sleap data available.")
+
+# Create the figure and axes
+fig, ax = plt.subplots(nrows=2, ncols=2, figsize=(18, 12))
+fig.suptitle(
+    f"XY coordinate distribution of different points for {get_eye_label('VideoData1')} and {get_eye_label('VideoData2')} before outlier removal and NaN interpolation", 
+    fontsize=14
+)
+
+# Define colormap for p1-p8
 colors = ['blue', 'green', 'red', 'cyan', 'magenta', 'yellow', 'black', 'orange']
-for idx, col in enumerate(columns_of_interest[3:]):
-    ax[1].scatter(coordinates_dict[f'{col}.x'], coordinates_dict[f'{col}.y'], color=colors[idx], label=col, s=5)
 
-ax[1].set_xlim([x_min, x_max])
-ax[1].set_ylim([y_min, y_max])
-ax[1].set_title('p1 to p8')
-ax[1].set_xlabel('x coordinates (pixels)')
-ax[1].set_ylabel('y coordinates (pixels)')
-ax[1].legend(loc='upper right')
+# Panel 1: left, right, center (dict1)
+if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
+    ax[0, 0].set_title(f"{get_eye_label('VideoData1')}: left, right, center")
+    ax[0, 0].scatter(coordinates_dict1_raw['left.x'], coordinates_dict1_raw['left.y'], color='black', label='left', s=10)
+    ax[0, 0].scatter(coordinates_dict1_raw['right.x'], coordinates_dict1_raw['right.y'], color='grey', label='right', s=10)
+    ax[0, 0].scatter(coordinates_dict1_raw['center.x'], coordinates_dict1_raw['center.y'], color='red', label='center', s=10)
+    ax[0, 0].set_xlim([x_min, x_max])
+    ax[0, 0].set_ylim([y_min, y_max])
+    ax[0, 0].set_xlabel('x coordinates (pixels)')
+    ax[0, 0].set_ylabel('y coordinates (pixels)')
+    ax[0, 0].legend(loc='upper right')
+else:
+    ax[0, 0].axis('off')
 
-plt.tight_layout()
+# Panel 2: p1 to p8 (dict1)
+if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
+    ax[0, 1].set_title(f"{get_eye_label('VideoData1')}: p1 to p8")
+    for idx, col in enumerate(columns_of_interest[3:]):
+        ax[0, 1].scatter(coordinates_dict1_raw[f'{col}.x'], coordinates_dict1_raw[f'{col}.y'], color=colors[idx], label=col, s=5)
+    ax[0, 1].set_xlim([x_min, x_max])
+    ax[0, 1].set_ylim([y_min, y_max])
+    ax[0, 1].set_xlabel('x coordinates (pixels)')
+    ax[0, 1].set_ylabel('y coordinates (pixels)')
+    ax[0, 1].legend(loc='upper right')
+else:
+    ax[0, 1].axis('off')
+
+# Panel 3: left, right, center (dict2)
+if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
+    ax[1, 0].set_title(f"{get_eye_label('VideoData2')}: left, right, center")
+    ax[1, 0].scatter(coordinates_dict2_raw['left.x'], coordinates_dict2_raw['left.y'], color='black', label='left', s=10)
+    ax[1, 0].scatter(coordinates_dict2_raw['right.x'], coordinates_dict2_raw['right.y'], color='grey', label='right', s=10)
+    ax[1, 0].scatter(coordinates_dict2_raw['center.x'], coordinates_dict2_raw['center.y'], color='red', label='center', s=10)
+    ax[1, 0].set_xlim([x_min, x_max])
+    ax[1, 0].set_ylim([y_min, y_max])
+    ax[1, 0].set_xlabel('x coordinates (pixels)')
+    ax[1, 0].set_ylabel('y coordinates (pixels)')
+    ax[1, 0].legend(loc='upper right')
+else:
+    ax[1, 0].axis('off')
+
+# Panel 4: p1 to p8 (dict2)
+if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
+    ax[1, 1].set_title(f"{get_eye_label('VideoData2')}: p1 to p8")
+    for idx, col in enumerate(columns_of_interest[3:]):
+        ax[1, 1].scatter(coordinates_dict2_raw[f'{col}.x'], coordinates_dict2_raw[f'{col}.y'], color=colors[idx], label=col, s=5)
+    ax[1, 1].set_xlim([x_min, x_max])
+    ax[1, 1].set_ylim([y_min, y_max])
+    ax[1, 1].set_xlabel('x coordinates (pixels)')
+    ax[1, 1].set_ylabel('y coordinates (pixels)')
+    ax[1, 1].legend(loc='upper right')
+else:
+    ax[1, 1].axis('off')
+
+plt.tight_layout(rect=[0, 0.03, 1, 0.96])
+plt.show()
+
+
+# %%
+# Center coordinates, filter low-confidence points, remove outliers, and interpolate
+############################################################################################################
+
+# Detect and print confidence scores analysis (runs before any filtering)
+#########
+
+score_columns = ['left.score','center.score','right.score','p1.score','p2.score','p3.score','p4.score','p5.score','p6.score','p7.score','p8.score']
+
+# VideoData1 confidence score analysis
+if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
+    total_points1 = len(VideoData1)
+    print(f'\nℹ️ VideoData1 - Top 3 columns with most frames below {score_cutoff} confidence score:')
+
+    video1_stats = []
+    for col in score_columns:
+        if col in VideoData1.columns:
+            count_below = (VideoData1[col] < score_cutoff).sum()
+            pct_below = (count_below / total_points1) * 100 if total_points1 > 0 else 0
+
+            below_mask = VideoData1[col] < score_cutoff
+            longest = 0
+            run = 0
+            for val in below_mask:
+                if val:
+                    run += 1
+                    if run > longest:
+                        longest = run
+                else:
+                    run = 0
+            video1_stats.append((col, count_below, pct_below, longest))
+
+    video1_stats.sort(key=lambda x: x[1], reverse=True)
+    for i, (col, count, pct, longest) in enumerate(video1_stats[:3]):
+        print(f"VideoData1 - #{i+1}: {col} | Values below {score_cutoff}: {count} ({pct:.2f}%) | Longest consecutive frame series: {longest}")
+
+# VideoData2 confidence score analysis
+if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
+    total_points2 = len(VideoData2)
+    print(f'\nℹ️ VideoData2 - Top 3 columns with most frames below {score_cutoff} confidence score:')
+
+    video2_stats = []
+    for col in score_columns:
+        if col in VideoData2.columns:
+            count_below = (VideoData2[col] < score_cutoff).sum()
+            pct_below = (count_below / total_points2) * 100 if total_points2 > 0 else 0
+
+            below_mask = VideoData2[col] < score_cutoff
+            longest = 0
+            run = 0
+            for val in below_mask:
+                if val:
+                    run += 1
+                    if run > longest:
+                        longest = run
+                else:
+                    run = 0
+            video2_stats.append((col, count_below, pct_below, longest))
+
+    video2_stats.sort(key=lambda x: x[1], reverse=True)
+    for i, (col, count, pct, longest) in enumerate(video2_stats[:3]):
+        print(f"VideoData2 - #{i+1}: {col} | Values below {score_cutoff}: {count} ({pct:.2f}%) | Longest consecutive frame series: {longest}")
+
+
+## Center coordinates to the median pupil centre
+columns_of_interest = ['left.x','left.y','center.x','center.y','right.x','right.y','p1.x','p1.y','p2.x','p2.y','p3.x','p3.y','p4.x','p4.y','p5.x','p5.y','p6.x','p6.y','p7.x','p7.y','p8.x','p8.y']
+
+print ()
+print("=== Centering coordinates to the median pupil centre ===")
+# VideoData1 processing
+if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
+    # Calculate the mean of the center x and y points
+    mean_center_x1 = VideoData1['center.x'].median()
+    mean_center_y1 = VideoData1['center.y'].median()
+
+    print(f"{get_eye_label('VideoData1')} - Centering on median pupil centre: \nMean center.x: {mean_center_x1}, Mean center.y: {mean_center_y1}")
+
+    # Translate the coordinates
+    for col in columns_of_interest:
+        if '.x' in col:
+            VideoData1[col] = VideoData1[col] - mean_center_x1
+        elif '.y' in col:
+            VideoData1[col] = VideoData1[col] - mean_center_y1
+
+    VideoData1_centered = VideoData1.copy()
+
+# VideoData2 processing
+if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
+    # Calculate the mean of the center x and y points
+    mean_center_x2 = VideoData2['center.x'].median()
+    mean_center_y2 = VideoData2['center.y'].median()
+
+    print(f"{get_eye_label('VideoData2')} - Centering on median pupil centre: \nMean center.x: {mean_center_x2}, Mean center.y: {mean_center_y2}")
+
+    # Translate the coordinates
+    for col in columns_of_interest:
+        if '.x' in col:
+            VideoData2[col] = VideoData2[col] - mean_center_x2
+        elif '.y' in col:
+            VideoData2[col] = VideoData2[col] - mean_center_y2
+
+    VideoData2_centered = VideoData2.copy()
+
+############################################################################################################
+# remove low confidence points (score < threshold)
+############################################################################################################
+if not NaNs_removed:
+    print("\n=== Score-based Filtering - point scores below threshold are replaced by interpolation ===")
+    print(f"Score threshold: {score_cutoff}")
+    # List of point names (without .x, .y, .score)
+    point_names = ['left', 'right', 'center', 'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8']
+
+    # VideoData1 score-based filtering
+    if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
+        total_low_score1 = 0
+        low_score_counts1 = {}
+        for point in point_names:
+            if f'{point}.score' in VideoData1.columns:
+                # Find indices where score is below threshold
+                low_score_mask = VideoData1[f'{point}.score'] < score_cutoff
+                low_score_count = low_score_mask.sum()
+                low_score_counts1[f'{point}.x'] = low_score_count
+                low_score_counts1[f'{point}.y'] = low_score_count
+                total_low_score1 += low_score_count * 2  # *2 because we're removing both x and y
+                
+                # Set x and y to NaN for low confidence points
+                VideoData1.loc[low_score_mask, f'{point}.x'] = np.nan
+                VideoData1.loc[low_score_mask, f'{point}.y'] = np.nan
+        
+        # Find the channel with the maximum number of low-score points
+        max_low_score_channel1 = max(low_score_counts1, key=low_score_counts1.get)
+        max_low_score_count1 = low_score_counts1[max_low_score_channel1]
+        
+        # Print the channel with the maximum number of low-score points
+        print(f"{get_eye_label('VideoData1')} - Channel with the maximum number of low-confidence points: {max_low_score_channel1}, Number of low-confidence points: {max_low_score_count1}")
+        print(f"{get_eye_label('VideoData1')} - A total number of {total_low_score1} low-confidence coordinate values were replaced by interpolation")
+
+    # VideoData2 score-based filtering
+    if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
+        total_low_score2 = 0
+        low_score_counts2 = {}
+        for point in point_names:
+            if f'{point}.score' in VideoData2.columns:
+                # Find indices where score is below threshold
+                low_score_mask = VideoData2[f'{point}.score'] < score_cutoff
+                low_score_count = low_score_mask.sum()
+                low_score_counts2[f'{point}.x'] = low_score_count
+                low_score_counts2[f'{point}.y'] = low_score_count
+                total_low_score2 += low_score_count * 2  # *2 because we're removing both x and y
+                
+                # Set x and y to NaN for low confidence points
+                VideoData2.loc[low_score_mask, f'{point}.x'] = np.nan
+                VideoData2.loc[low_score_mask, f'{point}.y'] = np.nan
+        
+        # Find the channel with the maximum number of low-score points
+        max_low_score_channel2 = max(low_score_counts2, key=low_score_counts2.get)
+        max_low_score_count2 = low_score_counts2[max_low_score_channel2]
+        
+        # Print the channel with the maximum number of low-score points
+        print(f"{get_eye_label('VideoData2')} - Channel with the maximum number of low-confidence points: {max_low_score_channel2}, Number of low-confidence points: {max_low_score_count2}")
+        print(f"{get_eye_label('VideoData2')} - A total number of {total_low_score2} low-confidence coordinate values were replaced by interpolation")
+
+    ############################################################################################################
+    # remove outliers (x times SD)
+    # then interpolates on all NaN values (skipped frames, low confidence inference points, outliers)
+    ############################################################################################################
+
+    print("\n=== Outlier Analysis - outlier points are replaced by interpolation ===")
+
+    # VideoData1 outlier analysis and interpolation
+    if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
+        # Calculate the standard deviation for each column of interest
+        std_devs1 = {col: VideoData1[col].std() for col in columns_of_interest}
+
+        # Calculate the number of outliers for each column
+        outliers1 = {col: ((VideoData1[col] - VideoData1[col].mean()).abs() > outlier_sd_threshold * std_devs1[col]).sum() for col in columns_of_interest}
+
+        # Find the channel with the maximum number of outliers
+        max_outliers_channel1 = max(outliers1, key=outliers1.get)
+        max_outliers_count1 = outliers1[max_outliers_channel1]
+
+        # Print the channel with the maximum number of outliers and the number
+        print(f"{get_eye_label('VideoData1')} - Channel with the maximum number of outliers: {max_outliers_channel1}, Number of outliers: {max_outliers_count1}")
+
+        # Print the total number of outliers
+        total_outliers1 = sum(outliers1.values())
+        print(f"{get_eye_label('VideoData1')} - A total number of {total_outliers1} outliers were replaced by interpolation")
+
+        # Replace outliers by interpolating between the previous and subsequent non-NaN value
+        for col in columns_of_interest:
+            outlier_indices = VideoData1[((VideoData1[col] - VideoData1[col].mean()).abs() > outlier_sd_threshold * std_devs1[col])].index
+            VideoData1.loc[outlier_indices, col] = np.nan
+
+        #VideoData1.interpolate(inplace=True)
+        VideoData1 = VideoData1.interpolate(method='linear', limit_direction='both')
+
+    # VideoData2 outlier analysis and interpolation
+    if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
+        # Calculate the standard deviation for each column of interest
+        std_devs2 = {col: VideoData2[col].std() for col in columns_of_interest}
+
+        # Calculate the number of outliers for each column
+        outliers2 = {col: ((VideoData2[col] - VideoData2[col].mean()).abs() > outlier_sd_threshold * std_devs2[col]).sum() for col in columns_of_interest}
+
+        # Find the channel with the maximum number of outliers
+        max_outliers_channel2 = max(outliers2, key=outliers2.get)
+        max_outliers_count2 = outliers2[max_outliers_channel2]
+
+        # Print the channel with the maximum number of outliers and the number
+        print(f"{get_eye_label('VideoData2')} - Channel with the maximum number of outliers: {max_outliers_channel2}, Number of outliers: {max_outliers_count2}")
+
+        # Print the total number of outliers
+        total_outliers2 = sum(outliers2.values())
+        print(f"{get_eye_label('VideoData2')} - A total number of {total_outliers2} outliers were replaced by interpolation")
+
+        # Replace outliers by interpolating between the previous and subsequent non-NaN value
+        for col in columns_of_interest:
+            outlier_indices = VideoData2[((VideoData2[col] - VideoData2[col].mean()).abs() > outlier_sd_threshold * std_devs2[col])].index
+            VideoData2.loc[outlier_indices, col] = np.nan
+
+        #VideoData2.interpolate(inplace=True)
+        VideoData2 = VideoData2.interpolate(method='linear', limit_direction='both')
+
+    # Set flag after both VideoData1 and VideoData2 processing is complete
+    NaNs_removed = True
+else:
+    print("=== Interpolation already done, skipping ===")
+
+
+# %%
+# QC: Detect and print confidence scores analysis
+############################################################################################################
+
+columns_of_interest = ['left.score','center.score','right.score','p1.score','p2.score','p3.score','p4.score','p5.score','p6.score','p7.score','p8.score']
+
+# VideoData1 confidence score analysis
+if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
+    total_points1 = len(VideoData1)
+    print(f'\nℹ️ VideoData1 - Top 3 columns with most frames below {score_cutoff} confidence score:')
+
+    # Calculate statistics for all columns
+    video1_stats = []
+    for col in columns_of_interest:
+        count_below_threshold = (VideoData1[col] < score_cutoff).sum()
+        percentage_below_threshold = (count_below_threshold / total_points1) * 100
+
+        # Find the longest consecutive series below threshold
+        below_threshold = VideoData1[col] < score_cutoff
+        longest_series = 0
+        current_series = 0
+
+        for value in below_threshold:
+            if value:
+                current_series += 1
+                if current_series > longest_series:
+                    longest_series = current_series
+            else:
+                current_series = 0
+
+        video1_stats.append((col, count_below_threshold, percentage_below_threshold, longest_series))
+
+    # Sort by count_below_threshold and show top 3
+    video1_stats.sort(key=lambda x: x[1], reverse=True)
+    for i, (col, count, percentage, longest) in enumerate(video1_stats[:3]):
+        print(f"VideoData1 - #{i+1}: {col} | Values below {score_cutoff}: {count} ({percentage:.2f}%) | Longest consecutive frame series: {longest}")
+
+# VideoData2 confidence score analysis
+if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
+    total_points2 = len(VideoData2)
+    print(f'\nℹ️ VideoData2 - Top 3 columns with most frames below {score_cutoff} confidence score:')
+
+    # Calculate statistics for all columns
+    video2_stats = []
+    for col in columns_of_interest:
+        count_below_threshold = (VideoData2[col] < score_cutoff).sum()
+        percentage_below_threshold = (count_below_threshold / total_points2) * 100
+        
+        # Find the longest consecutive series below threshold
+        below_threshold = VideoData2[col] < score_cutoff
+        longest_series = 0
+        current_series = 0
+        
+        for value in below_threshold:
+            if value:
+                current_series += 1
+                if current_series > longest_series:
+                    longest_series = current_series
+            else:
+                current_series = 0
+        
+        video2_stats.append((col, count_below_threshold, percentage_below_threshold, longest_series))
+
+    # Sort by count_below_threshold and show top 3
+    video2_stats.sort(key=lambda x: x[1], reverse=True)
+    for i, (col, count, percentage, longest) in enumerate(video2_stats[:3]):
+        print(f"VideoData2 - #{i+1}: {col} | Values below {score_cutoff}: {count} ({percentage:.2f}%) | Longest consecutive frame series: {longest}")
+
+
+# %%
+# Instance.score distribution and hard threshold for blink detection
+############################################################################################################
+# Plotting the distribution of instance scores and using hard threshold for blink detection.
+# When instance score is low, that's typically because of a blink or similar occlusion, as there are long sequences of low scores.
+# Frames with instance.score below the hard threshold are considered potential blinks.
+
+print("=" * 80)
+print("INSTANCE.SCORE DISTRIBUTION AND BLINK DETECTION THRESHOLD")
+print("=" * 80)
+print(f"\nHard threshold: instance.score < {blink_instance_score_threshold}")
+print(f"  Frames with instance.score below this threshold will be considered potential blinks.")
+print("=" * 80)
+
+# Only analyze for dataset(s) that exist
+has_v1 = "VideoData1_Has_Sleap" in globals() and VideoData1_Has_Sleap
+has_v2 = "VideoData2_Has_Sleap" in globals() and VideoData2_Has_Sleap
+
+# Get FPS for time calculations
+if has_v1:
+    if 'FPS_1' in globals():
+        fps_1_for_threshold = FPS_1
+    else:
+        fps_1_for_threshold = 1 / VideoData1["Seconds"].diff().mean()
+else:
+    fps_1_for_threshold = None
+
+if has_v2:
+    if 'FPS_2' in globals():
+        fps_2_for_threshold = FPS_2
+    else:
+        fps_2_for_threshold = 1 / VideoData2["Seconds"].diff().mean()
+else:
+    fps_2_for_threshold = None
+
+# Plot histograms with hard threshold marked
+fig = None
+if has_v1 or has_v2:
+    plt.figure(figsize=(12,5))
+    plot_index = 1
+
+if has_v1:
+    plt.subplot(1, 2 if has_v2 else 1, plot_index)
+    plt.hist(VideoData1['instance.score'].dropna(), bins=30, color='skyblue', edgecolor='black')
+    plt.axvline(blink_instance_score_threshold, color='red', linestyle='--', linewidth=2, 
+                label=f'Hard threshold = {blink_instance_score_threshold}')
+    plt.yscale('log')
+    plt.title("Distribution of instance.score (VideoData1)")
+    plt.xlabel("instance.score")
+    plt.ylabel("Frequency (log scale)")
+    plt.legend()
+    plot_index += 1
+
+if has_v2:
+    plt.subplot(1, 2 if has_v1 else 1, plot_index)
+    plt.hist(VideoData2['instance.score'].dropna(), bins=30, color='salmon', edgecolor='black')
+    plt.axvline(blink_instance_score_threshold, color='red', linestyle='--', linewidth=2,
+                label=f'Hard threshold = {blink_instance_score_threshold}')
+    plt.yscale('log')
+    plt.title("Distribution of instance.score (VideoData2)")
+    plt.xlabel("instance.score")
+    plt.ylabel("Frequency (log scale)")
+    plt.legend()
+    plot_index += 1
+
+if has_v1 or has_v2:
+    plt.tight_layout()
+    plt.show()
+
+# Report the statistics for available VideoData
+if has_v1:
+    print(f"\n{'='*80}")
+    print(f"VideoData1 Results:")
+    print(f"{'='*80}")
+    print(f"  Hard threshold: {blink_instance_score_threshold}")
+    
+    # Calculate percentile for reference
+    v1_percentile = (VideoData1['instance.score'] < blink_instance_score_threshold).sum() / len(VideoData1) * 100
+    print(f"  Percentile: {v1_percentile:.2f}% (i.e., {v1_percentile:.2f}% of frames have instance.score < {blink_instance_score_threshold})")
+    
+    v1_num_low = (VideoData1['instance.score'] < blink_instance_score_threshold).sum()
+    v1_total = len(VideoData1)
+    v1_pct_low = (v1_num_low / v1_total) * 100
+    print(f"  Frames below threshold: {v1_num_low} / {v1_total} ({v1_pct_low:.2f}%)")
+    
+    # Find longest consecutive segments
+    low_sections_v1 = pf.find_longest_lowscore_sections(VideoData1['instance.score'], blink_instance_score_threshold, top_n=1)
+    longest_consecutive_v1 = low_sections_v1[0]['length'] if low_sections_v1 else 0
+    longest_consecutive_v1_ms = (longest_consecutive_v1 / fps_1_for_threshold) * 1000 if fps_1_for_threshold and longest_consecutive_v1 > 0 else None
+    print(f"  Longest consecutive segment below threshold: {longest_consecutive_v1} frames", end="")
+    if longest_consecutive_v1_ms:
+        print(f" ({longest_consecutive_v1_ms:.1f}ms)")
+    else:
+        print()
+    
+    # Report the top 5 longest consecutive sections
+    low_sections_v1 = pf.find_longest_lowscore_sections(VideoData1['instance.score'], blink_instance_score_threshold, top_n=5)
+    if len(low_sections_v1) > 0:
+        print(f"\n  Top 5 longest consecutive sections where instance.score < threshold:")
+        for i, sec in enumerate(low_sections_v1, 1):
+            start_idx = sec['start_idx']
+            end_idx = sec['end_idx']
+            start_time = VideoData1.index[start_idx] if isinstance(VideoData1.index, pd.DatetimeIndex) else start_idx
+            end_time = VideoData1.index[end_idx] if isinstance(VideoData1.index, pd.DatetimeIndex) else end_idx
+            sec_duration_ms = (sec['length'] / fps_1_for_threshold) * 1000 if fps_1_for_threshold else None
+            if sec_duration_ms:
+                print(f"    Section {i}: index {start_idx}-{end_idx} (length {sec['length']} frames, {sec_duration_ms:.1f}ms)")
+            else:
+                print(f"    Section {i}: index {start_idx}-{end_idx} (length {sec['length']} frames)")
+
+if has_v2:
+    print(f"\n{'='*80}")
+    print(f"VideoData2 Results:")
+    print(f"{'='*80}")
+    print(f"  Hard threshold: {blink_instance_score_threshold}")
+    
+    # Calculate percentile for reference
+    v2_percentile = (VideoData2['instance.score'] < blink_instance_score_threshold).sum() / len(VideoData2) * 100
+    print(f"  Percentile: {v2_percentile:.2f}% (i.e., {v2_percentile:.2f}% of frames have instance.score < {blink_instance_score_threshold})")
+    
+    v2_num_low = (VideoData2['instance.score'] < blink_instance_score_threshold).sum()
+    v2_total = len(VideoData2)
+    v2_pct_low = (v2_num_low / v2_total) * 100
+    print(f"  Frames below threshold: {v2_num_low} / {v2_total} ({v2_pct_low:.2f}%)")
+    
+    # Find longest consecutive segments
+    low_sections_v2 = pf.find_longest_lowscore_sections(VideoData2['instance.score'], blink_instance_score_threshold, top_n=1)
+    longest_consecutive_v2 = low_sections_v2[0]['length'] if low_sections_v2 else 0
+    longest_consecutive_v2_ms = (longest_consecutive_v2 / fps_2_for_threshold) * 1000 if fps_2_for_threshold and longest_consecutive_v2 > 0 else None
+    print(f"  Longest consecutive segment below threshold: {longest_consecutive_v2} frames", end="")
+    if longest_consecutive_v2_ms:
+        print(f" ({longest_consecutive_v2_ms:.1f}ms)")
+    else:
+        print()
+    
+    # Report the top 5 longest consecutive sections
+    low_sections_v2 = pf.find_longest_lowscore_sections(VideoData2['instance.score'], blink_instance_score_threshold, top_n=5)
+    if len(low_sections_v2) > 0:
+        print(f"\n  Top 5 longest consecutive sections where instance.score < threshold:")
+        for i, sec in enumerate(low_sections_v2, 1):
+            start_idx = sec['start_idx']
+            end_idx = sec['end_idx']
+            start_time = VideoData2.index[start_idx] if isinstance(VideoData2.index, pd.DatetimeIndex) else start_idx
+            end_time = VideoData2.index[end_idx] if isinstance(VideoData2.index, pd.DatetimeIndex) else end_idx
+            sec_duration_ms = (sec['length'] / fps_2_for_threshold) * 1000 if fps_2_for_threshold else None
+            if sec_duration_ms:
+                print(f"    Section {i}: index {start_idx}-{end_idx} (length {sec['length']} frames, {sec_duration_ms:.1f}ms)")
+            else:
+                print(f"    Section {i}: index {start_idx}-{end_idx} (length {sec['length']} frames)")
+
+print(f"\n{'='*80}")
+print("Note: This threshold will be used for blink detection in the next cell.")
+print("      Frames with instance.score below this threshold are considered potential blinks.")
+print("=" * 80)
+
+
+
+# %%
+# Blink detection using instance.score - mark blinks and set coordinates to NaN (keep them as NaN, no interpolation)
+############################################################################################################
+
+# Capture all print output to save to file
+
+class TeeOutput:
+    """Output to both stdout and a string buffer"""
+    def __init__(self, stdout, buffer):
+        self.stdout = stdout
+        self.buffer = buffer
+    
+    def write(self, s):
+        self.stdout.write(s)
+        self.buffer.write(s)
+    
+    def flush(self):
+        self.stdout.flush()
+        self.buffer.flush()
+
+output_buffer = io.StringIO()
+original_stdout = sys.stdout
+sys.stdout = TeeOutput(original_stdout, output_buffer)
+
+# Run blink detection code with output captured
+print("\n=== Blink Detection ===")
+
+# VideoData1 blink detection
+if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
+    print(f"\n{get_eye_label('VideoData1')} - Blink Detection")
+    
+    # Calculate frame-based durations (using FPS_1 if available, otherwise estimate)
+    if 'FPS_1' in globals():
+        fps_1 = FPS_1
+    else:
+        fps_1 = 1 / VideoData1["Seconds"].diff().mean()
+    
+    long_blink_warning_frames = int(long_blink_warning_ms / 1000 * fps_1)
+    
+    print(f"  FPS: {fps_1:.2f}")
+    print(f"  Long blink warning threshold: {long_blink_warning_frames} frames ({long_blink_warning_ms}ms)")
+    
+    # Use hard threshold from user parameters
+    blink_threshold_v1 = blink_instance_score_threshold
+    print(f"  Using hard threshold: {blink_threshold_v1:.4f}")
+    
+    # Find all blink segments - use very lenient min_frames (1) to capture all segments
+    # No filtering by frame count - short blinks are OK to interpolate
+    # No merging - we want to preserve good data between separate blinks
+    all_blink_segments_v1 = pf.find_blink_segments(
+        VideoData1['instance.score'], 
+        blink_threshold_v1, 
+        min_frames=1,  # Very lenient to capture all segments
+        max_frames=999999  # Very high limit - essentially no maximum
+    )
+    
+    print(f"  Found {len(all_blink_segments_v1)} blink segments")
+    
+    # Filter out blinks shorter than 4 frames
+    min_frames_threshold = 4
+    blink_segments_v1 = [blink for blink in all_blink_segments_v1 if blink['length'] >= min_frames_threshold]
+    short_blink_segments_v1 = [blink for blink in all_blink_segments_v1 if blink['length'] < min_frames_threshold]
+    print(f"  After filtering <{min_frames_threshold} frames: {len(blink_segments_v1)} blink segment(s), {len(short_blink_segments_v1)} short segment(s) will be interpolated")
+    
+    # Merge blinks within 10 frames into blink bouts
+    merge_window_frames = 10
+    blink_bouts_v1 = pf.merge_nearby_blinks(blink_segments_v1, merge_window_frames)
+    print(f"  After merging blinks within {merge_window_frames} frames: {len(blink_bouts_v1)} blink bout(s)")
+    
+    # Check for long blinks and warn if needed
+    long_blinks_warnings_v1 = []
+    for i, blink in enumerate(blink_segments_v1, 1):
+        start_idx = blink['start_idx']
+        end_idx = blink['end_idx']
+        start_time = VideoData1['Seconds'].iloc[start_idx]
+        end_time = VideoData1['Seconds'].iloc[end_idx]
+        duration_ms = (end_time - start_time) * 1000
+        
+        # Warn about very long blinks (may need manual verification)
+        if duration_ms > long_blink_warning_ms:
+            frame_start = int(VideoData1['frame_idx'].iloc[start_idx])
+            frame_end = int(VideoData1['frame_idx'].iloc[end_idx])
+            long_blinks_warnings_v1.append({
+                'blink_num': i,
+                'frames': f"{frame_start}-{frame_end}",
+                'duration_ms': duration_ms
+            })
+    
+    # Print warnings for long blinks
+    if len(long_blinks_warnings_v1) > 0:
+        print(f"\n   ⚠️ WARNING: Found {len(long_blinks_warnings_v1)} blink(s) longer than {long_blink_warning_ms}ms:")
+        for warn in long_blinks_warnings_v1:
+            print(f"      Blink {warn['blink_num']}: frames {warn['frames']}, duration {warn['duration_ms']:.1f}ms - Please verify this is a real blink in the video")
+    
+    print(f"  Detected {len(blink_segments_v1)} blink segment(s)\n")
+    
+    # Print all detected blinks once (detailed)
+    if len(blink_segments_v1) > 0 and ('blink_reporting_detailed' in globals() and blink_reporting_detailed == 1):
+        print(f"  Detected blinks:")
+        for i, blink in enumerate(blink_segments_v1, 1):
+            start_idx = blink['start_idx']
+            end_idx = blink['end_idx']
+            
+            # Calculate time range
+            start_time = VideoData1['Seconds'].iloc[start_idx]
+            end_time = VideoData1['Seconds'].iloc[end_idx]
+            duration_ms = (end_time - start_time) * 1000
+            
+            # Get actual frame numbers from frame_idx column
+            if 'frame_idx' in VideoData1.columns:
+                actual_start_frame = int(VideoData1['frame_idx'].iloc[start_idx])
+                actual_end_frame = int(VideoData1['frame_idx'].iloc[end_idx])
+                frame_info = f"frames {actual_start_frame}-{actual_end_frame}"
+            else:
+                actual_start_frame = start_idx
+                actual_end_frame = end_idx
+                frame_info = f"frames {actual_start_frame}-{actual_end_frame}"
+            
+            print(f"    Blink {i}: {frame_info}, {blink['length']} frames, {duration_ms:.1f}ms, mean score: {blink['mean_score']:.4f}")
+        
+        # DIAGNOSTIC: Direct comparison of manual vs auto-detected blinks (detailed)
+        if ('blink_reporting_detailed' in globals() and blink_reporting_detailed == 1) and ('manual_blinks_v1' in globals() and manual_blinks_v1 is not None):
+            # Get auto-detected blink frame ranges
+            auto_blinks_v1 = []
+            for i, blink in enumerate(blink_segments_v1, 1):
+                start_idx = blink['start_idx']
+                end_idx = blink['end_idx']
+                frame_start = int(VideoData1['frame_idx'].iloc[start_idx])
+                frame_end = int(VideoData1['frame_idx'].iloc[end_idx])
+                auto_blinks_v1.append({'num': i, 'start': frame_start, 'end': frame_end, 'start_idx': start_idx, 'end_idx': end_idx, 'length': blink['length']})
+            
+            print(f"\n   🔍 MANUAL vs AUTO-DETECTED BLINK COMPARISON:")
+            print(f"      Manual blinks: {len(manual_blinks_v1)}")
+            print(f"      Auto-detected blinks: {len(auto_blinks_v1)}")
+            
+            # Match manual blinks to auto-detected ones (find overlapping frames)
+            # Allow matching with multiple auto-detected blinks if manual blink is over-merged
+            print(f"\n   Manual → Auto matching (overlap analysis):")
+            for manual in manual_blinks_v1:
+                manual_length = manual['end'] - manual['start'] + 1
+                total_overlap = 0
+                matching_auto_blinks = []
+                
+                # Find all auto-detected blinks that overlap with this manual blink
+                for auto in auto_blinks_v1:
+                    overlap_start = max(manual['start'], auto['start'])
+                    overlap_end = min(manual['end'], auto['end'])
+                    if overlap_start <= overlap_end:
+                        overlap_frames = overlap_end - overlap_start + 1
+                        total_overlap += overlap_frames
+                        matching_auto_blinks.append({
+                            'auto': auto,
+                            'overlap': overlap_frames
+                        })
+                
+                # Calculate total overlap percentage
+                total_overlap_pct = (total_overlap / manual_length) * 100 if manual_length > 0 else 0
+                
+                # Match if total overlap is >= 40% (less stringent to handle over-merged manual blinks)
+                if total_overlap >= manual_length * 0.40:  # At least 40% overlap
+                    if len(matching_auto_blinks) == 1:
+                        # Single match
+                        match_info = matching_auto_blinks[0]
+                        best_match = match_info['auto']
+                        overlap = match_info['overlap']
+                        start_diff = best_match['start'] - manual['start']
+                        end_diff = best_match['end'] - manual['end']
+                        match_str = f"✅ MATCH: Auto blink {best_match['num']} (frames {best_match['start']}-{best_match['end']})"
+                        match_str += f", {overlap} frames overlap ({total_overlap_pct:.1f}%)"
+                        if start_diff != 0 or end_diff != 0:
+                            match_str += f", offset: start={start_diff:+d}, end={end_diff:+d}"
+                        print(f"      Manual {manual['num']}: {manual['start']}-{manual['end']} → {match_str}")
+                    else:
+                        # Multiple matches (manual blink is over-merged)
+                        auto_nums = [m['auto']['num'] for m in matching_auto_blinks]
+                        auto_ranges = [f"{m['auto']['start']}-{m['auto']['end']}" for m in matching_auto_blinks]
+                        match_str = f"✅ MATCH: Auto blinks {auto_nums} (frames: {', '.join(auto_ranges)})"
+                        match_str += f", total {total_overlap} frames overlap ({total_overlap_pct:.1f}%)"
+                        print(f"      Manual {manual['num']}: {manual['start']}-{manual['end']} → {match_str}")
+                else:
+                    print(f"      Manual {manual['num']}: {manual['start']}-{manual['end']} → ❌ NO MATCH FOUND")
+            
+            # Also check which auto-detected blinks don't have manual matches
+            print(f"\n   Auto-detected blinks without manual matches:")
+            unmatched_auto = []
+            for auto in auto_blinks_v1:
+                has_match = False
+                for manual in manual_blinks_v1:
+                    overlap_start = max(manual['start'], auto['start'])
+                    overlap_end = min(manual['end'], auto['end'])
+                    if overlap_start <= overlap_end:
+                        overlap_frames = overlap_end - overlap_start + 1
+                        manual_length = manual['end'] - manual['start'] + 1
+                        # Use same threshold as matching logic (40% of manual blink)
+                        if overlap_frames >= manual_length * 0.40:
+                            has_match = True
+                            break
+                if not has_match:
+                    unmatched_auto.append(auto)
+            
+            if len(unmatched_auto) > 0:
+                for auto in unmatched_auto:
+                    print(f"      Auto {auto['num']}: frames {auto['start']}-{auto['end']}, length={auto['length']} frames")
+            else:
+                print(f"      (all auto-detected blinks have manual matches)")
+        elif 'blink_reporting_detailed' in globals() and blink_reporting_detailed == 1:
+            print(f"\n   ⚠️ WARNING: Manual blink comparison skipped - Video1_manual_blinks.csv not found in data_path")
+        
+        # Interpolate over short blinks (keep long blinks as NaN)
+        print(f"\n  Interpolating short blinks (< {min_frames_threshold} frames):")
+        short_blink_frames_v1 = 0
+        if len(short_blink_segments_v1) > 0:
+            # Mark short blinks as NaN
+            for blink in short_blink_segments_v1:
+                start_idx = blink['start_idx']
+                end_idx = blink['end_idx']
+                VideoData1.loc[VideoData1.index[start_idx:end_idx+1], columns_of_interest] = np.nan
+                short_blink_frames_v1 += blink['length']
+            
+            # Interpolate all NaNs (this fills short blinks)
+            VideoData1[columns_of_interest] = VideoData1[columns_of_interest].interpolate(method='linear', limit_direction='both')
+            
+            print(f"    Interpolated {short_blink_frames_v1} frames from {len(short_blink_segments_v1)} short blink segment(s)")
+        else:
+            print(f"    No short blinks to interpolate")
+        
+        # Mark long blinks by setting coordinates to NaN (these remain as NaN, not interpolated)
+        recording_start_time = VideoData1['Seconds'].iloc[0]
+        total_blink_frames_v1 = 0
+        for blink in blink_segments_v1:
+            start_idx = blink['start_idx']
+            end_idx = blink['end_idx']
+            VideoData1.loc[VideoData1.index[start_idx:end_idx+1], columns_of_interest] = np.nan
+            total_blink_frames_v1 += blink['length']
+        
+        print(f"  Total long blink frames marked (kept as NaN): {total_blink_frames_v1} frames "
+              f"({total_blink_frames_v1/fps_1*1000:.1f}ms)")
+        
+        # Calculate blink bout rate
+        recording_duration_min = (VideoData1['Seconds'].iloc[-1] - VideoData1['Seconds'].iloc[0]) / 60
+        blink_bout_rate = len(blink_bouts_v1) / recording_duration_min if recording_duration_min > 0 else 0
+        print(f"  Blink bout rate: {blink_bout_rate:.2f} blink bouts/minute")
+    else:
+        print("  No blinks detected")
+
+# VideoData2 blink detection
+if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
+    print(f"\n{get_eye_label('VideoData2')} - Blink Detection")
+    
+    # Calculate frame-based durations (using FPS_2 if available, otherwise estimate)
+    if 'FPS_2' in globals():
+        fps_2 = FPS_2
+    else:
+        fps_2 = 1 / VideoData2["Seconds"].diff().mean()
+    
+    long_blink_warning_frames = int(long_blink_warning_ms / 1000 * fps_2)
+    
+    print(f"  FPS: {fps_2:.2f}")
+    print(f"  Long blink warning threshold: {long_blink_warning_frames} frames ({long_blink_warning_ms}ms)")
+    
+    # Use hard threshold from user parameters
+    blink_threshold_v2 = blink_instance_score_threshold
+    print(f"  Using hard threshold: {blink_threshold_v2:.4f}")
+    
+    # Find all blink segments - use very lenient min_frames (1) to capture all segments
+    # No filtering by frame count - short blinks are OK to interpolate
+    # No merging - we want to preserve good data between separate blinks
+    all_blink_segments_v2 = pf.find_blink_segments(
+        VideoData2['instance.score'], 
+        blink_threshold_v2, 
+        min_frames=1,  # Very lenient to capture all segments
+        max_frames=999999  # Very high limit - essentially no maximum
+    )
+    
+    print(f"  Found {len(all_blink_segments_v2)} blink segments")
+    
+    # Filter out blinks shorter than 4 frames
+    min_frames_threshold = 4
+    blink_segments_v2 = [blink for blink in all_blink_segments_v2 if blink['length'] >= min_frames_threshold]
+    short_blink_segments_v2 = [blink for blink in all_blink_segments_v2 if blink['length'] < min_frames_threshold]
+    print(f"  After filtering <{min_frames_threshold} frames: {len(blink_segments_v2)} blink segment(s), {len(short_blink_segments_v2)} short segment(s) will be interpolated")
+    
+    # Merge blinks within 10 frames into blink bouts
+    merge_window_frames = 10
+    blink_bouts_v2 = pf.merge_nearby_blinks(blink_segments_v2, merge_window_frames)
+    print(f"  After merging blinks within {merge_window_frames} frames: {len(blink_bouts_v2)} blink bout(s)")
+    
+    # Check for long blinks and warn if needed
+    long_blinks_warnings_v2 = []
+    for i, blink in enumerate(blink_segments_v2, 1):
+        start_idx = blink['start_idx']
+        end_idx = blink['end_idx']
+        start_time = VideoData2['Seconds'].iloc[start_idx]
+        end_time = VideoData2['Seconds'].iloc[end_idx]
+        duration_ms = (end_time - start_time) * 1000
+        
+        # Warn about very long blinks (may need manual verification)
+        if duration_ms > long_blink_warning_ms:
+            frame_start = int(VideoData2['frame_idx'].iloc[start_idx])
+            frame_end = int(VideoData2['frame_idx'].iloc[end_idx])
+            long_blinks_warnings_v2.append({
+                'blink_num': i,
+                'frames': f"{frame_start}-{frame_end}",
+                'duration_ms': duration_ms
+            })
+    
+    # Print warnings for long blinks
+    if len(long_blinks_warnings_v2) > 0:
+        print(f"\n   ⚠️ WARNING: Found {len(long_blinks_warnings_v2)} blink(s) longer than {long_blink_warning_ms}ms:")
+        for warn in long_blinks_warnings_v2:
+            print(f"      Blink {warn['blink_num']}: frames {warn['frames']}, duration {warn['duration_ms']:.1f}ms - Please verify this is a real blink in the video")
+    
+    print(f"  Detected {len(blink_segments_v2)} blink segment(s)\n")
+    
+    # Print all detected blinks once (detailed)
+    if len(blink_segments_v2) > 0 and ('blink_reporting_detailed' in globals() and blink_reporting_detailed == 1):
+        print(f"  Detected blinks:")
+        for i, blink in enumerate(blink_segments_v2, 1):
+            start_idx = blink['start_idx']
+            end_idx = blink['end_idx']
+            
+            # Calculate time range
+            start_time = VideoData2['Seconds'].iloc[start_idx]
+            end_time = VideoData2['Seconds'].iloc[end_idx]
+            duration_ms = (end_time - start_time) * 1000
+            
+            # Get actual frame numbers from frame_idx column
+            if 'frame_idx' in VideoData2.columns:
+                actual_start_frame = int(VideoData2['frame_idx'].iloc[start_idx])
+                actual_end_frame = int(VideoData2['frame_idx'].iloc[end_idx])
+                frame_info = f"frames {actual_start_frame}-{actual_end_frame}"
+            else:
+                actual_start_frame = start_idx
+                actual_end_frame = end_idx
+                frame_info = f"frames {actual_start_frame}-{actual_end_frame}"
+            
+            print(f"    Blink {i}: {frame_info}, {blink['length']} frames, {duration_ms:.1f}ms, mean score: {blink['mean_score']:.4f}")
+        
+        # DIAGNOSTIC: Direct comparison of manual vs auto-detected blinks (detailed)
+        if ('blink_reporting_detailed' in globals() and blink_reporting_detailed == 1) and ('manual_blinks_v2' in globals() and manual_blinks_v2 is not None):
+            # Get auto-detected blink frame ranges
+            auto_blinks_v2 = []
+            for i, blink in enumerate(blink_segments_v2, 1):
+                start_idx = blink['start_idx']
+                end_idx = blink['end_idx']
+                frame_start = int(VideoData2['frame_idx'].iloc[start_idx])
+                frame_end = int(VideoData2['frame_idx'].iloc[end_idx])
+                auto_blinks_v2.append({'num': i, 'start': frame_start, 'end': frame_end, 'start_idx': start_idx, 'end_idx': end_idx, 'length': blink['length']})
+            
+            print(f"\n   🔍 MANUAL vs AUTO-DETECTED BLINK COMPARISON:")
+            print(f"      Manual blinks: {len(manual_blinks_v2)}")
+            print(f"      Auto-detected blinks: {len(auto_blinks_v2)}")
+            
+            # Match manual blinks to auto-detected ones (find overlapping frames)
+            # Allow matching with multiple auto-detected blinks if manual blink is over-merged
+            print(f"\n   Manual → Auto matching (overlap analysis):")
+            for manual in manual_blinks_v2:
+                manual_length = manual['end'] - manual['start'] + 1
+                total_overlap = 0
+                matching_auto_blinks = []
+                
+                # Find all auto-detected blinks that overlap with this manual blink
+                for auto in auto_blinks_v2:
+                    overlap_start = max(manual['start'], auto['start'])
+                    overlap_end = min(manual['end'], auto['end'])
+                    if overlap_start <= overlap_end:
+                        overlap_frames = overlap_end - overlap_start + 1
+                        total_overlap += overlap_frames
+                        matching_auto_blinks.append({
+                            'auto': auto,
+                            'overlap': overlap_frames
+                        })
+                
+                # Calculate total overlap percentage
+                total_overlap_pct = (total_overlap / manual_length) * 100 if manual_length > 0 else 0
+                
+                # Match if total overlap is >= 40% (less stringent to handle over-merged manual blinks)
+                if total_overlap >= manual_length * 0.40:  # At least 40% overlap
+                    if len(matching_auto_blinks) == 1:
+                        # Single match
+                        match_info = matching_auto_blinks[0]
+                        best_match = match_info['auto']
+                        overlap = match_info['overlap']
+                        start_diff = best_match['start'] - manual['start']
+                        end_diff = best_match['end'] - manual['end']
+                        match_str = f"✅ MATCH: Auto blink {best_match['num']} (frames {best_match['start']}-{best_match['end']})"
+                        match_str += f", {overlap} frames overlap ({total_overlap_pct:.1f}%)"
+                        if start_diff != 0 or end_diff != 0:
+                            match_str += f", offset: start={start_diff:+d}, end={end_diff:+d}"
+                        print(f"      Manual {manual['num']}: {manual['start']}-{manual['end']} → {match_str}")
+                    else:
+                        # Multiple matches (manual blink is over-merged)
+                        auto_nums = [m['auto']['num'] for m in matching_auto_blinks]
+                        auto_ranges = [f"{m['auto']['start']}-{m['auto']['end']}" for m in matching_auto_blinks]
+                        match_str = f"✅ MATCH: Auto blinks {auto_nums} (frames: {', '.join(auto_ranges)})"
+                        match_str += f", total {total_overlap} frames overlap ({total_overlap_pct:.1f}%)"
+                        print(f"      Manual {manual['num']}: {manual['start']}-{manual['end']} → {match_str}")
+                else:
+                    print(f"      Manual {manual['num']}: {manual['start']}-{manual['end']} → ❌ NO MATCH FOUND")
+            
+            # Also check which auto-detected blinks don't have manual matches
+            print(f"\n   Auto-detected blinks without manual matches:")
+            unmatched_auto = []
+            for auto in auto_blinks_v2:
+                has_match = False
+                for manual in manual_blinks_v2:
+                    overlap_start = max(manual['start'], auto['start'])
+                    overlap_end = min(manual['end'], auto['end'])
+                    if overlap_start <= overlap_end:
+                        overlap_frames = overlap_end - overlap_start + 1
+                        manual_length = manual['end'] - manual['start'] + 1
+                        # Use same threshold as matching logic (40% of manual blink)
+                        if overlap_frames >= manual_length * 0.40:
+                            has_match = True
+                            break
+                if not has_match:
+                    unmatched_auto.append(auto)
+            
+            if len(unmatched_auto) > 0:
+                for auto in unmatched_auto:
+                    print(f"      Auto {auto['num']}: frames {auto['start']}-{auto['end']}, length={auto['length']} frames")
+            else:
+                print(f"      (all auto-detected blinks have manual matches)")
+        elif 'blink_reporting_detailed' in globals() and blink_reporting_detailed == 1:
+            print(f"\n   ⚠️ WARNING: Manual blink comparison skipped - Video2_manual_blinks.csv not found in data_path")
+        
+        # Interpolate over short blinks (keep long blinks as NaN)
+        print(f"\n  Interpolating short blinks (< {min_frames_threshold} frames):")
+        short_blink_frames_v2 = 0
+        if len(short_blink_segments_v2) > 0:
+            # Mark short blinks as NaN
+            for blink in short_blink_segments_v2:
+                start_idx = blink['start_idx']
+                end_idx = blink['end_idx']
+                VideoData2.loc[VideoData2.index[start_idx:end_idx+1], columns_of_interest] = np.nan
+                short_blink_frames_v2 += blink['length']
+            
+            # Interpolate all NaNs (this fills short blinks)
+            VideoData2[columns_of_interest] = VideoData2[columns_of_interest].interpolate(method='linear', limit_direction='both')
+            
+            print(f"    Interpolated {short_blink_frames_v2} frames from {len(short_blink_segments_v2)} short blink segment(s)")
+        else:
+            print(f"    No short blinks to interpolate")
+        
+        # Mark long blinks by setting coordinates to NaN (these remain as NaN, not interpolated)
+        recording_start_time = VideoData2['Seconds'].iloc[0]
+        total_blink_frames_v2 = 0
+        for blink in blink_segments_v2:
+            start_idx = blink['start_idx']
+            end_idx = blink['end_idx']
+            VideoData2.loc[VideoData2.index[start_idx:end_idx+1], columns_of_interest] = np.nan
+            total_blink_frames_v2 += blink['length']
+        
+        print(f"  Total long blink frames marked (kept as NaN): {total_blink_frames_v2} frames "
+              f"({total_blink_frames_v2/fps_2*1000:.1f}ms)")
+        
+        # Calculate blink bout rate
+        recording_duration_min = (VideoData2['Seconds'].iloc[-1] - VideoData2['Seconds'].iloc[0]) / 60
+        blink_bout_rate = len(blink_bouts_v2) / recording_duration_min if recording_duration_min > 0 else 0
+        print(f"  Blink bout rate: {blink_bout_rate:.2f} blink bouts/minute")
+    else:
+        print("  No blinks detected")
+
+print("\n✅ Blink detection complete. Blink periods remain as NaN (not interpolated).")
+
+# Compare blink bout timing between VideoData1 and VideoData2 (between eyes)
+if ('VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap and 
+    'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap):
+    print("\n" + "="*80)
+    print("BLINK BOUT TIMING COMPARISON: VideoData1 vs VideoData2 (Between Eyes)")
+    print("="*80)
+    
+    # Get blink bout frame ranges for both videos (if they exist)
+    # Check if blink_bouts variables exist (they are created during blink detection)
+    try:
+        has_bouts_v1 = 'blink_bouts_v1' in globals() and len(blink_bouts_v1) > 0
+    except:
+        has_bouts_v1 = False
+    
+    try:
+        has_bouts_v2 = 'blink_bouts_v2' in globals() and len(blink_bouts_v2) > 0
+    except:
+        has_bouts_v2 = False
+    
+    if has_bouts_v1 and has_bouts_v2:
+        
+        # Convert bout indices to frame numbers
+        bouts_v1 = []
+        for i, bout in enumerate(blink_bouts_v1, 1):
+            start_idx = bout['start_idx']
+            end_idx = bout['end_idx']
+            if 'frame_idx' in VideoData1.columns:
+                start_frame = int(VideoData1['frame_idx'].iloc[start_idx])
+                end_frame = int(VideoData1['frame_idx'].iloc[end_idx])
+            else:
+                start_frame = start_idx
+                end_frame = end_idx
+            bouts_v1.append({
+                'num': i,
+                'start_frame': start_frame,
+                'end_frame': end_frame,
+                'start_idx': start_idx,
+                'end_idx': end_idx,
+                'length': bout['length']
+            })
+        
+        bouts_v2 = []
+        for i, bout in enumerate(blink_bouts_v2, 1):
+            start_idx = bout['start_idx']
+            end_idx = bout['end_idx']
+            if 'frame_idx' in VideoData2.columns:
+                start_frame = int(VideoData2['frame_idx'].iloc[start_idx])
+                end_frame = int(VideoData2['frame_idx'].iloc[end_idx])
+            else:
+                start_frame = start_idx
+                end_frame = end_idx
+            bouts_v2.append({
+                'num': i,
+                'start_frame': start_frame,
+                'end_frame': end_frame,
+                'start_idx': start_idx,
+                'end_idx': end_idx,
+                'length': bout['length']
+            })
+        
+        # Find concurrent bouts (overlapping in time, synchronized by Seconds)
+        concurrent_bouts = []
+        v1_independent = []
+        v2_independent = []
+        
+        v2_matched = set()  # Track which VideoData2 bouts have been matched
+        
+        for bout1 in bouts_v1:
+            # Get time range for bout1
+            v1_start_time = VideoData1['Seconds'].iloc[bout1['start_idx']]
+            v1_end_time = VideoData1['Seconds'].iloc[bout1['end_idx']]
+            
+            found_match = False
+            for bout2 in bouts_v2:
+                # Get time range for bout2
+                v2_start_time = VideoData2['Seconds'].iloc[bout2['start_idx']]
+                v2_end_time = VideoData2['Seconds'].iloc[bout2['end_idx']]
+                
+                # Check if bouts overlap in time (any overlapping time period)
+                overlap_start_time = max(v1_start_time, v2_start_time)
+                overlap_end_time = min(v1_end_time, v2_end_time)
+                
+                if overlap_start_time <= overlap_end_time:
+                    # Concurrent - they overlap in time
+                    # Calculate overlap duration
+                    overlap_duration = overlap_end_time - overlap_start_time
+                    
+                    concurrent_bouts.append({
+                        'v1_num': bout1['num'],
+                        'v1_start_frame': bout1['start_frame'],
+                        'v1_end_frame': bout1['end_frame'],
+                        'v1_start_time': v1_start_time,
+                        'v1_end_time': v1_end_time,
+                        'v2_num': bout2['num'],
+                        'v2_start_frame': bout2['start_frame'],
+                        'v2_end_frame': bout2['end_frame'],
+                        'v2_start_time': v2_start_time,
+                        'v2_end_time': v2_end_time,
+                        'overlap_start_time': overlap_start_time,
+                        'overlap_end_time': overlap_end_time,
+                        'overlap_duration': overlap_duration
+                    })
+                    v2_matched.add(bout2['num'])
+                    found_match = True
+                    break
+            
+            if not found_match:
+                v1_independent.append(bout1)
+        
+        # Find VideoData2 bouts that don't have matches
+        for bout2 in bouts_v2:
+            if bout2['num'] not in v2_matched:
+                v2_independent.append(bout2)
+        
+        # Calculate statistics
+        total_v1_bouts = len(bouts_v1)
+        total_v2_bouts = len(bouts_v2)
+        total_concurrent = len(concurrent_bouts)
+        total_v1_independent = len(v1_independent)
+        total_v2_independent = len(v2_independent)
+        
+        print(f"\nBlink bout counts:")
+        print(f"  VideoData1: {total_v1_bouts} blink bout(s)")
+        print(f"  VideoData2: {total_v2_bouts} blink bout(s)")
+        print(f"  Concurrent: {total_concurrent} bout(s) (overlapping frames)")
+        print(f"  VideoData1 only: {total_v1_independent} bout(s)")
+        print(f"  VideoData2 only: {total_v2_independent} bout(s)")
+        
+        if total_v1_bouts > 0 and total_v2_bouts > 0:
+            concurrent_pct_v1 = (total_concurrent / total_v1_bouts) * 100
+            concurrent_pct_v2 = (total_concurrent / total_v2_bouts) * 100
+            print(f"\nConcurrency percentage:")
+            print(f"  {concurrent_pct_v1:.1f}% of VideoData1 bouts are concurrent with VideoData2")
+            print(f"  {concurrent_pct_v2:.1f}% of VideoData2 bouts are concurrent with VideoData1")
+            
+            # Calculate timing offsets for concurrent bouts
+            if len(concurrent_bouts) > 0:
+                time_offsets_ms = []
+                for cb in concurrent_bouts:
+                    # Calculate offset from start times (already in Seconds)
+                    offset_ms = (cb['v1_start_time'] - cb['v2_start_time']) * 1000
+                    time_offsets_ms.append(offset_ms)
+                    cb['time_offset_ms'] = offset_ms
+                
+                mean_offset = np.mean(time_offsets_ms)
+                std_offset = np.std(time_offsets_ms)
+                print(f"\nTiming offset for concurrent bouts:")
+                print(f"  Mean offset (VideoData1 - VideoData2): {mean_offset:.2f} ms")
+                print(f"  Std offset: {std_offset:.2f} ms")
+                print(f"  Range: {min(time_offsets_ms):.2f} to {max(time_offsets_ms):.2f} ms")
+        
+        # Visualization removed per request
+        print("="*80)
+    elif has_bouts_v1 or has_bouts_v2:
+        print(f"\n⚠️ Cannot compare blink bouts - only one eye has blink bouts detected:")
+        if has_bouts_v1:
+            print(f"  VideoData1: {len(blink_bouts_v1)} blink bout(s)")
+        else:
+            print(f"  VideoData1: 0 blink bout(s)")
+        if has_bouts_v2:
+            print(f"  VideoData2: {len(blink_bouts_v2)} blink bout(s)")
+        else:
+            print(f"  VideoData2: 0 blink bout(s)")
+    else:
+        print("\n⚠️ Cannot compare blink bouts - neither video has blink bouts detected")
+
+# Save blink detection results to CSV files
+if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
+    if len(blink_segments_v1) > 0:
+        # Helper function to check if an auto-detected blink matches any manual blink
+        def check_manual_match(auto_start, auto_end, manual_blinks_list):
+            """Check if auto-detected blink matches any manual blink (>=40% overlap to handle over-merged manual blinks)"""
+            if manual_blinks_list is None:
+                return 0
+            for manual in manual_blinks_list:
+                overlap_start = max(manual['start'], auto_start)
+                overlap_end = min(manual['end'], auto_end)
+                if overlap_start <= overlap_end:
+                    overlap_frames = overlap_end - overlap_start + 1
+                    manual_length = manual['end'] - manual['start'] + 1
+                    # Use 40% threshold to match the diagnostic comparison logic
+                    if overlap_frames >= manual_length * 0.40:
+                        return 1
+            return 0
+        
+        # Collect blink information
+        blink_data_v1 = []
+        manual_blinks_for_csv = None
+        if 'manual_blinks_v1' in globals() and manual_blinks_v1 is not None:
+            manual_blinks_for_csv = manual_blinks_v1
+            
+        for i, blink in enumerate(blink_segments_v1, 1):
+            start_idx = blink['start_idx']
+            end_idx = blink['end_idx']
+            
+            # Get actual frame numbers from frame_idx column
+            if 'frame_idx' in VideoData1.columns:
+                first_frame = int(VideoData1['frame_idx'].iloc[start_idx])
+                last_frame = int(VideoData1['frame_idx'].iloc[end_idx])
+            else:
+                first_frame = start_idx
+                last_frame = end_idx
+            
+            # Check if this blink matches a manual one
+            matches_manual = check_manual_match(first_frame, last_frame, manual_blinks_for_csv)
+            
+            blink_data_v1.append({
+                'blink_number': i,
+                'first_frame': first_frame,
+                'last_frame': last_frame,
+                'matches_manual': matches_manual
+            })
+        
+        # Create DataFrame and save to CSV
+        blink_df_v1 = pd.DataFrame(blink_data_v1)
+        blink_csv_path_v1 = data_path / "blink_detection_VideoData1.csv"
+        blink_df_v1.to_csv(blink_csv_path_v1, index=False)
+        print(f"\n✅ Blink detection results (VideoData1) saved to: {blink_csv_path_v1}")
+        print(f"   Saved {len(blink_data_v1)} blinks")
+
+if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
+    if len(blink_segments_v2) > 0:
+        # Helper function to check if an auto-detected blink matches any manual blink
+        def check_manual_match(auto_start, auto_end, manual_blinks_list):
+            """Check if auto-detected blink matches any manual blink (>=40% overlap to handle over-merged manual blinks)"""
+            if manual_blinks_list is None:
+                return 0
+            for manual in manual_blinks_list:
+                overlap_start = max(manual['start'], auto_start)
+                overlap_end = min(manual['end'], auto_end)
+                if overlap_start <= overlap_end:
+                    overlap_frames = overlap_end - overlap_start + 1
+                    manual_length = manual['end'] - manual['start'] + 1
+                    # Use 40% threshold to match the diagnostic comparison logic
+                    if overlap_frames >= manual_length * 0.40:
+                        return 1
+            return 0
+        
+        # Collect blink information
+        blink_data_v2 = []
+        manual_blinks_for_csv = None
+        if 'manual_blinks_v2' in globals() and manual_blinks_v2 is not None:
+            manual_blinks_for_csv = manual_blinks_v2
+            
+        for i, blink in enumerate(blink_segments_v2, 1):
+            start_idx = blink['start_idx']
+            end_idx = blink['end_idx']
+            
+            # Get actual frame numbers from frame_idx column
+            if 'frame_idx' in VideoData2.columns:
+                first_frame = int(VideoData2['frame_idx'].iloc[start_idx])
+                last_frame = int(VideoData2['frame_idx'].iloc[end_idx])
+            else:
+                first_frame = start_idx
+                last_frame = end_idx
+            
+            # Check if this blink matches a manual one
+            matches_manual = check_manual_match(first_frame, last_frame, manual_blinks_for_csv)
+            
+            blink_data_v2.append({
+                'blink_number': i,
+                'first_frame': first_frame,
+                'last_frame': last_frame,
+                'matches_manual': matches_manual
+            })
+        
+        # Create DataFrame and save to CSV
+        blink_df_v2 = pd.DataFrame(blink_data_v2)
+        blink_csv_path_v2 = data_path / "blink_detection_VideoData2.csv"
+        blink_df_v2.to_csv(blink_csv_path_v2, index=False)
+        print(f"\n✅ Blink detection results (VideoData2) saved to: {blink_csv_path_v2}")
+        print(f"   Saved {len(blink_data_v2)} blinks")
+
+print("\n" + "="*80)
+print("📹 MANUAL QC CHECK:")
+print("="*80)
+print("For instructions on how to prepare videos for manual blink detection QC,")
+print("see: https://github.com/ranczlab/vestibular_vr_pipeline/issues/86")
+print("="*80)
+
+# Restore original stdout and save captured output to file
+sys.stdout = original_stdout
+
+# Get the captured output
+captured_output = output_buffer.getvalue()
+
+# Save to file in data_path folder
+output_file = data_path / "blink_detection_QC.txt"
+output_file.parent.mkdir(parents=True, exist_ok=True)
+with open(output_file, 'w') as f:
+    f.write(captured_output)
+
+print(f"\n✅ Blink detection output saved to: {output_file}")
+
+
+
+# %%
+# QC plot timeseries of interpolation corrected NaN and (TODO low confidence coordinates in browser 
+############################################################################################################
+
+if plot_QC_timeseries:
+    print(f'ℹ️ Figure opens in browser window, takes a bit of time.')
+    
+    # VideoData1 QC Plot
+    if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
+        fig1 = make_subplots(
+            rows=4, cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.05,
+            subplot_titles=(
+                f"VideoData1 - X coordinates for pupil centre and left-right eye corner",
+                f"VideoData1 - Y coordinates for pupil centre and left-right eye corner",
+                f"VideoData1 - X coordinates for iris points",
+                f"VideoData1 - Y coordinates for iris points"
+            )
+        )
+
+        # Row 1: Plot left.x, center.x, right.x
+        fig1.add_trace(go.Scatter(x=VideoData1['Seconds'], y=VideoData1['left.x'], mode='lines', name='left.x'), row=1, col=1)
+        fig1.add_trace(go.Scatter(x=VideoData1['Seconds'], y=VideoData1['center.x'], mode='lines', name='center.x'), row=1, col=1)
+        fig1.add_trace(go.Scatter(x=VideoData1['Seconds'], y=VideoData1['right.x'], mode='lines', name='right.x'), row=1, col=1)
+
+        # Row 2: Plot left.y, center.y, right.y
+        fig1.add_trace(go.Scatter(x=VideoData1['Seconds'], y=VideoData1['left.y'], mode='lines', name='left.y'), row=2, col=1)
+        fig1.add_trace(go.Scatter(x=VideoData1['Seconds'], y=VideoData1['center.y'], mode='lines', name='center.y'), row=2, col=1)
+        fig1.add_trace(go.Scatter(x=VideoData1['Seconds'], y=VideoData1['right.y'], mode='lines', name='right.y'), row=2, col=1)
+
+        # Row 3: Plot p.x coordinates for p1 to p8
+        for col in ['p1.x', 'p2.x', 'p3.x', 'p4.x', 'p5.x', 'p6.x', 'p7.x', 'p8.x']:
+            fig1.add_trace(go.Scatter(x=VideoData1['Seconds'], y=VideoData1[col], mode='lines', name=col), row=3, col=1)
+
+        # Row 4: Plot p.y coordinates for p1 to p8
+        for col in ['p1.y', 'p2.y', 'p3.y', 'p4.y', 'p5.y', 'p6.y', 'p7.y', 'p8.y']:
+            fig1.add_trace(go.Scatter(x=VideoData1['Seconds'], y=VideoData1[col], mode='lines', name=col), row=4, col=1)
+
+        fig1.update_layout(
+            height=1200,
+            title_text=f"VideoData1 - Time series subplots for coordinates (QC after interpolation)",
+            showlegend=True
+        )
+        fig1.update_xaxes(title_text="Seconds", row=4, col=1)
+        fig1.update_yaxes(title_text="X Position", row=1, col=1)
+        fig1.update_yaxes(title_text="Y Position", row=2, col=1)
+        fig1.update_yaxes(title_text="X Position", row=3, col=1)
+        fig1.update_yaxes(title_text="Y Position", row=4, col=1)
+
+        fig1.show(renderer='browser')
+    
+    # VideoData2 QC Plot
+    if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
+        fig2 = make_subplots(
+            rows=4, cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.05,
+            subplot_titles=(
+                f"VideoData2 - X coordinates for pupil centre and left-right eye corner",
+                f"VideoData2 - Y coordinates for pupil centre and left-right eye corner",
+                f"VideoData2 - X coordinates for iris points",
+                f"VideoData2 - Y coordinates for iris points"
+            )
+        )
+
+        # Row 1: Plot left.x, center.x, right.x
+        fig2.add_trace(go.Scatter(x=VideoData2['Seconds'], y=VideoData2['left.x'], mode='lines', name='left.x'), row=1, col=1)
+        fig2.add_trace(go.Scatter(x=VideoData2['Seconds'], y=VideoData2['center.x'], mode='lines', name='center.x'), row=1, col=1)
+        fig2.add_trace(go.Scatter(x=VideoData2['Seconds'], y=VideoData2['right.x'], mode='lines', name='right.x'), row=1, col=1)
+
+        # Row 2: Plot left.y, center.y, right.y
+        fig2.add_trace(go.Scatter(x=VideoData2['Seconds'], y=VideoData2['left.y'], mode='lines', name='left.y'), row=2, col=1)
+        fig2.add_trace(go.Scatter(x=VideoData2['Seconds'], y=VideoData2['center.y'], mode='lines', name='center.y'), row=2, col=1)
+        fig2.add_trace(go.Scatter(x=VideoData2['Seconds'], y=VideoData2['right.y'], mode='lines', name='right.y'), row=2, col=1)
+
+        # Row 3: Plot p.x coordinates for p1 to p8
+        for col in ['p1.x', 'p2.x', 'p3.x', 'p4.x', 'p5.x', 'p6.x', 'p7.x', 'p8.x']:
+            fig2.add_trace(go.Scatter(x=VideoData2['Seconds'], y=VideoData2[col], mode='lines', name=col), row=3, col=1)
+
+        # Row 4: Plot p.y coordinates for p1 to p8
+        for col in ['p1.y', 'p2.y', 'p3.y', 'p4.y', 'p5.y', 'p6.y', 'p7.y', 'p8.y']:
+            fig2.add_trace(go.Scatter(x=VideoData2['Seconds'], y=VideoData2[col], mode='lines', name=col), row=4, col=1)
+
+        fig2.update_layout(
+            height=1200,
+            title_text=f"VideoData2 - Time series subplots for coordinates (QC after interpolation)",
+            showlegend=True
+        )
+        fig2.update_xaxes(title_text="Seconds", row=4, col=1)
+        fig2.update_yaxes(title_text="X Position", row=1, col=1)
+        fig2.update_yaxes(title_text="Y Position", row=2, col=1)
+        fig2.update_yaxes(title_text="X Position", row=3, col=1)
+        fig2.update_yaxes(title_text="Y Position", row=4, col=1)
+
+        fig2.show(renderer='browser')
+
+
+# %%
+# QC plot XY coordinate distributions after NaN and ( TODO - low confidence inference points) are interpolated 
+##############################################################################################################
+
+columns_of_interest = ['left.x','left.y','center.x','center.y','right.x','right.y','p1.x','p1.y','p2.x','p2.y','p3.x','p3.y','p4.x','p4.y','p5.x','p5.y','p6.x','p6.y','p7.x','p7.y','p8.x','p8.y']
+
+# Create coordinates_dict for both datasets
+if VideoData1_Has_Sleap:
+    coordinates_dict1_processed = lp.get_coordinates_dict(VideoData1, columns_of_interest)
+if VideoData2_Has_Sleap:
+    coordinates_dict2_processed = lp.get_coordinates_dict(VideoData2, columns_of_interest)
+
+columns_of_interest = ['left', 'right', 'center', 'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8']
+
+# Filter out NaN values and calculate the min and max values for X and Y coordinates for both dict1 and dict2
+def min_max_dict(coordinates_dict):
+    x_min = min([coordinates_dict[f'{col}.x'][~np.isnan(coordinates_dict[f'{col}.x'])].min() for col in columns_of_interest])
+    x_max = max([coordinates_dict[f'{col}.x'][~np.isnan(coordinates_dict[f'{col}.x'])].max() for col in columns_of_interest])
+    y_min = min([coordinates_dict[f'{col}.y'][~np.isnan(coordinates_dict[f'{col}.y'])].min() for col in columns_of_interest])
+    y_max = max([coordinates_dict[f'{col}.y'][~np.isnan(coordinates_dict[f'{col}.y'])].max() for col in columns_of_interest])
+    return x_min, x_max, y_min, y_max
+
+if VideoData1_Has_Sleap:
+    x_min1, x_max1, y_min1, y_max1 = min_max_dict(coordinates_dict1_processed)
+if VideoData2_Has_Sleap:
+    x_min2, x_max2, y_min2, y_max2 = min_max_dict(coordinates_dict2_processed)
+
+# Use global min and max for consistency across subplots
+if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
+    x_min = min(x_min1, x_min2)
+    x_max = max(x_max1, x_max2)
+    y_min = min(y_min1, y_min2)
+    y_max = max(y_max1, y_max2)
+elif VideoData1_Has_Sleap:
+    x_min, x_max, y_min, y_max = x_min1, x_max1, y_min1, y_max1
+elif VideoData2_Has_Sleap:
+    x_min, x_max, y_min, y_max = x_min2, x_max2, y_min2, y_max2
+
+fig, ax = plt.subplots(nrows=2, ncols=2, figsize=(18, 12))
+fig.suptitle(
+    f"XY coordinate distribution of different points for {get_eye_label('VideoData1')} and {get_eye_label('VideoData2')} post outlier removal and NaN interpolation",
+    fontsize=14
+)
+
+# Define colormap for p1-p8
+colors = ['blue', 'green', 'red', 'cyan', 'magenta', 'yellow', 'black', 'orange']
+
+# Panel 1: left, right, center (VideoData1)
+if VideoData1_Has_Sleap:
+    ax[0, 0].set_title(f"{get_eye_label('VideoData1')}: left, right, center")
+    ax[0, 0].scatter(coordinates_dict1_processed['left.x'], coordinates_dict1_processed['left.y'], color='black', label='left', s=10)
+    ax[0, 0].scatter(coordinates_dict1_processed['right.x'], coordinates_dict1_processed['right.y'], color='grey', label='right', s=10)
+    ax[0, 0].scatter(coordinates_dict1_processed['center.x'], coordinates_dict1_processed['center.y'], color='red', label='center', s=10)
+    ax[0, 0].set_xlim([x_min, x_max])
+    ax[0, 0].set_ylim([y_min, y_max])
+    ax[0, 0].set_xlabel('x coordinates (pixels)')
+    ax[0, 0].set_ylabel('y coordinates (pixels)')
+    ax[0, 0].legend(loc='upper right')
+
+    # Panel 2: p1 to p8 (VideoData1)
+    ax[0, 1].set_title(f"{get_eye_label('VideoData1')}: p1 to p8")
+    for idx, col in enumerate(columns_of_interest[3:]):
+        ax[0, 1].scatter(coordinates_dict1_processed[f'{col}.x'], coordinates_dict1_processed[f'{col}.y'], color=colors[idx], label=col, s=5)
+    ax[0, 1].set_xlim([x_min, x_max])
+    ax[0, 1].set_ylim([y_min, y_max])
+    ax[0, 1].set_xlabel('x coordinates (pixels)')
+    ax[0, 1].set_ylabel('y coordinates (pixels)')
+    ax[0, 1].legend(loc='upper right')
+
+# Panel 3: left, right, center (VideoData2)
+if VideoData2_Has_Sleap:
+    ax[1, 0].set_title(f"{get_eye_label('VideoData2')}: left, right, center")
+    ax[1, 0].scatter(coordinates_dict2_processed['left.x'], coordinates_dict2_processed['left.y'], color='black', label='left', s=10)
+    ax[1, 0].scatter(coordinates_dict2_processed['right.x'], coordinates_dict2_processed['right.y'], color='grey', label='right', s=10)
+    ax[1, 0].scatter(coordinates_dict2_processed['center.x'], coordinates_dict2_processed['center.y'], color='red', label='center', s=10)
+    ax[1, 0].set_xlim([x_min, x_max])
+    ax[1, 0].set_ylim([y_min, y_max])
+    ax[1, 0].set_xlabel('x coordinates (pixels)')
+    ax[1, 0].set_ylabel('y coordinates (pixels)')
+    ax[1, 0].legend(loc='upper right')
+
+    # Panel 4: p1 to p8 (VideoData2)
+    ax[1, 1].set_title(f"{get_eye_label('VideoData2')}: p1 to p8")
+    for idx, col in enumerate(columns_of_interest[3:]):
+        ax[1, 1].scatter(coordinates_dict2_processed[f'{col}.x'], coordinates_dict2_processed[f'{col}.y'], color=colors[idx], label=col, s=5)
+    ax[1, 1].set_xlim([x_min, x_max])
+    ax[1, 1].set_ylim([y_min, y_max])
+    ax[1, 1].set_xlabel('x coordinates (pixels)')
+    ax[1, 1].set_ylabel('y coordinates (pixels)')
+    ax[1, 1].legend(loc='upper right')
+
+plt.tight_layout(rect=[0, 0.03, 1, 0.96])
 plt.show()
 
 # %%
-from scipy.signal import butter, filtfilt
-
-############################################################################################################
-# fit elypses on the 8 points to determine pupil centre and diameter
+# fit ellipses on the 8 points to determine pupil centre and diameter
 ############################################################################################################
 
 columns_of_interest = ['left.x','left.y','center.x','center.y','right.x','right.y','p1.x','p1.y','p2.x','p2.y','p3.x','p3.y','p4.x','p4.y','p5.x','p5.y','p6.x','p6.y','p7.x','p7.y','p8.x','p8.y']
-coordinates_dict=lp.get_coordinates_dict(VideoData1, columns_of_interest)
 
-theta = lp.find_horizontal_axis_angle(VideoData1, 'left', 'center')
-center_point = lp.get_left_right_center_point(coordinates_dict)
+# VideoData1 processing
+if VideoData1_Has_Sleap:
+    print(f"=== VideoData1 Ellipse Fitting for Pupil Diameter ===")
+    coordinates_dict1_processed = lp.get_coordinates_dict(VideoData1, columns_of_interest)
 
-columns_of_interest = ['left', 'right', 'center', 'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8']
-remformatted_coordinates_dict = lp.get_reformatted_coordinates_dict(coordinates_dict, columns_of_interest)
-centered_coordinates_dict = lp.get_centered_coordinates_dict(remformatted_coordinates_dict, center_point)
-rotated_coordinates_dict = lp.get_rotated_coordinates_dict(centered_coordinates_dict, theta)
+    theta1 = lp.find_horizontal_axis_angle(VideoData1, 'left', 'center')
+    center_point1 = lp.get_left_right_center_point(coordinates_dict1_processed)
 
-columns_of_interest = ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8']
-ellipse_parameters_data, ellipse_center_points_data = lp.get_fitted_ellipse_parameters(rotated_coordinates_dict, columns_of_interest)
+    columns_of_interest_reformatted = ['left', 'right', 'center', 'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8']
+    remformatted_coordinates_dict1 = lp.get_reformatted_coordinates_dict(coordinates_dict1_processed, columns_of_interest_reformatted)
+    centered_coordinates_dict1 = lp.get_centered_coordinates_dict(remformatted_coordinates_dict1, center_point1)
+    rotated_coordinates_dict1 = lp.get_rotated_coordinates_dict(centered_coordinates_dict1, theta1)
 
-average_diameter = np.mean([ellipse_parameters_data[:,0], ellipse_parameters_data[:,1]], axis=0)
+    columns_of_interest_ellipse = ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8']
+    ellipse_parameters_data1, ellipse_center_points_data1 = lp.get_fitted_ellipse_parameters(rotated_coordinates_dict1, columns_of_interest_ellipse)
 
-SleapVideoData1 = process.convert_arrays_to_dataframe(['Seconds', 'Ellipse.Diameter', 'Ellipse.Angle', 'Ellipse.Center.X', 'Ellipse.Center.Y'], [VideoData1['Seconds'].values, average_diameter, ellipse_parameters_data[:,2], ellipse_center_points_data[:,0], ellipse_center_points_data[:,1]])
+    average_diameter1 = np.mean([ellipse_parameters_data1[:,0], ellipse_parameters_data1[:,1]], axis=0)
+
+    SleapVideoData1 = process.convert_arrays_to_dataframe(['Seconds', 'Ellipse.Diameter', 'Ellipse.Angle', 'Ellipse.Center.X', 'Ellipse.Center.Y'], [VideoData1['Seconds'].values, average_diameter1, ellipse_parameters_data1[:,2], ellipse_center_points_data1[:,0], ellipse_center_points_data1[:,1]])
+
+# VideoData2 processing
+if VideoData2_Has_Sleap:
+    print(f"=== VideoData2 Ellipse Fitting for Pupil Diameter ===")
+    coordinates_dict2_processed = lp.get_coordinates_dict(VideoData2, columns_of_interest)
+
+    theta2 = lp.find_horizontal_axis_angle(VideoData2, 'left', 'center')
+    center_point2 = lp.get_left_right_center_point(coordinates_dict2_processed)
+
+    columns_of_interest_reformatted = ['left', 'right', 'center', 'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8']
+    remformatted_coordinates_dict2 = lp.get_reformatted_coordinates_dict(coordinates_dict2_processed, columns_of_interest_reformatted)
+    centered_coordinates_dict2 = lp.get_centered_coordinates_dict(remformatted_coordinates_dict2, center_point2)
+    rotated_coordinates_dict2 = lp.get_rotated_coordinates_dict(centered_coordinates_dict2, theta2)
+
+    columns_of_interest_ellipse = ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8']
+    ellipse_parameters_data2, ellipse_center_points_data2 = lp.get_fitted_ellipse_parameters(rotated_coordinates_dict2, columns_of_interest_ellipse)
+
+    average_diameter2 = np.mean([ellipse_parameters_data2[:,0], ellipse_parameters_data2[:,1]], axis=0)
+
+    SleapVideoData2 = process.convert_arrays_to_dataframe(['Seconds', 'Ellipse.Diameter', 'Ellipse.Angle', 'Ellipse.Center.X', 'Ellipse.Center.Y'], [VideoData2['Seconds'].values, average_diameter2, ellipse_parameters_data2[:,2], ellipse_center_points_data2[:,0], ellipse_center_points_data2[:,1]])
 
 ############################################################################################################
-# some aggressive filtering of the pupil diameter
+# Filter pupil diameter using 10 Hz Butterworth low-pass filter
 ############################################################################################################
-# Butterworth filter parameters
-cutoff = 5  # Hz
-fs = 1 / np.median(np.diff(SleapVideoData1['Seconds']))  # Sampling frequency (Hz)
-order = 6
 
-b, a = butter(order, cutoff / (0.5 * fs), btype='low')
-SleapVideoData1['Ellipse.Diameter.Filt'] = filtfilt(b, a, SleapVideoData1['Ellipse.Diameter'])
+# VideoData1 filtering
+if VideoData1_Has_Sleap:
+    print(f"\n=== VideoData1 Filtering ===")
+    # Butterworth filter parameters - 10 Hz low-pass filter
+    fs1 = 1 / np.median(np.diff(SleapVideoData1['Seconds']))  # Sampling frequency (Hz)
+    order = pupil_filter_order
 
-SleapVideoData1['Ellipse.Diameter'] = SleapVideoData1['Ellipse.Diameter'].rolling(window=12, center=True, min_periods=1).median()
+    b1, a1 = butter(order, pupil_filter_cutoff_hz / (0.5 * fs1), btype='low')
+    
+    # Handle NaN values before filtering (from blink detection)
+    # Replace NaN with forward-fill for filtering purposes only (to avoid filtfilt issues)
+    diameter_data = SleapVideoData1['Ellipse.Diameter'].copy()
+    # Use ffill() and bfill() instead of deprecated fillna(method='ffill')
+    diameter_data_filled = diameter_data.ffill().bfill()
+    
+    # Apply Butterworth filter
+    if not diameter_data_filled.isna().all():
+        filtered = filtfilt(b1, a1, diameter_data_filled)
+        # Restore NaN values at original NaN positions (from blinks)
+        filtered = pd.Series(filtered, index=diameter_data.index)
+        filtered[diameter_data.isna()] = np.nan
+        SleapVideoData1['Ellipse.Diameter.Filt'] = filtered
+    else:
+        # If all values are NaN, just copy
+        SleapVideoData1['Ellipse.Diameter.Filt'] = diameter_data
 
-print("✅ Done calculating pupil diameter and angle")
+# VideoData2 filtering
+if VideoData2_Has_Sleap:
+    print(f"=== VideoData2 Filtering ===")
+    # Butterworth filter parameters - 10 Hz low-pass filter
+    fs2 = 1 / np.median(np.diff(SleapVideoData2['Seconds']))  # Sampling frequency (Hz)
+    order = pupil_filter_order
+
+    b2, a2 = butter(order, pupil_filter_cutoff_hz / (0.5 * fs2), btype='low')
+    
+    # Handle NaN values before filtering (from blink detection)
+    # Replace NaN with forward-fill for filtering purposes only (to avoid filtfilt issues)
+    diameter_data = SleapVideoData2['Ellipse.Diameter'].copy()
+    # Use ffill() and bfill() instead of deprecated fillna(method='ffill')
+    diameter_data_filled = diameter_data.ffill().bfill()
+    
+    # Apply Butterworth filter
+    if not diameter_data_filled.isna().all():
+        filtered = filtfilt(b2, a2, diameter_data_filled)
+        # Restore NaN values at original NaN positions (from blinks)
+        filtered = pd.Series(filtered, index=diameter_data.index)
+        filtered[diameter_data.isna()] = np.nan
+        SleapVideoData2['Ellipse.Diameter.Filt'] = filtered
+    else:
+        # If all values are NaN, just copy
+        SleapVideoData2['Ellipse.Diameter.Filt'] = diameter_data
+
+print("✅ Done calculating pupil diameter and angle for both VideoData1 and VideoData2")
 
 # %%
-fig = make_subplots(
-    rows=1, cols=2,
-    subplot_titles=["Pupil Diameter", "Pupil Ellipse Long Axis Angle"],
-    column_widths=[0.67, 0.33]  # left plot is twice as wide as right plot
-)
+# cross-correlate pupil diameter for left and right eye 
+############################################################################################################
 
-fig.add_trace(
-    go.Scatter(
-        x=SleapVideoData1['Seconds'],
-        y=SleapVideoData1['Ellipse.Diameter'],
-        mode='lines',
-        name="Pupil Diameter"
-    ),
-    row=1, col=1
-)
+if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
+    # # Create subplots for both comparison and cross-correlation
+    # fig = make_subplots(
+    #     rows=2, cols=1,
+    #     subplot_titles=["Pupil Diameter Comparison", "Cross-Correlation Analysis"],
+    #     vertical_spacing=0.15
+    # )
 
-fig.add_trace(
-    go.Scatter(
-        x=SleapVideoData1['Seconds'],
-        y=np.degrees(SleapVideoData1['Ellipse.Angle']),
-        mode='markers',
-        name="Ellipse Angle",
-        marker=dict(size=1)
-    ),
-    row=1, col=2
-)
+    # # Add SleapVideoData1 pupil diameter
+    # fig.add_trace(
+    #     go.Scatter(
+    #         x=SleapVideoData1['Seconds'],
+    #         y=SleapVideoData1['Ellipse.Diameter'],
+    #         mode='lines',
+    #         name=f"VideoData1 Pupil Diameter",
+    #         line=dict(color='blue')
+    #     ),
+    #     row=1, col=1
+    # )
 
-fig.update_xaxes(title_text="Seconds", row=1, col=1)
-fig.update_yaxes(title_text="Diameter", row=1, col=1)
-fig.update_xaxes(title_text="Seconds", row=1, col=2)
-fig.update_yaxes(title_text="Angle (degrees)", row=1, col=2)
+    # # Add SleapVideoData2 pupil diameter
+    # fig.add_trace(
+    #     go.Scatter(
+    #         x=SleapVideoData2['Seconds'],
+    #         y=SleapVideoData2['Ellipse.Diameter'],
+    #         mode='lines',
+    #         name=f"VideoData2 Pupil Diameter",
+    #         line=dict(color='red')
+    #     ),
+    #     row=1, col=1
+    # )
 
-fig.update_layout(
-    height=500,
-    width=1200,
-    title_text="SLEAP VideoData1: Pupil Metrics"
-)
+    # Cross-correlation analysis
+    print("=== Cross-Correlation Analysis ===")
 
-fig.show()
+    # Get pupil diameter data
+    # Use filtered diameter data (with NaN restored at blink positions)
+    pupil1 = SleapVideoData1['Ellipse.Diameter.Filt'].values
+    pupil2 = SleapVideoData2['Ellipse.Diameter.Filt'].values
+
+    # Handle different lengths by using the shorter dataset length
+    min_length = min(len(pupil1), len(pupil2))
+
+    # Truncate both datasets to the same length (preserving time alignment)
+    pupil1_truncated = pupil1[:min_length]
+    pupil2_truncated = pupil2[:min_length]
+
+    # Remove NaN values for correlation - preserve time alignment by only keeping pairs where BOTH are valid
+    # This ensures cross-correlation is computed on temporally aligned data
+    valid_mask1 = ~np.isnan(pupil1_truncated)
+    valid_mask2 = ~np.isnan(pupil2_truncated)
+    valid_mask = valid_mask1 & valid_mask2  # Only use indices where both arrays have valid data
+
+    # Extract aligned pairs (preserves temporal alignment)
+    pupil1_clean = pupil1_truncated[valid_mask]
+    pupil2_clean = pupil2_truncated[valid_mask]
+
+    # Check if we have enough data
+    if len(pupil1_clean) < 2 or len(pupil2_clean) < 2:
+        print("❌ Error: Not enough valid data points for correlation analysis")
+    else:
+        # Z-score normalize both signals before cross-correlation
+        # This accounts for different camera magnifications/orientations by comparing relative changes
+        # Formula: z = (x - mean) / std
+        pupil1_mean = np.mean(pupil1_clean)
+        pupil1_std = np.std(pupil1_clean)
+        pupil2_mean = np.mean(pupil2_clean)
+        pupil2_std = np.std(pupil2_clean)
+        
+        if pupil1_std > 0 and pupil2_std > 0:
+            pupil1_z = (pupil1_clean - pupil1_mean) / pupil1_std
+            pupil2_z = (pupil2_clean - pupil2_mean) / pupil2_std
+            print(f"Applied z-score normalization to pupil diameter signals (accounts for different camera magnifications)")
+            print(f"  VideoData1: mean={pupil1_mean:.2f}, std={pupil1_std:.2f}")
+            print(f"  VideoData2: mean={pupil2_mean:.2f}, std={pupil2_std:.2f}")
+        else:
+            print("⚠️ Warning: Zero variance detected, using raw signals (no normalization)")
+            pupil1_z = pupil1_clean
+            pupil2_z = pupil2_clean
+        
+        # Calculate cross-correlation using z-scored signals
+        try:
+            correlation = correlate(pupil1_z, pupil2_z, mode='full')
+            
+            # Calculate lags (in samples)
+            lags = np.arange(-len(pupil2_z) + 1, len(pupil1_z))
+            
+            # Convert lags to time (assuming same sampling rate)
+            dt = np.median(np.diff(SleapVideoData1['Seconds']))
+            lag_times = lags * dt
+            
+            # Find peak correlation and corresponding lag
+            peak_idx = np.argmax(correlation)
+            peak_correlation = correlation[peak_idx]
+            peak_lag_samples = lags[peak_idx]
+            peak_lag_time = lag_times[peak_idx]
+            peak_lag_time_display = peak_lag_time # for final QC figure 
+            
+            print(f"Peak lag (time): {peak_lag_time:.4f} seconds")
+
+        
+            # Normalize correlation to [-1, 1] range (for z-scored signals, this is standard normalization)
+            norm_factor = np.sqrt(np.sum(pupil1_z**2) * np.sum(pupil2_z**2))
+            if norm_factor > 0:
+                correlation_normalized = correlation / norm_factor
+                peak_correlation_normalized = correlation_normalized[peak_idx]
+                print(f"Peak normalized correlation: {peak_correlation_normalized:.4f}")
+            else:
+                print("❌ Error: Cannot normalize correlation (zero variance)")
+                correlation_normalized = correlation
+                peak_correlation_normalized = 0
+            
+            # # Plot cross-correlation
+            # fig.add_trace(
+            #     go.Scatter(
+            #         x=lag_times,
+            #         y=correlation_normalized,
+            #         mode='lines',
+            #         name="Cross-Correlation",
+            #         line=dict(color='green')
+            #     ),
+            #     row=2, col=1
+            # )
+            
+            # # Add vertical line at peak
+            # fig.add_vline(
+            #     x=peak_lag_time,
+            #     line_dash="dash",
+            #     line_color="red",
+            #     annotation_text=f"Peak: {peak_correlation_normalized:.3f}",
+            #     row=2, col=1
+            # )
+            
+        except Exception as e:
+            print(f"❌ Error in cross-correlation calculation: {e}")
+            # # Add empty trace to maintain plot structure
+            # fig.add_trace(
+            #     go.Scatter(
+            #         x=[0], y=[0],
+            #         mode='lines',
+            #         name="Cross-Correlation (Error)",
+            #         line=dict(color='gray')
+            #     ),
+            #     row=2, col=1
+            # )
+
+    # # Update axes labels
+    # fig.update_xaxes(title_text="Time (seconds)", row=1, col=1)
+    # fig.update_yaxes(title_text="Pupil Diameter", row=1, col=1)
+    # fig.update_xaxes(title_text="Lag (seconds)", row=2, col=1)
+    # fig.update_yaxes(title_text="Normalized Correlation", row=2, col=1)
+
+    # fig.update_layout(
+    #     height=800,
+    #     width=1000,
+    #     title_text=f"SLEAP Pupil Diameter Analysis: Comparison & Cross-Correlation"
+    # )
+
+    # fig.show()
+
+    # Additional correlation statistics
+    if len(pupil1_clean) >= 2 and len(pupil2_clean) >= 2:
+        try:
+            # Calculate Pearson correlation coefficient on z-scored signals
+            # Note: For z-scored signals, Pearson correlation is equivalent to the normalized cross-correlation at zero lag
+            pearson_r, pearson_p = pearsonr(pupil1_z, pupil2_z)
+            pearson_r_display = pearson_r
+            pearson_p_display = pearson_p
+            
+            print(f"\n=== Additional Statistics ===")
+            print(f"Pearson correlation coefficient: {pearson_r:.2f}")
+
+            # Handle extremely small p-values
+            if pearson_p < 1e-300:
+                print(f'Pearson p-value: < 1e-300 (extremely significant)')
+            else:
+                print(f'Pearson p-value: {pearson_p:.5e}')
+            
+        except Exception as e:
+            print(f"❌ Error in additional statistics: {e}")
+            pearson_r_display = None
+            pearson_p_display = None
+    else:
+        print("❌ Cannot calculate additional statistics - insufficient data")
+else:
+    print("Only one eye is present, no pupil diameter cross-correlation can be done")
 
 # %%
-############################################################################################################
 # check if Second values match 1:1 between VideoData and SleapVideoData then merge them into VideoData
 ############################################################################################################
 
 if VideoData1_Has_Sleap is True:
     if VideoData1['Seconds'].equals(SleapVideoData1['Seconds']) is False:
-        print("❗ Video1: The 'Seconds' columns DO NOT correspond 1:1 between the two DataFrames. This should not happen")
+        print(f"❗ {get_eye_label('VideoData1')}: The 'Seconds' columns DO NOT correspond 1:1 between the two DataFrames. This should not happen")
     else:
         VideoData1 = VideoData1.merge(SleapVideoData1, on='Seconds', how='outer')
         del SleapVideoData1
 
 if VideoData2_Has_Sleap is True:
     if VideoData2['Seconds'].equals(SleapVideoData2['Seconds']) is False:
-        print("❗ Video2: The 'Seconds' columns DO NOT correspond 1:1 between the two DataFrames. This should not happen")
+        print(f"❗ {get_eye_label('VideoData2')}: The 'Seconds' columns DO NOT correspond 1:1 between the two DataFrames. This should not happen")
     else:
         VideoData2 = VideoData2.merge(SleapVideoData2, on='Seconds', how='outer')
         del SleapVideoData2
@@ -458,142 +2073,576 @@ gc.collect()
 None
 
 # %%
+# Compare SLEAP center.x and .y with fitted ellipse centre distributions for both VideoData1 and VideoData2
 ############################################################################################################
-# Compare center.x and .y with ellipse.centre.x and .y distributions
-############################################################################################################
 
 # ------------------------------------------------------------------
-# 1) Compute correlations
+# 1) Compute correlations for VideoData1
 # ------------------------------------------------------------------
-slope_x, intercept_x, r_value_x, p_value_x, std_err_x = linregress(
-    VideoData1["Ellipse.Center.X"], 
-    VideoData1["center.x"]
-)
-r_squared_x = r_value_x**2
-print(f"R^2 between center point and ellipse center X data: {r_squared_x:.4f}")
+if VideoData1_Has_Sleap is True:
+    print(f"=== VideoData1 Analysis ===")
+    slope_x1, intercept_x1, r_value_x1, p_value_x1, std_err_x1 = linregress(
+        VideoData1["Ellipse.Center.X"], 
+        VideoData1["center.x"]
+    )
+    r_squared_x1 = r_value_x1**2
+    print(f"{get_eye_label('VideoData1')} - R^2 between center point and ellipse center X data: {r_squared_x1:.4f}")
 
-slope_y, intercept_y, r_value_y, p_value_y, std_err_y = linregress(
-    VideoData1["Ellipse.Center.Y"], 
-    VideoData1["center.y"]
-)
-r_squared_y = r_value_y**2
-print(f"R^2 between center point and ellipse center Y data: {r_squared_y:.4f}")
-
-# ------------------------------------------------------------------
-# 2) Create subplots
-# ------------------------------------------------------------------
-fig, ax = plt.subplots(nrows=1, ncols=3, figsize=(30, 6))
+    slope_y1, intercept_y1, r_value_y1, p_value_y1, std_err_y1 = linregress(
+        VideoData1["Ellipse.Center.Y"], 
+        VideoData1["center.y"]
+    )
+    r_squared_y1 = r_value_y1**2
+    print(f"{get_eye_label('VideoData1')} - R^2 between center point and ellipse center Y data: {r_squared_y1:.4f}")
 
 # ------------------------------------------------------------------
-# 3) Scatter plots + linear fits
+# 2) Compute correlations for VideoData2
 # ------------------------------------------------------------------
-# (a) For X data
-ax[0].scatter(
-    VideoData1["Ellipse.Center.X"], 
-    VideoData1["center.x"], 
-    alpha=0.5, 
-    label="Data points"
-)
-ax[0].plot(
-    VideoData1["Ellipse.Center.X"],
-    intercept_x + slope_x * VideoData1["Ellipse.Center.X"],
-    "r",
-    label=f"Fitted line (R^2={r_squared_x:.2f})"
-)
-ax[0].set_xlabel("Ellipse.Center.X")
-ax[0].set_ylabel("center.x")
-ax[0].set_title("Ellipse.Center.X vs center.x (with linear fit)")
-ax[0].legend()
+if VideoData2_Has_Sleap is True:
+    print(f"\n=== VideoData2 Analysis ===")
+    slope_x2, intercept_x2, r_value_x2, p_value_x2, std_err_x2 = linregress(
+        VideoData2["Ellipse.Center.X"], 
+        VideoData2["center.x"]
+    )
+    r_squared_x2 = r_value_x2**2
+    print(f"{get_eye_label('VideoData2')} - R^2 between center point and ellipse center X data: {r_squared_x2:.4f}")
 
-# (b) For Y data
-ax[1].scatter(
-    VideoData1["Ellipse.Center.Y"], 
-    VideoData1["center.y"], 
-    alpha=0.5, 
-    label="Data points"
-)
-ax[1].plot(
-    VideoData1["Ellipse.Center.Y"],
-    intercept_y + slope_y * VideoData1["Ellipse.Center.Y"],
-    "r",
-    label=f"Fitted line (R^2={r_squared_y:.2f})"
-)
-ax[1].set_xlabel("Ellipse.Center.Y")
-ax[1].set_ylabel("center.y")
-ax[1].set_title("Ellipse.Center.Y vs center.y (with linear fit)")
-ax[1].legend()
+    slope_y2, intercept_y2, r_value_y2, p_value_y2, std_err_y2 = linregress(
+        VideoData2["Ellipse.Center.Y"], 
+        VideoData2["center.y"]
+    )
+    r_squared_y2 = r_value_y2**2
+    print(f"{get_eye_label('VideoData2')} - R^2 between center point and ellipse center Y data: {r_squared_y2:.4f}")
 
 # ------------------------------------------------------------------
-# 4) 2D KDE for Ellipse.Center (blue)
+# 3) Center of Mass Analysis (if both VideoData1 and VideoData2 are available)
 # ------------------------------------------------------------------
-x_ellipse = VideoData1["Ellipse.Center.X"].to_numpy()
-y_ellipse = VideoData1["Ellipse.Center.Y"].to_numpy()
-data_ellipse = np.vstack([x_ellipse, y_ellipse])
-
-fkde_ellipse = fastKDE(data_ellipse)
-pdf_ellipse = fkde_ellipse.pdf
-x_axis_ellipse, y_axis_ellipse = fkde_ellipse.axes
-
-im_ellipse = ax[2].imshow(
-    pdf_ellipse,
-    extent=[x_axis_ellipse.min(), x_axis_ellipse.max(), 
-            y_axis_ellipse.min(), y_axis_ellipse.max()],
-    aspect="auto",
-    origin="lower",
-    cmap="Blues",
-    alpha=0.4,       # Lower alpha so red can be seen clearly
-    norm=LogNorm(),
-    zorder=1
-)
-
-cbar_ellipse = plt.colorbar(im_ellipse, ax=ax[2], orientation="vertical", fraction=0.046, pad=0.04)
-cbar_ellipse.set_label("Ellipse.Center Density (log scale)")
-
-# ------------------------------------------------------------------
-# 5) 2D KDE for center (red)
-# ------------------------------------------------------------------
-x_center = VideoData1["center.x"].to_numpy()
-y_center = VideoData1["center.y"].to_numpy()
-data_center = np.vstack([x_center, y_center])
-
-fkde_center = fastKDE(data_center)
-pdf_center = fkde_center.pdf
-x_axis_center, y_axis_center = fkde_center.axes
-
-im_center = ax[2].imshow(
-    pdf_center,
-    extent=[x_axis_center.min(), x_axis_center.max(), 
-            y_axis_center.min(), y_axis_center.max()],
-    aspect="auto",
-    origin="lower",
-    cmap="Reds",
-    alpha=0.8,        # Higher alpha to make red more visible
-    norm=LogNorm(),
-    zorder=2          # Above the blue distribution
-)
-
-cbar_center = plt.colorbar(im_center, ax=ax[2], orientation="vertical", fraction=0.046, pad=0.04)
-cbar_center.set_label("Center Density (log scale)")
+if VideoData1_Has_Sleap is True and VideoData2_Has_Sleap is True:
+    print(f"\n=== Center of Mass Distance Analysis ===")
+    
+    # Calculate center of mass (mean) for VideoData1
+    com_center_x1 = VideoData1["center.x"].mean()
+    com_center_y1 = VideoData1["center.y"].mean()
+    com_ellipse_x1 = VideoData1["Ellipse.Center.X"].mean()
+    com_ellipse_y1 = VideoData1["Ellipse.Center.Y"].mean()
+    
+    # Calculate absolute distances for VideoData1
+    dist_x1 = abs(com_center_x1 - com_ellipse_x1)
+    dist_y1 = abs(com_center_y1 - com_ellipse_y1)
+    
+    print(f"\n{get_eye_label('VideoData1')}:")
+    print(f"  Center of mass for center.x/y: ({com_center_x1:.4f}, {com_center_y1:.4f})")
+    print(f"  Center of mass for Ellipse.Center.X/Y: ({com_ellipse_x1:.4f}, {com_ellipse_y1:.4f})")
+    print(f"  Absolute distance in X: {dist_x1:.4f} pixels")
+    print(f"  Absolute distance in Y: {dist_y1:.4f} pixels")
+    
+    # Calculate center of mass (mean) for VideoData2
+    com_center_x2 = VideoData2["center.x"].mean()
+    com_center_y2 = VideoData2["center.y"].mean()
+    com_ellipse_x2 = VideoData2["Ellipse.Center.X"].mean()
+    com_ellipse_y2 = VideoData2["Ellipse.Center.Y"].mean()
+    
+    # Calculate absolute distances for VideoData2
+    dist_x2 = abs(com_center_x2 - com_ellipse_x2)
+    dist_y2 = abs(com_center_y2 - com_ellipse_y2)
+    
+    print(f"\n{get_eye_label('VideoData2')}:")
+    print(f"  Center of mass for center.x/y: ({com_center_x2:.4f}, {com_center_y2:.4f})")
+    print(f"  Center of mass for Ellipse.Center.X/Y: ({com_ellipse_x2:.4f}, {com_ellipse_y2:.4f})")
+    print(f"  Absolute distance in X: {dist_x2:.4f} pixels")
+    print(f"  Absolute distance in Y: {dist_y2:.4f} pixels")
 
 # ------------------------------------------------------------------
-# 6) Final formatting
+# 4) Re-center Ellipse.Center.X and Ellipse.Center.Y using median
 # ------------------------------------------------------------------
-ax[2].set_xlabel("X coordinates")
-ax[2].set_ylabel("Y coordinates")
-ax[2].set_title("Probability distribution of X-Y pairs")
+print("\n=== Re-centering Ellipse.Center coordinates ===")
 
-legend_elements = [
-    Line2D([0], [0], color="blue", lw=4, label="Ellipse.Center"),
-    Line2D([0], [0], color="red",  lw=4, label="center.xy")
-]
-ax[2].legend(handles=legend_elements, loc="upper right")
+# Re-center VideoData1 Ellipse.Center coordinates
+if VideoData1_Has_Sleap is True:
+    # Calculate median
+    median_ellipse_x1 = VideoData1["Ellipse.Center.X"].median()
+    median_ellipse_y1 = VideoData1["Ellipse.Center.Y"].median()
+    
+    # Center the coordinates
+    VideoData1["Ellipse.Center.X"] = VideoData1["Ellipse.Center.X"] - median_ellipse_x1
+    VideoData1["Ellipse.Center.Y"] = VideoData1["Ellipse.Center.Y"] - median_ellipse_y1
+    
+    print(f"{get_eye_label('VideoData1')} - Re-centered Ellipse.Center using median: ({median_ellipse_x1:.4f}, {median_ellipse_y1:.4f})")
 
-plt.tight_layout()
+# Re-center VideoData2 Ellipse.Center coordinates
+if VideoData2_Has_Sleap is True:
+    # Calculate median
+    median_ellipse_x2 = VideoData2["Ellipse.Center.X"].median()
+    median_ellipse_y2 = VideoData2["Ellipse.Center.Y"].median()
+    
+    # Center the coordinates
+    VideoData2["Ellipse.Center.X"] = VideoData2["Ellipse.Center.X"] - median_ellipse_x2
+    VideoData2["Ellipse.Center.Y"] = VideoData2["Ellipse.Center.Y"] - median_ellipse_y2
+    
+    print(f"{get_eye_label('VideoData2')} - Re-centered Ellipse.Center using median: ({median_ellipse_x2:.4f}, {median_ellipse_y2:.4f})")
+
+
+
+# %%
+# Make and save summary QC plot using matplotlib with scatter plots for 2D distributions
+
+# Initialize the statistics variables (these are calculated in Cell 11)
+try:
+    pearson_r_display
+except NameError:
+    pearson_r_display = None
+    pearson_p_display = None
+    peak_lag_time_display = None
+    print("⚠️ Note: Statistics not found. They should be calculated in Cell 11.")
+
+# Calculate correlation for Ellipse.Center.X between VideoData1 and VideoData2 (if both exist)
+pearson_r_center = None
+pearson_p_center = None
+peak_lag_time_center = None
+
+if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
+    # Get the Center.X data
+    center_x1 = VideoData1['Ellipse.Center.X'].values
+    center_x2 = VideoData2['Ellipse.Center.X'].values
+    
+    min_length = min(len(center_x1), len(center_x2))
+    center_x1_truncated = center_x1[:min_length]
+    center_x2_truncated = center_x2[:min_length]
+    
+    valid_mask1 = ~np.isnan(center_x1_truncated)
+    valid_mask2 = ~np.isnan(center_x2_truncated)
+    valid_mask = valid_mask1 & valid_mask2
+    
+    center_x1_clean = center_x1_truncated[valid_mask]
+    center_x2_clean = center_x2_truncated[valid_mask]
+    
+    if len(center_x1_clean) >= 2 and len(center_x2_clean) >= 2:
+        try:
+            # Calculate Pearson correlation
+            pearson_r_center, pearson_p_center = pearsonr(center_x1_clean, center_x2_clean)
+            
+            # Calculate cross-correlation for peak lag
+            correlation = correlate(center_x1_clean, center_x2_clean, mode='full')
+            lags = np.arange(-len(center_x2_clean) + 1, len(center_x1_clean))
+            dt = np.median(np.diff(VideoData1['Seconds']))
+            lag_times = lags * dt
+            peak_idx = np.argmax(correlation)
+            peak_lag_time_center = lag_times[peak_idx]
+        except Exception as e:
+            print(f"❌ Error calculating Ellipse.Center.X correlation stats: {e}")
+
+# Create the QC summary figure using matplotlib with custom grid layout
+fig = plt.figure(figsize=(20, 18))
+fig.suptitle(str(data_path), fontsize=16, y=0.995)
+
+# Create a grid layout:
+# - Top row (full width): VideoData1 Time Series
+# - Second row (full width): VideoData2 Time Series  
+# - Third row (two columns): 2D scatter plots (VideoData1 left, VideoData2 right)
+# - Fourth row (two columns): Pupil diameter (left), Ellipse.Center.X correlation (right)
+
+gs = fig.add_gridspec(4, 2, hspace=0.3, wspace=0.3)
+
+# Panel 1: VideoData1 center coordinates - Time Series (full width)
+if VideoData1_Has_Sleap:
+    ax1 = fig.add_subplot(gs[0, :])
+    ax1.plot(VideoData1_centered['Seconds'], VideoData1_centered['center.x'],
+            linewidth=0.5, c='blue', alpha=0.6, label='center.x original')
+    ax1.plot(VideoData1['Seconds'], VideoData1['Ellipse.Center.X'],
+            linewidth=0.5, c='red', alpha=0.6, label='Ellipse Center.X')
+    ax1.set_xlabel('Time (s)')
+    ax1.set_ylabel('Position (pixels)')
+    ax1.set_title(f"{get_eye_label('VideoData1')} - center.X Time Series")
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+
+# Panel 2: VideoData2 center coordinates - Time Series (full width)
+if VideoData2_Has_Sleap:
+    ax2 = fig.add_subplot(gs[1, :])
+    ax2.plot(VideoData2_centered['Seconds'], VideoData2_centered['center.x'],
+            linewidth=0.5, c='blue', alpha=0.6, label='center.x original')
+    ax2.plot(VideoData2['Seconds'], VideoData2['Ellipse.Center.X'],
+            linewidth=0.5, c='red', alpha=0.6, label='Ellipse Center.X')
+    ax2.set_xlabel('Time (s)')
+    ax2.set_ylabel('Position (pixels)')
+    ax2.set_title(f"{get_eye_label('VideoData2')} - center.X Time Series")
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+
+# Panel 3: VideoData1 center coordinates - Scatter plot (left half)
+if VideoData1_Has_Sleap:
+    ax3 = fig.add_subplot(gs[2, 0])
+    
+    # Ellipse.Center (blue)
+    x_ellipse1 = VideoData1['Ellipse.Center.X'].to_numpy()
+    y_ellipse1 = VideoData1['Ellipse.Center.Y'].to_numpy()
+    mask1 = ~(np.isnan(x_ellipse1) | np.isnan(y_ellipse1))
+    
+    ax3.scatter(x_ellipse1[mask1], y_ellipse1[mask1],
+               s=1, alpha=0.3, c='blue', label='Ellipse.Center')
+    
+    # Center (red) - from centered data
+    x_center1 = VideoData1_centered['center.x'].to_numpy()
+    y_center1 = VideoData1_centered['center.y'].to_numpy()
+    mask2 = ~(np.isnan(x_center1) | np.isnan(y_center1))
+    
+    ax3.scatter(x_center1[mask2], y_center1[mask2],
+               s=1, alpha=0.3, c='red', label='center.x original')
+    
+    ax3.set_xlabel('Center X (pixels)')
+    ax3.set_ylabel('Center Y (pixels)')
+    ax3.set_title(f"{get_eye_label('VideoData1')} - Center X-Y Distribution (center.X vs Ellipse)")
+    ax3.legend()
+    ax3.grid(True, alpha=0.3)
+    
+    # Add R² statistics for VideoData1 (bottom left)
+    try:
+        if 'r_squared_x1' in globals() and 'r_squared_y1' in globals():
+            stats_text = f'R² X: {r_squared_x1:.2g}\nR² Y: {r_squared_y1:.2g}'
+            ax3.text(0.02, 0.02, stats_text, transform=ax3.transAxes,
+                    verticalalignment='bottom', horizontalalignment='left',
+                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8),
+                    fontsize=9, family='monospace')
+    except:
+        pass
+    
+    # Add center of mass distance for VideoData1 (bottom right)
+    try:
+        if 'dist_x1' in globals() and 'dist_y1' in globals():
+            distance_text = f'COM Dist X: {dist_x1:.3g}\nCOM Dist Y: {dist_y1:.3g}'
+            ax3.text(0.98, 0.02, distance_text, transform=ax3.transAxes,
+                    verticalalignment='bottom', horizontalalignment='right',
+                    bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8),
+                    fontsize=9, family='monospace')
+    except:
+        pass
+
+# Panel 4: VideoData2 center coordinates - Scatter plot (right half)
+if VideoData2_Has_Sleap:
+    ax4 = fig.add_subplot(gs[2, 1])
+    
+    # Ellipse.Center (blue)
+    x_ellipse2 = VideoData2['Ellipse.Center.X'].to_numpy()
+    y_ellipse2 = VideoData2['Ellipse.Center.Y'].to_numpy()
+    mask3 = ~(np.isnan(x_ellipse2) | np.isnan(y_ellipse2))
+    
+    ax4.scatter(x_ellipse2[mask3], y_ellipse2[mask3],
+               s=1, alpha=0.3, c='blue', label='Ellipse.Center')
+    
+    # Center (red) - from centered data
+    x_center2 = VideoData2_centered['center.x'].to_numpy()
+    y_center2 = VideoData2_centered['center.y'].to_numpy()
+    mask4 = ~(np.isnan(x_center2) | np.isnan(y_center2))
+    
+    ax4.scatter(x_center2[mask4], y_center2[mask4],
+               s=1, alpha=0.3, c='red', label='center.X Center')
+    
+    ax4.set_xlabel('Center X (pixels)')
+    ax4.set_ylabel('Center Y (pixels)')
+    ax4.set_title(f"{get_eye_label('VideoData2')} - Center X-Y Distribution (center.X vs Ellipse)")
+    ax4.legend()
+    ax4.grid(True, alpha=0.3)
+    
+    # Add R² statistics for VideoData2 (bottom left)
+    try:
+        if 'r_squared_x2' in globals() and 'r_squared_y2' in globals():
+            stats_text = f'R² X: {r_squared_x2:.2g}\nR² Y: {r_squared_y2:.2g}'
+            ax4.text(0.02, 0.02, stats_text, transform=ax4.transAxes,
+                    verticalalignment='bottom', horizontalalignment='left',
+                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8),
+                    fontsize=9, family='monospace')
+    except:
+        pass
+    
+    # Add center of mass distance for VideoData2 (bottom right)
+    try:
+        if 'dist_x2' in globals() and 'dist_y2' in globals():
+            distance_text = f'COM Dist X: {dist_x2:.3g}\nCOM Dist Y: {dist_y2:.3g}'
+            ax4.text(0.98, 0.02, distance_text, transform=ax4.transAxes,
+                    verticalalignment='bottom', horizontalalignment='right',
+                    bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8),
+                    fontsize=9, family='monospace')
+    except:
+        pass
+
+# Panel 5: Pupil diameter comparison (bottom left)
+ax5 = fig.add_subplot(gs[3, 0])
+if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
+    ax5.plot(VideoData1['Seconds'], VideoData1['Ellipse.Diameter.Filt'],
+            linewidth=0.5, c='#FF7F00', alpha=0.6, label='VideoData1 Diameter')
+    ax5.plot(VideoData2['Seconds'], VideoData2['Ellipse.Diameter.Filt'],
+            linewidth=0.5, c='#9370DB', alpha=0.6, label='VideoData2 Diameter')
+elif VideoData1_Has_Sleap:
+    ax5.plot(VideoData1['Seconds'], VideoData1['Ellipse.Diameter.Filt'],
+            linewidth=0.5, c='#FF7F00', alpha=0.6, label='VideoData1 Diameter')
+elif VideoData2_Has_Sleap:
+    ax5.plot(VideoData2['Seconds'], VideoData2['Ellipse.Diameter.Filt'],
+            linewidth=0.5, c='#9370DB', alpha=0.6, label='VideoData2 Diameter')
+
+ax5.set_xlabel('Time (s)')
+ax5.set_ylabel('Diameter (pixels)')
+ax5.set_title('Pupil Diameter Comparison')
+ax5.legend()
+ax5.grid(True, alpha=0.3)
+
+# Add statistics text to Panel 5
+if pearson_r_display is not None and pearson_p_display is not None and peak_lag_time_display is not None:
+    stats_text = (f'Pearson r = {pearson_r_display:.4f}\n'
+                  f'Pearson p = {pearson_p_display:.4e}\n'
+                  f'Peak lag = {peak_lag_time_display:.4f} s')
+    ax5.text(0.98, 0.98, stats_text, transform=ax5.transAxes,
+            verticalalignment='top', horizontalalignment='right',
+            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8),
+            fontsize=10, family='monospace')
+else:
+    ax5.text(0.5, 0.5, 'Statistics not available\n(See Cell 11 for correlation analysis)', 
+            transform=ax5.transAxes, ha='center', va='center', fontsize=10)
+
+# Panel 6: Ellipse.Center.X comparison (bottom right) with dual y-axis
+ax6 = fig.add_subplot(gs[3, 1])
+ax6_twin = ax6.twinx()  # Create a second y-axis
+
+if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
+    # Plot the individual traces
+    ax6.plot(VideoData1['Seconds'], VideoData1['Ellipse.Center.X'],
+            linewidth=0.5, c='#FF7F00', alpha=0.6, label='VideoData1 Ellipse.Center.X')
+    ax6.plot(VideoData2['Seconds'], VideoData2['Ellipse.Center.X'],
+            linewidth=0.5, c='#9370DB', alpha=0.6, label='VideoData2 Ellipse.Center.X')
+    
+    # Plot the difference on the right axis
+    # Align the data to the same length and normalize for fair comparison
+    min_length = min(len(VideoData1), len(VideoData2))
+    
+    # Normalize data (z-score) to account for different scales
+    center_x1_aligned = VideoData1['Ellipse.Center.X'].iloc[:min_length]
+    center_x2_aligned = VideoData2['Ellipse.Center.X'].iloc[:min_length]
+    
+    # Calculate mean and std for normalization
+    mean1 = center_x1_aligned.mean()
+    std1 = center_x1_aligned.std()
+    mean2 = center_x2_aligned.mean()
+    std2 = center_x2_aligned.std()
+    
+    # Normalize both datasets
+    center_x1_norm = (center_x1_aligned - mean1) / std1
+    center_x2_norm = (center_x2_aligned - mean2) / std2
+    
+    # Calculate difference of normalized data
+    center_x_diff = center_x1_norm - center_x2_norm
+    seconds_aligned = VideoData1['Seconds'].iloc[:min_length]
+    ax6_twin.plot(seconds_aligned, center_x_diff,
+                  linewidth=0.5, c='green', alpha=0.6, label='Difference (normalized)')
+    
+elif VideoData1_Has_Sleap:
+    ax6.plot(VideoData1['Seconds'], VideoData1['Ellipse.Center.X'],
+            linewidth=0.5, c='#FF7F00', alpha=0.6, label='VideoData1 Ellipse.Center.X')
+elif VideoData2_Has_Sleap:
+    ax6.plot(VideoData2['Seconds'], VideoData2['Ellipse.Center.X'],
+            linewidth=0.5, c='#9370DB', alpha=0.6, label='VideoData2 Ellipse.Center.X')
+
+ax6.set_xlabel('Time (s)')
+ax6.set_ylabel('Center X (pixels)', color='black')
+ax6.set_title('Ellipse.Center.X Comparison')
+ax6.tick_params(axis='y', labelcolor='black')
+if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
+    ax6_twin.set_ylabel('Normalized Difference (z-score)', color='green')
+    ax6_twin.tick_params(axis='y', labelcolor='green')
+
+# Combine legends from both axes
+lines1, labels1 = ax6.get_legend_handles_labels()
+if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
+    lines2, labels2 = ax6_twin.get_legend_handles_labels()
+    ax6.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
+else:
+    ax6.legend(loc='upper left')
+
+ax6.grid(True, alpha=0.3)
+
+# Add statistics text to Panel 6
+if pearson_r_center is not None and pearson_p_center is not None and peak_lag_time_center is not None:
+    stats_text = (f'Pearson r = {pearson_r_center:.4f}\n'
+                  f'Pearson p = {pearson_p_center:.4e}\n'
+                  f'Peak lag = {peak_lag_time_center:.4f} s')
+    ax6.text(0.98, 0.98, stats_text, transform=ax6.transAxes,
+            verticalalignment='top', horizontalalignment='right',
+            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8),
+            fontsize=10, family='monospace')
+else:
+    ax6.text(0.5, 0.5, 'Statistics not available\n(both eyes required)', 
+            transform=ax6.transAxes, ha='center', va='center', fontsize=10)
+
+# Save as PDF (editable vector format)
+save_path.mkdir(parents=True, exist_ok=True)
+pdf_path = save_path / "Eye_data_QC.pdf"
+plt.savefig(pdf_path, dpi=300, bbox_inches='tight', format='pdf')
+print(f"✅ QC figure saved as PDF (editable): {pdf_path}")
+
+# Also save as 600 dpi PNG (high-resolution for printing)
+png_path = save_path / "Eye_data_QC.png"
+plt.savefig(png_path, dpi=600, bbox_inches='tight', format='png')
+print(f"✅ QC figure saved as PNG (600 dpi for printing): {png_path}")
+
+
 plt.show()
 
 
 # %%
-############################################################################################################
+# Create interactive time series plots using plotly for browser viewing
+
+# Create subplots for the time series (3 rows now instead of 2)
+# Need to enable secondary_y for the third panel
+fig = make_subplots(
+    rows=3, cols=1,
+    shared_xaxes=True,
+    vertical_spacing=0.08,
+    subplot_titles=(
+        f"{get_eye_label('VideoData1')} - center.X Time Series",
+        f"{get_eye_label('VideoData2')} - center.X Time Series",
+        "Ellipse.Center.X Comparison with Difference"
+    ),
+    specs=[[{}], [{}], [{"secondary_y": True}]]  # Enable secondary_y for row 3
+)
+
+# Panel 1: VideoData1 center coordinates - Time Series
+if VideoData1_Has_Sleap:
+    fig.add_trace(go.Scatter(
+        x=VideoData1_centered['Seconds'],
+        y=VideoData1_centered['center.x'],
+        mode='lines',
+        name='center.x original',
+        line=dict(color='blue', width=0.5),
+        opacity=0.6
+    ), row=1, col=1)
+    
+    fig.add_trace(go.Scatter(
+        x=VideoData1['Seconds'],
+        y=VideoData1['Ellipse.Center.X'],
+        mode='lines',
+        name='Ellipse Center.X',
+        line=dict(color='red', width=0.5),
+        opacity=0.6
+    ), row=1, col=1)
+
+# Panel 2: VideoData2 center coordinates - Time Series
+if VideoData2_Has_Sleap:
+    fig.add_trace(go.Scatter(
+        x=VideoData2_centered['Seconds'],
+        y=VideoData2_centered['center.x'],
+        mode='lines',
+        name='center.x original',
+        line=dict(color='blue', width=0.5),
+        opacity=0.6
+    ), row=2, col=1)
+    
+    fig.add_trace(go.Scatter(
+        x=VideoData2['Seconds'],
+        y=VideoData2['Ellipse.Center.X'],
+        mode='lines',
+        name='Ellipse Center.X',
+        line=dict(color='red', width=0.5),
+        opacity=0.6
+    ), row=2, col=1)
+
+# Panel 3: Ellipse.Center.X Comparison with difference
+if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
+    # Plot the individual traces
+    fig.add_trace(go.Scatter(
+        x=VideoData1['Seconds'],
+        y=VideoData1['Ellipse.Center.X'],
+        mode='lines',
+        name='VideoData1 Ellipse.Center.X',
+        line=dict(color='#FF7F00', width=0.5),  # Orange
+        opacity=0.6
+    ), row=3, col=1)
+    
+    fig.add_trace(go.Scatter(
+        x=VideoData2['Seconds'],
+        y=VideoData2['Ellipse.Center.X'],
+        mode='lines',
+        name='VideoData2 Ellipse.Center.X',
+        line=dict(color='#9370DB', width=0.5),  # Purple
+        opacity=0.6
+    ), row=3, col=1)
+    
+    # Plot the difference on secondary y-axis
+    # Align the data to the same length and normalize for fair comparison
+    min_length = min(len(VideoData1), len(VideoData2))
+    
+    # Normalize data (z-score) to account for different scales
+    center_x1_aligned = VideoData1['Ellipse.Center.X'].iloc[:min_length]
+    center_x2_aligned = VideoData2['Ellipse.Center.X'].iloc[:min_length]
+    
+    # Calculate mean and std for normalization
+    mean1 = center_x1_aligned.mean()
+    std1 = center_x1_aligned.std()
+    mean2 = center_x2_aligned.mean()
+    std2 = center_x2_aligned.std()
+    
+    # Normalize both datasets
+    center_x1_norm = (center_x1_aligned - mean1) / std1
+    center_x2_norm = (center_x2_aligned - mean2) / std2
+    
+    # Calculate difference of normalized data
+    center_x_diff = center_x1_norm - center_x2_norm
+    seconds_aligned = VideoData1['Seconds'].iloc[:min_length]
+    
+    fig.add_trace(go.Scatter(
+        x=seconds_aligned,
+        y=center_x_diff,
+        mode='lines',
+        name='Difference (normalized)',
+        line=dict(color='green', width=0.5),
+        opacity=0.6
+    ), row=3, col=1, secondary_y=True)
+    
+elif VideoData1_Has_Sleap:
+    fig.add_trace(go.Scatter(
+        x=VideoData1['Seconds'],
+        y=VideoData1['Ellipse.Center.X'],
+        mode='lines',
+        name='VideoData1 Ellipse.Center.X',
+        line=dict(color='#FF7F00', width=0.5),
+        opacity=0.6
+    ), row=3, col=1)
+elif VideoData2_Has_Sleap:
+    fig.add_trace(go.Scatter(
+        x=VideoData2['Seconds'],
+        y=VideoData2['Ellipse.Center.X'],
+        mode='lines',
+        name='VideoData2 Ellipse.Center.X',
+        line=dict(color='#9370DB', width=0.5),
+        opacity=0.6
+    ), row=3, col=1)
+
+# Update layout
+fig.update_layout(
+    height=1200,  # Increased height for 3 panels
+    title_text=f'{data_path} - Eye Tracking Time Series QC',
+    showlegend=True,
+    hovermode='x unified'
+)
+
+# Update axes
+fig.update_xaxes(title_text="Time (s)", row=3, col=1)
+fig.update_yaxes(title_text="Position (pixels)", row=1, col=1)
+fig.update_yaxes(title_text="Position (pixels)", row=2, col=1)
+fig.update_yaxes(title_text="Center X (pixels)", row=3, col=1)
+
+# Update secondary y-axis for difference plot
+if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
+    fig.update_yaxes(title_text="Normalized Difference (z-score)", row=3, col=1, secondary_y=True)
+
+# Show in browser
+fig.show(renderer='browser')
+
+# Also save as HTML
+save_path.mkdir(parents=True, exist_ok=True)
+html_path = save_path / "Eye_data_QC_time_series.html"
+fig.write_html(html_path)
+print(f"✅ Interactive time series plot saved to: {html_path}")
+
+
+# %%
 # save as df to csv to be loaded in the photometry/harp/etc. analysis notebook 
 ############################################################################################################
 # reindex to aeon datetime to be done in the other notebook
@@ -618,837 +2667,901 @@ if VideoData2_Has_Sleap:
 #
 
 # %%
-VideoData1[["Seconds", "Ellipse.Center.X"]].head
+saccade_results = {}
 
-# %%
-# 1. Preprocess:  smooth
-df = VideoData1[["Ellipse.Center.X", "Seconds"]].copy()
-
-df['X_smooth'] = (
-    df['Ellipse.Center.X']
-      .rolling(window=5, center=True)
-      .median()
-      .bfill()
-      .ffill()
-)
-
-# 2. Compute instantaneous velocity
-#   dt in seconds
-df['dt'] = df['Seconds'].diff()
-#   vel = dX / dt
-df['vel_x'] = df['X_smooth'].diff() / df['dt']
-
-# --- Plot smoothed trace and on separate y axis plot velocity---
-# Create subplots with shared x-axis for synchronized zooming
-fig = make_subplots(
-    rows=2, cols=1,
-    shared_xaxes=True,  # This ensures x-axis zoom synchronization
-    vertical_spacing=0.1,
-    subplot_titles=('X Position (px)', 'Velocity (px/s)')
-)
-
-# Add X_smooth to the first subplot
-fig.add_trace(
-    go.Scatter(
-        x=df['Seconds'],
-        y=df['X_smooth'],
-        mode='lines',
-        name='Smoothed X',
-        line=dict(color='blue')
-    ),
-    row=1, col=1
-)
-
-# Add velocity to the second subplot
-fig.add_trace(
-    go.Scatter(
-        x=df['Seconds'],
-        y=df['vel_x'],
-        mode='lines',
-        name='Velocity',
-        line=dict(color='red')
-    ),
-    row=2, col=1
-)
-
-# Update layout
-fig.update_layout(
-    title='Smoothed X and Velocity Traces (Synchronized Zoom)',
-    height=600,  # Adjust height for two subplots
-    showlegend=True,
-    legend=dict(x=0.01, y=0.99)
-)
-
-# Update x-axes
-fig.update_xaxes(title_text="Time (s)", row=2, col=1)
-
-# Update y-axes
-fig.update_yaxes(title_text="X Position (px)", row=1, col=1)
-fig.update_yaxes(title_text="Velocity (px/s)", row=2, col=1)
-
-fig.show()
-
-
-# %% [markdown]
-# # more complex approach 
-
-# %%
-def detect_saccades_refined(df, k=3, pct=0.2, refractory=0.100):
-    """
-    df must have columns: Seconds, X_smooth, vel_x.
-    Returns DataFrame with one row per saccade:
-      start_time, end_time, peak_vel, amplitude, direction
-    """
-    # 1) compute global thresholds
-    abs_vel = df['vel_x'].abs().dropna()
-    vel_thresh = abs_vel.mean() + k * abs_vel.std()
-    pos_thresh, neg_thresh =  vel_thresh, -vel_thresh
-
-    # 2) label rough segments
-    df = df.copy()
-    df['is_pos'] = df['vel_x'] > pos_thresh
-    df['is_neg'] = df['vel_x'] < neg_thresh
-
-    df['id_pos'] = (df['is_pos'] & ~df['is_pos'].shift(fill_value=False)).cumsum().where(df['is_pos'], 0)
-    df['id_neg'] = (df['is_neg'] & ~df['is_neg'].shift(fill_value=False)).cumsum().where(df['is_neg'], 0)
-
-    events = []
-    for direction, seg_id_col, thr in [
-        ('pos','id_pos', pos_thresh),
-        ('neg','id_neg', neg_thresh)
-    ]:
-        for seg_id, seg in df.groupby(seg_id_col):
-            if seg_id == 0: 
-                continue
-
-            t = seg['Seconds'].values
-            v = seg['vel_x'].values
-            # a) raw indices of first crossing
-            #    (we know seg[0] is already above thr)
-            #    so look for the first index i where v[i] > thr (or < thr)
-            if direction=='pos':
-                idx_cross = np.nonzero(v > thr)[0][0]
-            else:
-                idx_cross = np.nonzero(v < thr)[0][0]
-
-            # b) interpolate to find sub-sample start crossing
-            if idx_cross>0:
-                t0, v0 = t[idx_cross-1], v[idx_cross-1]
-                t1, v1 = t[idx_cross],   v[idx_cross]
-                t_start_rough = t0 + (thr - v0)*(t1-t0)/(v1-v0)
-            else:
-                # already above threshold at first sample
-                t_start_rough = t[0]
-
-            # c) find the peak (or plateau) within this segment
-            if direction=='pos':
-                peak_i = np.argmax(v)
-            else:
-                peak_i = np.argmin(v)
-            v_peak = v[peak_i]
-
-            # d) define 20%-of-peak threshold (preserve sign)
-            thr20 = pct * abs(v_peak) * np.sign(v_peak)
-
-            # e) find raw end: first idx after peak where |v| < |thr20|
-            after_peak = np.where(np.abs(v[peak_i:]) < abs(thr20))[0]
-            if len(after_peak)==0:
-                # didn’t return to baseline within segment—skip
-                continue
-            idx_end = peak_i + after_peak[0]
-
-            # f) interpolate to get sub-sample end time
-            if idx_end>0:
-                t0_e, v0_e = t[idx_end-1], v[idx_end-1]
-                t1_e, v1_e = t[idx_end],   v[idx_end]
-                t_end = t0_e + (thr20 - v0_e)*(t1_e-t0_e)/(v1_e-v0_e)
-            else:
-                t_end = t[0]
-
-            # g) walk backwards from peak to find when |v| last < |thr20|
-            before_peak = np.where(np.abs(v[:peak_i][::-1]) < abs(thr20))[0]
-            if len(before_peak)==0:
-                # can’t find a clean baseline before peak → use rough start
-                t_start = t_start_rough
-            else:
-                j = peak_i - before_peak[0]  # this is first index > thr20 going backward
-                # j-1 is last below-thr20
-                t0_s, v0_s = t[j-1], v[j-1]
-                t1_s, v1_s = t[j],   v[j]
-                t_start = t0_s + (thr20 - v0_s)*(t1_s-t0_s)/(v1_s-v0_s)
-
-            # h) compute amplitude using interpolation of X_smooth
-            X = df[['Seconds','X_smooth']].dropna()
-            amp = np.interp(t_end,   X['Seconds'], X['X_smooth']) \
-                - np.interp(t_start, X['Seconds'], X['X_smooth'])
-
-            events.append({
-                'start_time': t_start,
-                'end_time':   t_end,
-                'peak_vel':   v_peak,
-                'amplitude':  amp,
-                'direction':  direction
-            })
-
-    # 3) make DataFrame & apply refractory
-    sacc = pd.DataFrame(events).sort_values('start_time').reset_index(drop=True)
-
-    keep = []
-    last_end = -np.inf
-    for _, row in sacc.iterrows():
-        if row['start_time'] - last_end >= refractory:
-            keep.append(row)
-            last_end = row['end_time']
-    return pd.DataFrame(keep)
-
-
-# ——————————————————————————————
-# USAGE:
-sacc_refined = detect_saccades_refined(df, k=3, pct=0.4, refractory=0.100)
-print(sacc_refined)
-
-import numpy as np
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-
-# ── 1) Define window and subset ───────────────────────────────
-t0_rel, t1_rel = 0, 1600
-t0 = df['Seconds'].min() + t0_rel
-t1 = df['Seconds'].min() + t1_rel
-
-df_win = df[(df['Seconds'] >= t0) & (df['Seconds'] <= t1)]
-s = sacc_refined[
-    (sacc_refined['start_time'] >= t0) &
-    (sacc_refined['end_time']   <= t1)
-]
-
-# ── 2) Interpolate to get X_smooth & vel_x at exact start/end ──
-x_start = np.interp(s['start_time'], df_win['Seconds'], df_win['X_smooth'])
-x_end   = np.interp(s['end_time'],   df_win['Seconds'], df_win['X_smooth'])
-v_start = np.interp(s['start_time'], df_win['Seconds'], df_win['vel_x'])
-v_end   = np.interp(s['end_time'],   df_win['Seconds'], df_win['vel_x'])
-
-# ── 3) Build 2-row subplot (shared x-axis) ────────────────────
-fig = make_subplots(
-    rows=2, cols=1, shared_xaxes=True,
-    vertical_spacing=0.05,
-    row_heights=[0.6,0.4],
-    subplot_titles=("Position (px)", "Velocity (px/s)")
-)
-
-# Position trace
-fig.add_trace(go.Scattergl(
-    x=df_win['Seconds'], y=df_win['X_smooth'],
-    mode='lines', line=dict(width=1), name='Position'
-), row=1, col=1)
-
-# Position: start markers
-fig.add_trace(go.Scattergl(
-    x=s['start_time'], y=x_start,
-    mode='markers',
-    marker=dict(symbol='triangle-up', size=8, color='red'),
-    name='Sac start'
-), row=1, col=1)
-
-# Position: end markers
-fig.add_trace(go.Scattergl(
-    x=s['end_time'], y=x_end,
-    mode='markers',
-    marker=dict(symbol='triangle-down', size=8, color='blue'),
-    name='Sac end'
-), row=1, col=1)
-
-
-# Velocity trace
-fig.add_trace(go.Scattergl(
-    x=df_win['Seconds'], y=df_win['vel_x'],
-    mode='lines', line=dict(width=1), name='Velocity'
-), row=2, col=1)
-
-# Velocity: start markers (hide legend duplicates)
-fig.add_trace(go.Scattergl(
-    x=s['start_time'], y=v_start,
-    mode='markers',
-    marker=dict(symbol='triangle-up', size=8, color='red'),
-    showlegend=False
-), row=2, col=1)
-
-# Velocity: end markers
-fig.add_trace(go.Scattergl(
-    x=s['end_time'], y=v_end,
-    mode='markers',
-    marker=dict(symbol='triangle-down', size=8, color='blue'),
-    showlegend=False
-), row=2, col=1)
-
-
-# ── 4) Layout tweaks ────────────────────────────────────────────
-fig.update_layout(
-    title=f"QC: {t0_rel}–{t1_rel} s Window",
-    height=500,
-    legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
-    margin=dict(l=50, r=50, t=60, b=40),
-)
-
-# shared x-axis formatting
-fig.update_xaxes(title_text="Time (s)", range=[t0, t1], row=2, col=1)
-fig.update_xaxes(showticklabels=False, row=1, col=1)
-
-fig.show()
-
-# %% [markdown]
-# # simple approach
-
-# %%
-# 1. Compute symmetric thresholds
-abs_vel = df['vel_x'].abs().dropna()
-k = 3  # times std to use as threshold
-vel_thresh = abs_vel.mean() + k * abs_vel.std()
-pos_thresh =  vel_thresh
-neg_thresh = -vel_thresh
-print(f"pos_thresh = {pos_thresh:.1f}, neg_thresh = {neg_thresh:.1f} px/s")
-
-# 2. Masks for each direction
-df['is_sac_pos'] = df['vel_x'] > pos_thresh
-df['is_sac_neg'] = df['vel_x'] < neg_thresh
-
-# 3. Label contiguous runs
-df['sac_pos_id'] = (
-    (df['is_sac_pos'] & ~df['is_sac_pos'].shift(fill_value=False))
-    .cumsum()
-    .where(df['is_sac_pos'], 0)
-)
-df['sac_neg_id'] = (
-    (df['is_sac_neg'] & ~df['is_sac_neg'].shift(fill_value=False))
-    .cumsum()
-    .where(df['is_sac_neg'], 0)
-)
-
-# 4. Aggregate each into summaries, then concat
-def summarize(df, col_id, direction):
-    return (
-        df[df[col_id] > 0]
-        .groupby(col_id)
-        .agg(
-            start_time=('Seconds', 'first'),
-            end_time  =('Seconds', 'last'),
-            peak_vel  =('vel_x', lambda x: x.max() if direction=='pos' else x.min()),
-            amplitude =('X_smooth', lambda x: (x.max()-x.min()) if direction=='pos' else (x.min()-x.max()))
-        )
-        .assign(direction=direction)
+if VideoData1_Has_Sleap:
+    print(f"\n🔎 === Source: ({get_eye_label('VideoData1')}) ===\n")
+    df1 = VideoData1[['Ellipse.Center.X', 'Seconds']].copy()
+    saccade_results['VideoData1'] = analyze_eye_video_saccades(
+        df1, FPS_1, get_eye_label('VideoData1'),
+        k=k1, refractory_period=refractory_period,
+        onset_offset_fraction=onset_offset_fraction,
+        n_before=n_before, n_after=n_after, baseline_n_points=5
     )
 
-sac_pos = summarize(df, 'sac_pos_id', 'pos')
-sac_neg = summarize(df, 'sac_neg_id', 'neg')
 
-saccades = pd.concat([sac_pos, sac_neg], ignore_index=True)
-print(f"Detected {len(saccades)} saccades ({sac_pos.shape[0]} pos, {sac_neg.shape[0]} neg)")
-
-# Add a refractory period of 100 ms to saccade detection
-refractory_period = 0.100  # seconds (100 ms)
-
-# Sort saccades by start_time just in case
-saccades = saccades.sort_values('start_time').reset_index(drop=True)
-
-# Keep only saccades that are at least 100 ms apart
-filtered_saccades = []
-last_end_time = -np.inf
-
-for idx, row in saccades.iterrows():
-    if row['start_time'] - last_end_time >= refractory_period:
-        filtered_saccades.append(row)
-        last_end_time = row['end_time']
-
-filtered_saccades = pd.DataFrame(filtered_saccades)
-print(f"After applying 100 ms refractory period: {len(filtered_saccades)} saccades remain")
-
+if VideoData2_Has_Sleap:
+    print(f"\n🔎 === Source: ({get_eye_label('VideoData2')}) ===\n")
+    df2 = VideoData2[['Ellipse.Center.X', 'Seconds']].copy()
+    saccade_results['VideoData2'] = analyze_eye_video_saccades(
+        df2, FPS_2, get_eye_label('VideoData2'),
+        k=k2, refractory_period=refractory_period,
+        onset_offset_fraction=onset_offset_fraction,
+        n_before=n_before, n_after=n_after, baseline_n_points=5
+    )
 
 # %%
-import numpy as np
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+# VISUALIZE ALL SACCADES - SIDE BY SIDE
+#-------------------------------------------------------------------------------
+# Plot all upward and downward saccades aligned by time with position and velocity traces
 
-# 1) Define window and subset
-t0_rel, t1_rel = 0, 1800
-t0 = df['Seconds'].min() + t0_rel
-t1 = df['Seconds'].min() + t1_rel
+# Create figure with 4 columns in a single row: up pos, up vel, down pos, down vel
 
-df_win = df[(df['Seconds'] >= t0) & (df['Seconds'] <= t1)]
-sacs_win = filtered_saccades[
-    (filtered_saccades['start_time'] >= t0) &
-    (filtered_saccades['start_time'] <= t1)
-]
-
-pos = sacs_win[sacs_win['direction']=='pos']
-neg = sacs_win[sacs_win['direction']=='neg']
-
-# Pre‐compute the X_smooth at each saccade start for the position markers
-x_pos_starts = np.interp(pos['start_time'], df_win['Seconds'], df_win['X_smooth'])
-x_neg_starts = np.interp(neg['start_time'], df_win['Seconds'], df_win['X_smooth'])
-
-# 2) Build 2-row subplot
-fig = make_subplots(
-    rows=2, cols=1,
-    shared_xaxes=True,
-    vertical_spacing=0.05,
-    row_heights=[0.6, 0.4],
-    subplot_titles=("Position (px)", "Velocity (px/s)")
-)
-
-# 3) Position trace + saccade markers
-fig.add_trace(
-    go.Scattergl(
-        x=df_win['Seconds'],
-        y=df_win['X_smooth'],
-        mode='lines',
-        line=dict(width=1),
-        name='Position'
-    ),
-    row=1, col=1
-)
-# Pos saccade starts on pos plot
-fig.add_trace(
-    go.Scattergl(
-        x=pos['start_time'],
-        y=x_pos_starts,
-        mode='markers',
-        marker=dict(symbol='triangle-up', size=8, color='red'),
-        showlegend=False
-    ),
-    row=1, col=1
-)
-# Neg saccade starts on pos plot
-fig.add_trace(
-    go.Scattergl(
-        x=neg['start_time'],
-        y=x_neg_starts,
-        mode='markers',
-        marker=dict(symbol='triangle-down', size=8, color='blue'),
-        showlegend=False
-    ),
-    row=1, col=1
-)
-
-# 4) Velocity trace + saccade markers
-fig.add_trace(
-    go.Scattergl(
-        x=df_win['Seconds'],
-        y=df_win['vel_x'],
-        mode='lines',
-        line=dict(width=1),
-        name='Velocity'
-    ),
-    row=2, col=1
-)
-# Pos saccade starts on vel plot
-fig.add_trace(
-    go.Scattergl(
-        x=pos['start_time'],
-        y=[pos_thresh]*len(pos),
-        mode='markers',
-        marker=dict(symbol='triangle-up', size=8, color='red'),
-        name='Pos sacc start'
-    ),
-    row=2, col=1
-)
-# Neg saccade starts on vel plot
-fig.add_trace(
-    go.Scattergl(
-        x=neg['start_time'],
-        y=[neg_thresh]*len(neg),
-        mode='markers',
-        marker=dict(symbol='triangle-down', size=8, color='blue'),
-        name='Neg sacc start'
-    ),
-    row=2, col=1
-)
-
-# 5) Layout
-fig.update_layout(
-    title=f"QC: {t0_rel}–{t1_rel} s Window",
-    height=500,
-    legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
-    margin=dict(l=50, r=50, t=60, b=40),
-)
-
-# 6) X‐axis formatting
-fig.update_xaxes(title_text="Time (s)", range=[t0, t1], row=2, col=1)
-fig.update_xaxes(showticklabels=False, row=1, col=1)
-
-fig.show()
-
-# %%
-
-# %%
-from scipy import stats
-
-# ══════════════════════════════════════════════════════════════════════════════════
-# ROBUST SACCADE THRESHOLD DETERMINATION
-# ══════════════════════════════════════════════════════════════════════════════════
-
-# 1. ANALYZE VELOCITY DISTRIBUTION
-vel_abs = np.abs(df['vel_x'].dropna())
-
-# Basic statistics
-vel_mean = np.mean(vel_abs)
-vel_median = np.median(vel_abs)
-vel_std = np.std(vel_abs)
-vel_mad = stats.median_abs_deviation(vel_abs)  # More robust than std
-
-print(f"Velocity Statistics:")
-print(f"Mean absolute velocity: {vel_mean:.2f} px/s")
-print(f"Median absolute velocity: {vel_median:.2f} px/s")
-print(f"Standard deviation: {vel_std:.2f} px/s")
-print(f"Median Absolute Deviation (MAD): {vel_mad:.2f} px/s")
-
-# 2. MULTIPLE THRESHOLD APPROACHES
-# Approach A: Standard deviation based (classical)
-threshold_std_3 = vel_mean + 3 * vel_std
-threshold_std_4 = vel_mean + 4 * vel_std
-threshold_std_5 = vel_mean + 5 * vel_std
-
-# Approach B: MAD-based (more robust to outliers)
-threshold_mad_3 = vel_median + 3 * vel_mad
-threshold_mad_4 = vel_median + 4 * vel_mad
-threshold_mad_5 = vel_median + 5 * vel_mad
-
-# Approach C: Percentile-based
-threshold_p95 = np.percentile(vel_abs, 95)
-threshold_p97 = np.percentile(vel_abs, 97)
-threshold_p99 = np.percentile(vel_abs, 99)
-
-# Approach D: Otsu's method (automatic threshold selection)
-def otsu_threshold(data, n_bins=512):
-    """Find optimal threshold using Otsu's method"""
-    hist, bin_edges = np.histogram(data, bins=n_bins)
-    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-    
-    # Normalize histogram
-    hist = hist.astype(float) / hist.sum()
-    
-    # Calculate cumulative sums
-    cum_sum = np.cumsum(hist)
-    cum_mean = np.cumsum(hist * bin_centers)
-    
-    # Calculate between-class variance
-    total_mean = cum_mean[-1]
-    between_var = np.zeros_like(cum_sum)
-    
-    for i in range(len(cum_sum)):
-        if cum_sum[i] > 0 and cum_sum[i] < 1:
-            w0 = cum_sum[i]
-            w1 = 1 - w0
-            mu0 = cum_mean[i] / w0 if w0 > 0 else 0
-            mu1 = (total_mean - cum_mean[i]) / w1 if w1 > 0 else 0
-            between_var[i] = w0 * w1 * (mu0 - mu1) ** 2
-    
-    # Find threshold that maximizes between-class variance
-    optimal_idx = np.argmax(between_var)
-    return bin_centers[optimal_idx]
-
-threshold_otsu = otsu_threshold(vel_abs)
-
-# 3. DISPLAY ALL THRESHOLDS
-print(f"\nProposed Thresholds:")
-print(f"Standard deviation based:")
-print(f"  3σ: {threshold_std_3:.2f} px/s")
-print(f"  4σ: {threshold_std_4:.2f} px/s")
-print(f"  5σ: {threshold_std_5:.2f} px/s")
-print(f"MAD-based (robust):")
-print(f"  3×MAD: {threshold_mad_3:.2f} px/s")
-print(f"  4×MAD: {threshold_mad_4:.2f} px/s")
-print(f"  5×MAD: {threshold_mad_5:.2f} px/s")
-print(f"Percentile-based:")
-print(f"  95th percentile: {threshold_p95:.2f} px/s")
-print(f"  97th percentile: {threshold_p97:.2f} px/s")
-print(f"  99th percentile: {threshold_p99:.2f} px/s")
-print(f"Otsu's method: {threshold_otsu:.2f} px/s")
-
-# 4. VISUALIZATION
-fig = make_subplots(
-    rows=2, cols=2,
-    subplot_titles=[
-        'Velocity Distribution (Linear Scale)',
-        'Velocity Distribution (Log Scale)', 
-        'Cumulative Distribution',
-        'Time Series with Threshold Candidates'
-    ],
-    specs=[[{"secondary_y": False}, {"secondary_y": False}],
-           [{"secondary_y": False}, {"secondary_y": False}]]
-)
-
-# Plot 1: Histogram (linear)
-fig.add_trace(
-    go.Histogram(x=vel_abs, nbinsx=100, name='Velocity', opacity=0.7),
-    row=1, col=1
-)
-
-# Add threshold lines
-thresholds = {
-    '3σ': threshold_std_3,
-    '4σ': threshold_std_4, 
-    '3×MAD': threshold_mad_3,
-    '99th %ile': threshold_p99,
-    'Otsu': threshold_otsu
-}
-
-colors = ['red', 'orange', 'blue', 'green', 'purple']
-for i, (name, thresh) in enumerate(thresholds.items()):
-    fig.add_vline(x=thresh, line_dash="dash", line_color=colors[i], 
-                  annotation_text=f"{name}: {thresh:.1f}", row=1, col=1)
-
-# Plot 2: Histogram (log scale)
-fig.add_trace(
-    go.Histogram(x=vel_abs, nbinsx=100, name='Velocity (log)', opacity=0.7),
-    row=1, col=2
-)
-fig.update_yaxes(type="log", row=1, col=2)
-
-# Plot 3: Cumulative distribution
-sorted_vel = np.sort(vel_abs)
-cumulative = np.arange(1, len(sorted_vel) + 1) / len(sorted_vel)
-fig.add_trace(
-    go.Scatter(x=sorted_vel, y=cumulative*100, mode='lines', name='CDF'),
-    row=2, col=1
-)
-
-# Plot 4: Time series with threshold candidates
-time_subset = df['Seconds'].iloc[::10]  # Subsample for visibility
-vel_subset = np.abs(df['vel_x'].iloc[::10])
-
-fig.add_trace(
-    go.Scatter(x=time_subset, y=vel_subset, mode='lines', 
-               name='|Velocity|', line=dict(color='lightgray')),
-    row=2, col=2
-)
-
-for i, (name, thresh) in enumerate(thresholds.items()):
-    fig.add_hline(y=thresh, line_dash="dash", line_color=colors[i],
-                  annotation_text=f"{name}", row=2, col=2)
-
-# Update layout
-fig.update_layout(
-    height=800,
-    title_text="Saccade Threshold Analysis",
-    showlegend=False
-)
-
-fig.update_xaxes(title_text="Absolute Velocity (px/s)", row=1, col=1)
-fig.update_xaxes(title_text="Absolute Velocity (px/s)", row=1, col=2)
-fig.update_xaxes(title_text="Absolute Velocity (px/s)", row=2, col=1)
-fig.update_xaxes(title_text="Time (s)", row=2, col=2)
-
-fig.update_yaxes(title_text="Count", row=1, col=1)
-fig.update_yaxes(title_text="Count (log)", row=1, col=2)
-fig.update_yaxes(title_text="Cumulative %", row=2, col=1)
-fig.update_yaxes(title_text="Velocity (px/s)", row=2, col=2)
-
-fig.show()
-
-# 5. RECOMMENDATION
-print(f"\n🎯 RECOMMENDATIONS:")
-print(f"1. For CONSERVATIVE detection (fewer false positives): Use 4-5σ or 4-5×MAD")
-print(f"2. For SENSITIVE detection (catch more saccades): Use 3σ or 3×MAD")
-print(f"3. For AUTOMATIC threshold: Use Otsu's method ({threshold_otsu:.1f} px/s)")
-print(f"4. MAD-based thresholds are more robust to outliers than σ-based")
-print(f"5. Consider your data characteristics and validation requirements")
-
-# Suggested threshold (you can modify this logic)
-if threshold_mad_3 > 20:  # Reasonable minimum for eye movements
-    suggested_threshold = threshold_mad_3
-    method_used = "3×MAD (robust)"
-else:
-    suggested_threshold = threshold_std_3
-    method_used = "3σ (classical)"
-
-print(f"\n✅ SUGGESTED THRESHOLD: {suggested_threshold:.1f} px/s ({method_used})")
-
-# %%
-
-# %%
-
-# %%
-import plotly.graph_objects as go
-
-fig = go.Figure()
-
-# Add X_smooth (or X_interp) on primary y-axis
-fig.add_trace(go.Scatter(
-    x=df['Seconds'],
-    y=df['X_smooth'],
-    mode='lines',
-    name='Smoothed X',
-    line=dict(color='blue')
-))
-
-# Add velocity on secondary y-axis
-fig.add_trace(go.Scatter(
-    x=df['Seconds'],
-    y=df['vel_x'],
-    mode='lines',
-    name='Velocity',
-    line=dict(color='red'),
-    yaxis='y2'
-))
-
-fig.update_layout(
-    title='Smoothed X and Velocity Traces',
-    xaxis_title='Time (s)',
-    yaxis=dict(
-        title='X Position (px)',
-        title=dict(font=dict(color='blue')),
-        tickfont=dict(color='blue')
-    ),
-    yaxis2=dict(
-        title='Velocity (px/s)',
-        title=dict(font=dict(color='red')),
-        tickfont=dict(color='red'),
-        overlaying='y',
-        side='right'
-    ),
-    legend=dict(x=0.01, y=0.99)
-)
-
-fig.show(renderer='browser')
-
-# %% [markdown]
-# # PRE_ANR code
-
-# %%
-# detect saccades 
-df = VideoData1.copy()
-
-df.index = pd.to_datetime(df.index * (1 / framerate), unit='s')
-
-# 1) Compute velocity (units/s). Filter/diff/filter. Because sample rate is 1000 Hz, diff is * 1000.
-window_size = int(round(2 / framerate * 1000))
-df["velocity"] = df["Ellipse.Center.X"].rolling(window=window_size, center=True, min_periods=1).mean()
-df["velocity"] = df["velocity"].diff() * 1000
-window_size = int(round(4 / framerate * 1000))
-df["velocity"] = df["velocity"].rolling(window=window_size, center=True, min_periods=1).mean()
-
-# 2) Define a velocity threshold for saccades (adjust as needed)
-# implement adaptive filter in the future 
-
-# 3) Create a boolean mask for samples exceeding the threshold
-df["is_saccade"] = df["velocity"].abs() > threshold
-
-# 4) Group consecutive saccade samples to form saccade events.
-#    Label each contiguous "True" block with a unique ID.
-df["saccade_id"] = (df["is_saccade"] & ~df["is_saccade"].shift(fill_value=False)).cumsum() * df["is_saccade"]
-
-# 5) Extract saccade onset times and basic details for each saccade.
-saccade_events = []
-for sacc_id, group in df.groupby("saccade_id"):
-    if sacc_id == 0:
-        continue
-    saccade_time = group.index[0]
-    peak_time = group["velocity"].abs().idxmax()  # Save the time when the absolute velocity peaks
-    peak_velocity = group["velocity"].abs().max()
-    direction = "positive" if group["velocity"].mean() > 0 else "negative"
-    
-    saccade_events.append({
-        "saccade_id": sacc_id,
-        "saccade_time": saccade_time,
-        "peak_time": peak_time,         # New column for peak time
-        "peak_velocity": peak_velocity,
-        "direction": direction
-    })
-
-# 6) Apply a refractory period of 50 ms: if 2 saccade events occur within 50 ms, keep only the first.
-filtered_saccade_events = []
-last_event_time = None  # Initialize as None
-
-for event in saccade_events:
-    if last_event_time is None or (event["saccade_time"] - last_event_time) >= refractory_period:
-        filtered_saccade_events.append(event)
-        last_event_time = event["saccade_time"]
-
-
-# 7) For each filtered saccade event, calculate the baseline and relative peak.
-frame_duration = 1 / framerate  # seconds per frame
-for event in filtered_saccade_events:
-    saccade_time = event["saccade_time"]
-    # Baseline: average the data for 3 frames immediately BEFORE the saccade onset.
-    baseline_start = saccade_time - pd.Timedelta(seconds=3 * frame_duration)
-    baseline = df.loc[baseline_start:saccade_time, "Ellipse.Center.X"].mean()
-    event["baseline"] = baseline
-
-    # Relative peak: in the next 40 ms after the saccade onset, measure the peak change relative to the baseline.
-    window_end = saccade_time + pd.Timedelta(milliseconds=500)
-    saccade_window = df.loc[saccade_time:window_end, "Ellipse.Center.X"]
-    if event["direction"] == "positive":
-        relative_peak = saccade_window.max() - baseline
+# Helper: map detected directions (upward/downward) to NT/TN based on eye assignment
+# Left eye: upward→NT, downward→TN; Right eye: upward→TN, downward→NT
+def get_direction_map_for_video(video_key):
+    eye = video1_eye if video_key == 'VideoData1' else video2_eye
+    if eye == 'L':
+        return {'upward': 'NT', 'downward': 'TN'}
     else:
-        relative_peak = baseline - saccade_window.min()
-    event["relative_peak"] = relative_peak
+        return {'upward': 'TN', 'downward': 'NT'}
 
-# Create a DataFrame of the filtered saccade events including the new metrics.
-results_df = pd.DataFrame(filtered_saccade_events)
+for video_key, res in saccade_results.items():
+    dir_map = get_direction_map_for_video(video_key)
+    label_up = dir_map['upward']
+    label_down = dir_map['downward']
+
+    upward_saccades_df = res['upward_saccades_df']
+    downward_saccades_df = res['downward_saccades_df']
+    peri_saccades = res['peri_saccades']
+    upward_segments = res['upward_segments']
+    downward_segments = res['downward_segments']
+    # Any other variables you need...
+
+    fig_all = make_subplots(
+        rows=1, cols=4,
+        shared_yaxes=False,  # Each panel can have different y-axis scale
+        shared_xaxes=False,
+        subplot_titles=(
+            f'Position - {label_up} Saccades',
+            f'Velocity - {label_up} Saccades',
+            f'Position - {label_down} Saccades',
+            f'Velocity - {label_down} Saccades'
+        )
+    )
+
+    # Extract segments for each direction
+    upward_segments_all = [seg for seg in peri_saccades if seg['saccade_direction'].iloc[0] == 'upward']
+    downward_segments_all = [seg for seg in peri_saccades if seg['saccade_direction'].iloc[0] == 'downward']
+
+    # Filter outliers
+    upward_segments, upward_outliers_meta, upward_outlier_segments = sp.filter_outlier_saccades(upward_segments_all, 'upward')
+    downward_segments, downward_outliers_meta, downward_outlier_segments = sp.filter_outlier_saccades(downward_segments_all, 'downward')
+
+    print(f"Plotting {len(upward_segments)} {label_up} and {len(downward_segments)} {label_down} saccades...")
+    if len(upward_outliers_meta) > 0 or len(downward_outliers_meta) > 0:
+        print(f"   Excluded {len(upward_outliers_meta)} {label_up} outlier(s) and {len(downward_outliers_meta)} {label_down} outlier(s)")
+
+    if len(upward_outliers_meta) > 0:
+        print(f"\n   {label_up} outliers (first 5):")
+        for i, out in enumerate(upward_outliers_meta[:5]):
+            pass
+        if len(upward_outliers_meta) > 5:
+            print(f"      ... and {len(upward_outliers_meta) - 5} more")
+
+    if len(downward_outliers_meta) > 0:
+        print(f"\n   {label_down} outliers (first 5):")
+        for i, out in enumerate(downward_outliers_meta[:5]):
+            pass
+        if len(downward_outliers_meta) > 5:
+            print(f"      ... and {len(downward_outliers_meta) - 5} more")
+
+    # Plot upward saccades
+    for i, segment in enumerate(upward_segments):
+        color_opacity = 0.15 if len(upward_segments) > 20 else 0.3
+        
+        # Position trace (using baselined values)
+        fig_all.add_trace(
+            go.Scatter(
+                x=segment['Time_rel_threshold'],
+                y=segment['X_smooth_baselined'],
+                mode='lines',
+                name=f'Up #{i+1}',
+                line=dict(color='green', width=1),
+                showlegend=False,
+                opacity=color_opacity
+            ),
+            row=1, col=1
+        )
+        
+        # Velocity trace
+        fig_all.add_trace(
+            go.Scatter(
+                x=segment['Time_rel_threshold'],
+                y=segment['vel_x_smooth'],
+                mode='lines',
+                name=f'Up #{i+1}',
+                line=dict(color='green', width=1),
+                        showlegend=False,
+                opacity=color_opacity
+            ),
+            row=1, col=2
+        )
+
+    # Plot downward saccades
+    for i, segment in enumerate(downward_segments):
+        color_opacity = 0.15 if len(downward_segments) > 20 else 0.3
+        
+        # Position trace (using baselined values)
+        fig_all.add_trace(
+            go.Scatter(
+                x=segment['Time_rel_threshold'],
+                y=segment['X_smooth_baselined'],
+                mode='lines',
+                name=f'Down #{i+1}',
+                line=dict(color='purple', width=1),
+                showlegend=False,
+                opacity=color_opacity
+            ),
+            row=1, col=3
+        )
+        
+        # Velocity trace
+        fig_all.add_trace(
+            go.Scatter(
+                x=segment['Time_rel_threshold'],
+                y=segment['vel_x_smooth'],
+                mode='lines',
+                name=f'Down #{i+1}',
+                line=dict(color='purple', width=1),
+                showlegend=False,
+                opacity=color_opacity
+            ),
+            row=1, col=4
+        )
+
+    # Add mean traces for reference
+    if len(upward_segments) > 0:
+        # Calculate mean for upward by aligning segments by Time_rel_threshold (not by array index)
+        # Find the threshold crossing index (where Time_rel_threshold ≈ 0) for each segment and align based on that
+        aligned_positions = []
+        aligned_velocities = []
+        aligned_times = []
+        
+        for seg in upward_segments:
+            # Find index where Time_rel_threshold is closest to 0 (the threshold crossing)
+            threshold_idx = np.abs(seg['Time_rel_threshold'].values).argmin()
+            
+            # Extract data centered on threshold crossing: n_before points before, threshold crossing, n_after points after
+            start_idx = max(0, threshold_idx - n_before)
+            end_idx = min(len(seg), threshold_idx + n_after + 1)
+            
+            # Extract aligned segment
+            aligned_seg = seg.iloc[start_idx:end_idx].copy()
+            
+            # Find where the threshold crossing actually is within the extracted segment
+            threshold_in_seg_idx = threshold_idx - start_idx
+            
+            # Ensure threshold crossing is at index n_before by padding at start if needed
+            if threshold_in_seg_idx < n_before:
+                # Need to pad at the start to align threshold crossing to index n_before
+                pad_length = n_before - threshold_in_seg_idx
+                # Estimate time step from original segment for padding
+                if len(seg) > 1:
+                    dt_est = np.diff(seg['Time_rel_threshold'].values).mean()
+                else:
+                    dt_est = 0.0083  # default estimate if we can't calculate
+                
+                # Create padding with NaN values
+                pad_times = aligned_seg['Time_rel_threshold'].iloc[0] - dt_est * np.arange(pad_length, 0, -1)
+                pad_df = pd.DataFrame({
+                    'X_smooth_baselined': [np.nan] * pad_length,
+                    'vel_x_smooth': [np.nan] * pad_length,
+                    'Time_rel_threshold': pad_times
+                })
+                aligned_seg = pd.concat([pad_df, aligned_seg.reset_index(drop=True)], ignore_index=True)
+            
+            aligned_positions.append(aligned_seg['X_smooth_baselined'].values)
+            aligned_velocities.append(aligned_seg['vel_x_smooth'].values)
+            aligned_times.append(aligned_seg['Time_rel_threshold'].values)
+        
+        # Find minimum length after alignment
+        min_length = min(len(pos) for pos in aligned_positions)
+        max_length = max(len(pos) for pos in aligned_positions)
+        
+        if min_length != max_length:
+            print(f"⚠️  Warning: {label_up} segments have variable lengths after alignment ({min_length} to {max_length} points). Using minimum length {min_length}.")
+        
+        # Truncate all segments to same length and stack
+        upward_positions = np.array([pos[:min_length] for pos in aligned_positions])
+        upward_velocities = np.array([vel[:min_length] for vel in aligned_velocities])
+        upward_times = aligned_times[0][:min_length]  # Use first segment's time values
+        
+        # Calculate mean across all segments (axis=0 means across segments, keeping time dimension)
+        upward_mean_pos = np.mean(upward_positions, axis=0)
+        upward_mean_vel = np.mean(upward_velocities, axis=0)
+        
+        fig_all.add_trace(
+            go.Scatter(
+                x=upward_times,
+                y=upward_mean_pos,
+                mode='lines',
+                name=f'{label_up} Mean Position',
+                line=dict(color='red', width=3)
+            ),
+            row=1, col=1
+        )
+        
+        fig_all.add_trace(
+            go.Scatter(
+                x=upward_times,
+                y=upward_mean_vel,
+                mode='lines',
+                name=f'{label_up} Mean Velocity',
+                line=dict(color='red', width=3)
+            ),
+            row=1, col=2
+        )
+
+    if len(downward_segments) > 0:
+        # Calculate mean for downward by taking mean across all segments at each index position
+        # Find minimum length to handle variable-length segments
+        min_length_down = min(len(seg) for seg in downward_segments)
+        max_length_down = max(len(seg) for seg in downward_segments)
+        
+        if min_length_down != max_length_down:
+            print(f"⚠️  Warning: {label_down} segments have variable lengths ({min_length_down} to {max_length_down} points). Using minimum length {min_length_down}.")
+        
+        # Stack all segments as arrays (each row is one saccade, columns are time points)
+        # Use only first min_length points to ensure all arrays have same shape
+        downward_positions = np.array([seg['X_smooth_baselined'].values[:min_length_down] for seg in downward_segments])
+        downward_velocities = np.array([seg['vel_x_smooth'].values[:min_length_down] for seg in downward_segments])
+        downward_times = downward_segments[0]['Time_rel_threshold'].values[:min_length_down]  # Use first segment's time values
+        
+        # Calculate mean across all segments (axis=0 means across segments, keeping time dimension)
+        downward_mean_pos = np.mean(downward_positions, axis=0)
+        downward_mean_vel = np.mean(downward_velocities, axis=0)
+        
+        fig_all.add_trace(
+            go.Scatter(
+                x=downward_times,
+                y=downward_mean_pos,
+                mode='lines',
+                name=f'{label_down} Mean Position',
+                line=dict(color='purple', width=3)
+            ),
+            row=1, col=3
+        )
+        
+        fig_all.add_trace(
+            go.Scatter(
+                x=downward_times,
+                y=downward_mean_vel,
+                mode='lines',
+                name=f'{label_down} Mean Velocity',
+                line=dict(color='purple', width=3)
+            ),
+            row=1, col=4
+        )
+
+    # Add vertical line at time=0 (saccade onset)
+    for col in [1, 2, 3, 4]:
+        fig_all.add_shape(
+            type="line",
+            x0=0, x1=0,
+            y0=-999, y1=999,
+            line=dict(color='black', width=1, dash='dash'),
+            row=1, col=col
+        )
+
+    # Update layout
+    fig_all.update_layout(
+        title_text=f'All Detected Saccades Overlaid ({get_eye_label(video_key)}) - Position and Velocity Profiles<br><sub>Position traces are baselined (avg of points -{n_before} to -{n_before-5}). All traces in semi-transparent, mean in bold. Time=0 is threshold crossing. {n_before} points before, {n_after} after.</sub>',
+        height=500,
+        width=1600,
+        showlegend=False
+    )
+
+    # Calculate x-axis limits based on actual min/max time values from segments (with small padding)
+    # Y-axis will use auto-range (no explicit range setting)
+
+    # Collect all time values for proper x-axis scaling
+    all_upward_times = []
+    all_downward_times = []
+
+    for seg in upward_segments:
+        all_upward_times.extend(seg['Time_rel_threshold'].values)
+
+    for seg in downward_segments:
+        all_downward_times.extend(seg['Time_rel_threshold'].values)
+
+    # Set x-axis ranges using actual min/max from all segment times (with small padding to show all data)
+    padding_factor = 0.02  # 2% padding on each side for readability
+    if len(all_upward_times) > 0:
+        up_x_range = np.max(all_upward_times) - np.min(all_upward_times)
+        padding = up_x_range * padding_factor if up_x_range > 0 else 0.01
+        up_x_min = np.min(all_upward_times) - padding
+        up_x_max = np.max(all_upward_times) + padding
+    else:
+        up_x_min, up_x_max = -0.2, 0.4
+
+    if len(all_downward_times) > 0:
+        down_x_range = np.max(all_downward_times) - np.min(all_downward_times)
+        padding = down_x_range * padding_factor if down_x_range > 0 else 0.01
+        down_x_min = np.min(all_downward_times) - padding
+        down_x_max = np.max(all_downward_times) + padding
+    else:
+        down_x_min, down_x_max = -0.2, 0.4
+
+    # Calculate y-axis ranges separately for position and velocity from filtered data
+    # Collect position and velocity values from filtered segments
+    upward_pos_values = []
+    downward_pos_values = []
+    upward_vel_values = []
+    downward_vel_values = []
+
+    for seg in upward_segments:
+        upward_pos_values.extend(seg['X_smooth_baselined'].values)
+        # Filter out NaN values when collecting velocity data
+        vel_values = seg['vel_x_smooth'].values
+        upward_vel_values.extend(vel_values[~np.isnan(vel_values)])
+
+    for seg in downward_segments:
+        downward_pos_values.extend(seg['X_smooth_baselined'].values)
+        # Filter out NaN values when collecting velocity data
+        vel_values = seg['vel_x_smooth'].values
+        downward_vel_values.extend(vel_values[~np.isnan(vel_values)])
+
+    # Position: find min/max for upward and downward, use wider range for both panels in row 1
+    if len(upward_pos_values) > 0 and len(downward_pos_values) > 0:
+        up_pos_min = np.min(upward_pos_values)
+        up_pos_max = np.max(upward_pos_values)
+        down_pos_min = np.min(downward_pos_values)
+        down_pos_max = np.max(downward_pos_values)
+        # Use the wider range (smaller min, larger max)
+        pos_min = min(up_pos_min, down_pos_min)
+        pos_max = max(up_pos_max, down_pos_max)
+    elif len(upward_pos_values) > 0:
+        pos_min = np.min(upward_pos_values)
+        pos_max = np.max(upward_pos_values)
+    elif len(downward_pos_values) > 0:
+        pos_min = np.min(downward_pos_values)
+        pos_max = np.max(downward_pos_values)
+    else:
+        pos_min, pos_max = -50, 50
+
+    # Velocity: find min/max for upward and downward, use wider range for both panels in row 2
+    # Get min and max directly from all velocity traces being plotted, with padding to prevent clipping
+    if len(upward_vel_values) > 0 and len(downward_vel_values) > 0:
+        # Get actual min/max from all velocity values
+        all_vel_min = min(np.min(upward_vel_values), np.min(downward_vel_values))
+        all_vel_max = max(np.max(upward_vel_values), np.max(downward_vel_values))
+
+    elif len(upward_vel_values) > 0:
+        all_vel_min = np.min(upward_vel_values)
+        all_vel_max = np.max(upward_vel_values)
+
+    elif len(downward_vel_values) > 0:
+        all_vel_min = np.min(downward_vel_values)
+        all_vel_max = np.max(downward_vel_values)
+
+    else:
+        all_vel_min, all_vel_max = -1000, 1000
+        print(f"   ⚠️  No velocity values found, using default range: [{all_vel_min:.2f}, {all_vel_max:.2f}] px/s")
+
+    # Add padding to prevent clipping (20% padding on each side)
+    vel_range = all_vel_max - all_vel_min
+    if vel_range > 0:
+        padding = vel_range * 0.20  # 20% padding
+        vel_min = all_vel_min - padding
+        vel_max = all_vel_max + padding
+    else:
+        # If range is zero or very small, use default padding
+        vel_min = all_vel_min - 1.0
+        vel_max = all_vel_max + 1.0
+
+    # Update axes - x-axis with ranges, y-axis with explicit ranges based on filtered data
+    fig_all.update_xaxes(title_text="Time relative to threshold crossing (s)", range=[up_x_min, up_x_max], row=1, col=2)
+    fig_all.update_xaxes(title_text="Time relative to threshold crossing (s)", range=[down_x_min, down_x_max], row=1, col=4)
+    fig_all.update_xaxes(title_text="", range=[up_x_min, up_x_max], row=1, col=1)
+    fig_all.update_xaxes(title_text="", range=[down_x_min, down_x_max], row=1, col=3)
+
+    # Set explicit y-axis ranges - position panels share same range, velocity panels share same range
+    fig_all.update_yaxes(title_text="X Position (px)", range=[pos_min, pos_max], row=1, col=1)
+    fig_all.update_yaxes(title_text="X Position (px)", range=[pos_min, pos_max], row=1, col=3)
+    fig_all.update_yaxes(title_text="Velocity (px/s)", range=[vel_min, vel_max], row=1, col=2)
+    fig_all.update_yaxes(title_text="Velocity (px/s)", range=[vel_min, vel_max], row=1, col=4)
+
+
+    fig_all.show()
+
+    # Print statistics
+    print(f"\n=== OVERLAY SUMMARY ===")
+    if len(upward_segments) > 0:
+        up_amps = [seg['saccade_amplitude'].iloc[0] for seg in upward_segments]
+        up_durs = [seg['saccade_duration'].iloc[0] for seg in upward_segments]
+        print(f"{label_up} saccades: {len(upward_segments)}")
+        print(f"  Mean amplitude: {np.mean(up_amps):.2f} px")
+        print(f"  Mean duration: {np.mean(up_durs):.3f} s")
+
+    if len(downward_segments) > 0:
+        down_amps = [seg['saccade_amplitude'].iloc[0] for seg in downward_segments]
+        down_durs = [seg['saccade_duration'].iloc[0] for seg in downward_segments]
+        print(f"{label_down} saccades: {len(downward_segments)}")
+        print(f"  Mean amplitude: {np.mean(down_amps):.2f} px")
+        print(f"  Mean duration: {np.mean(down_durs):.3f} s")
+
+    print(f"\n⏱️  Time alignment: All saccades aligned to threshold crossing (Time_rel_threshold=0)")
+    if len(all_upward_times) > 0 and len(all_downward_times) > 0:
+        # Use the wider range for reporting
+        overall_x_min = min(np.min(all_upward_times), np.min(all_downward_times))
+        overall_x_max = max(np.max(all_upward_times), np.max(all_downward_times))
+        print(f"📏 Window: {n_before} points before + {n_after} points after threshold crossing (actual time range: {overall_x_min:.3f} to {overall_x_max:.3f} s)")
+    elif len(all_upward_times) > 0:
+        print(f"📏 Window: {n_before} points before + {n_after} points after threshold crossing ({label_up} actual time range: {np.min(all_upward_times):.3f} to {np.max(all_upward_times):.3f} s)")
+    elif len(all_downward_times) > 0:
+        print(f"📏 Window: {n_before} points before + {n_after} points after threshold crossing ({label_down} actual time range: {np.min(all_downward_times):.3f} to {np.max(all_downward_times):.3f} s)")
+    else:
+        print(f"📏 Window: {n_before} points before + {n_after} points after threshold crossing")
+
 
 
 # %%
-if plot_saccade_detection_QC:
-    pio.renderers.default = 'browser'
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df.index, y=df["velocity"], mode="lines", name="Velocity", line=dict(color="lightgrey", width=1)))
-    fig.add_trace(go.Scatter(x=df.index, y=df["Ellipse.Center.X"], mode="lines", name="Ellipse.Center.X", line=dict(color="darkgrey", width=1), yaxis="y2"))
-    if not results_df.empty:
-        pos_df = results_df[results_df["direction"] == "positive"]
-        neg_df = results_df[results_df["direction"] == "negative"]
-        if not pos_df.empty:
-            pos_starts = pos_df["saccade_time"]
-            pos_y = df.loc[pos_starts, "Ellipse.Center.X"]
-            fig.add_trace(go.Scatter(x=pos_starts, y=pos_y, mode="markers",
-                                     marker=dict(symbol="circle-open", size=10, line=dict(width=2, color="red")),
-                                     name="Positive Saccade Onsets", yaxis="y2"))
-        if not neg_df.empty:
-            neg_starts = neg_df["saccade_time"]
-            neg_y = df.loc[neg_starts, "Ellipse.Center.X"]
-            fig.add_trace(go.Scatter(x=neg_starts, y=neg_y, mode="markers",
-                                     marker=dict(symbol="circle-open", size=10, line=dict(width=2, color="blue")),
-                                     name="Negative Saccade Onsets", yaxis="y2"))
-    fig.update_layout(
-        title="Velocity and Ellipse.Center.X",
-        xaxis_title="Time",
-        yaxis=dict(title="Velocity"),
-        yaxis2=dict(title="Ellipse.Center.X", overlaying="y", side="right")
+# SACCADE AMPLITUDE QC VISUALIZATION
+#-------------------------------------------------------------------------------
+# 1. Distribution of saccade amplitudes
+# 2. Correlation between saccade amplitude and duration
+# 3. Peri-saccade segments colored by amplitude (outlier detection)
+
+for video_key, res in saccade_results.items():
+    dir_map = get_direction_map_for_video(video_key)
+    label_up = dir_map['upward']
+    label_down = dir_map['downward']
+
+    upward_saccades_df = res['upward_saccades_df']
+    downward_saccades_df = res['downward_saccades_df']
+    peri_saccades = res['peri_saccades']   
+    upward_segments = res['upward_segments']
+    downward_segments = res['downward_segments']
+    # Any other variables you need...
+
+    fig_qc = make_subplots(
+        rows=3, cols=2,
+        subplot_titles=(
+            f'Amplitude Distribution - {label_up} Saccades', 
+            f'Amplitude Distribution - {label_down} Saccades',
+            f'Amplitude vs Duration - {label_up} Saccades',
+            f'Amplitude vs Duration - {label_down} Saccades',
+            f'Peri-Saccade Segments - {label_up} (colored by amplitude)',
+            f'Peri-Saccade Segments - {label_down} (colored by amplitude)'
+        ),
+        vertical_spacing=0.10,
+        horizontal_spacing=0.1,
+        row_heights=[0.25, 0.25, 0.5]  # Make segment plots larger
     )
+
+    # 1. Amplitude distributions
+    if len(upward_saccades_df) > 0:
+        # Histogram for upward saccades
+        fig_qc.add_trace(
+            go.Histogram(
+                x=upward_saccades_df['amplitude'],
+                nbinsx=50,
+                name=f'{label_up}',
+                marker_color='red',
+                opacity=0.6
+            ),
+            row=1, col=1
+        )
+        
+        # Scatter plot for upward saccades
+        fig_qc.add_trace(
+            go.Scatter(
+                x=upward_saccades_df['duration'],
+                y=upward_saccades_df['amplitude'],
+                mode='markers',
+                name=f'{label_up}',
+                marker=dict(color='red', size=6, opacity=0.6)
+            ),
+            row=2, col=1
+        )
+        
+        # Add correlation line for upward saccades
+        corr_up = upward_saccades_df[['amplitude', 'duration']].corr().iloc[0, 1]
+        z_up = np.polyfit(upward_saccades_df['duration'], upward_saccades_df['amplitude'], 1)
+        p_up = np.poly1d(z_up)
+        fig_qc.add_trace(
+            go.Scatter(
+                x=upward_saccades_df['duration'],
+                y=p_up(upward_saccades_df['duration']),
+                mode='lines',
+                name=f'R={corr_up:.2f}',
+                line=dict(color='darkgreen', width=2),
+                showlegend=False
+            ),
+            row=2, col=1
+        )
+
+    if len(downward_saccades_df) > 0:
+        # Histogram for downward saccades
+        fig_qc.add_trace(
+            go.Histogram(
+                x=downward_saccades_df['amplitude'],
+                nbinsx=50,
+                name=f'{label_down}',
+                marker_color='purple',
+                opacity=0.6
+            ),
+            row=1, col=2
+        )
+        
+        # Scatter plot for downward saccades
+        fig_qc.add_trace(
+            go.Scatter(
+                x=downward_saccades_df['duration'],
+                y=downward_saccades_df['amplitude'],
+                mode='markers',
+                name=f'{label_down}',
+                marker=dict(color='purple', size=6, opacity=0.6)
+            ),
+            row=2, col=2
+        )
+        
+        # Add correlation line for downward saccades
+        corr_down = downward_saccades_df[['amplitude', 'duration']].corr().iloc[0, 1]
+        z_down = np.polyfit(downward_saccades_df['duration'], downward_saccades_df['amplitude'], 1)
+        p_down = np.poly1d(z_down)
+        fig_qc.add_trace(
+            go.Scatter(
+                x=downward_saccades_df['duration'],
+                y=p_down(downward_saccades_df['duration']),
+                mode='lines',
+                name=f'R={corr_down:.2f}',
+                line=dict(color='darkviolet', width=2),
+                showlegend=False
+            ),
+            row=2, col=2
+        )
+
+    # 3. Plot peri-saccade segments colored by amplitude
+    # Reuse already-extracted and baselined segments from peri_saccades (no re-extraction or re-baselining)
+
+    # Extract upward and downward segments for QC visualization from already-baselined peri_saccades
+    # (Removed extract_qc_segments function - segments are now baselined only once during initial extraction)
+    if 'peri_saccades' in globals() and len(peri_saccades) > 0:
+        upward_segments_all = [seg for seg in peri_saccades if seg['saccade_direction'].iloc[0] == 'upward']
+        downward_segments_all = [seg for seg in peri_saccades if seg['saccade_direction'].iloc[0] == 'downward']
+    else:
+        upward_segments_all = []
+        downward_segments_all = []
+
+    # Plot upward segments
+    if len(upward_segments_all) > 0:
+        upward_amplitudes = [seg['saccade_amplitude'].iloc[0] for seg in upward_segments_all]
+        upward_colors, upward_min_amp, upward_max_amp = sp.get_color_mapping(upward_amplitudes)
+        
+        for i, (segment, color) in enumerate(zip(upward_segments_all, upward_colors)):
+            fig_qc.add_trace(
+                go.Scatter(
+                    x=segment['Time_rel_threshold'],
+                    y=segment['X_smooth_baselined'],
+                    mode='lines',
+                    name=f'{label_up} #{i+1}',
+                    line=dict(color=color, width=1.5),
+                    showlegend=False,
+                    opacity=0.7,
+                    hovertemplate=f'Amplitude: {segment["saccade_amplitude"].iloc[0]:.2f} px<br>' +
+                                'Time: %{x:.3f} s<br>' +
+                                'Position: %{y:.2f} px<extra></extra>'
+                ),
+                row=3, col=1
+            )
+        
+        # Add dummy trace for colorbar (hidden but provides colorbar)
+        fig_qc.add_trace(
+            go.Scatter(
+                x=[None],  # Hidden trace
+                y=[None],
+                mode='markers',
+                marker=dict(
+                    size=1,
+                    color=[upward_min_amp, upward_max_amp],
+                    colorscale='Plasma',
+                    cmin=upward_min_amp,
+                    cmax=upward_max_amp,
+                    showscale=True,
+                    colorbar=dict(
+                        title=dict(text=f"Amplitude ({label_up})", side="right"),
+                        x=0.47,  # Position to the right of the left column plot
+                        xpad=10,
+                        len=0.45,  # Set colorbar length relative to subplot
+                        y=0.5,  # Center vertically on the subplot
+                        yanchor="middle"
+                    )
+                ),
+                showlegend=False,
+                hoverinfo='skip'
+            ),
+            row=3, col=1
+        )
+
+    # Plot downward segments
+    if len(downward_segments_all) > 0:
+        downward_amplitudes = [seg['saccade_amplitude'].iloc[0] for seg in downward_segments_all]
+        downward_colors, downward_min_amp, downward_max_amp = sp.get_color_mapping(downward_amplitudes)
+        
+        for i, (segment, color) in enumerate(zip(downward_segments_all, downward_colors)):
+            fig_qc.add_trace(
+                go.Scatter(
+                    x=segment['Time_rel_threshold'],
+                    y=segment['X_smooth_baselined'],
+                    mode='lines',
+                    name=f'{label_down} #{i+1}',
+                    line=dict(color=color, width=1.5),
+                    showlegend=False,
+                    opacity=0.7,
+                    hovertemplate=f'Amplitude: {segment["saccade_amplitude"].iloc[0]:.2f} px<br>' +
+                                'Time: %{x:.3f} s<br>' +
+                                'Position: %{y:.2f} px<extra></extra>'
+                ),
+                row=3, col=2
+            )
+        
+        # Add dummy trace for colorbar (hidden but provides colorbar)
+        fig_qc.add_trace(
+            go.Scatter(
+                x=[None],  # Hidden trace
+                y=[None],
+                mode='markers',
+                marker=dict(
+                    size=1,
+                    color=[downward_min_amp, downward_max_amp],
+                    colorscale='Plasma',
+                    cmin=downward_min_amp,
+                    cmax=downward_max_amp,
+                    showscale=True,
+                    colorbar=dict(
+                        title=dict(text=f"Amplitude ({label_down})", side="right"),
+                        x=0.97,  # Position to the right of the right column plot
+                        xpad=10,
+                        len=0.45,  # Set colorbar length relative to subplot
+                        y=0.5,  # Center vertically on the subplot
+                        yanchor="middle"
+                    )
+                ),
+                showlegend=False,
+                hoverinfo='skip'
+            ),
+            row=3, col=2
+        )
+
+    # Update layout
+    fig_qc.update_layout(
+        title_text=f'Saccade Amplitude QC: Distributions, Correlations, and Segments (Outlier Detection, {get_eye_label(video_key)})',
+        height=1200,
+        showlegend=False
+    )
+
+    # Update axes labels
+    fig_qc.update_xaxes(title_text="Amplitude (px)", row=1, col=1)
+    fig_qc.update_xaxes(title_text="Amplitude (px)", row=1, col=2)
+    fig_qc.update_xaxes(title_text="Duration (s)", row=2, col=1)
+    fig_qc.update_xaxes(title_text="Duration (s)", row=2, col=2)
+    fig_qc.update_xaxes(title_text="Time relative to threshold crossing (s)", row=3, col=1)
+    fig_qc.update_xaxes(title_text="Time relative to threshold crossing (s)", row=3, col=2)
+    fig_qc.update_yaxes(title_text="Count", row=1, col=1)
+    fig_qc.update_yaxes(title_text="Count", row=1, col=2)
+    fig_qc.update_yaxes(title_text="Amplitude (px)", row=2, col=1)
+    fig_qc.update_yaxes(title_text="Amplitude (px)", row=2, col=2)
+    fig_qc.update_yaxes(title_text="Position (baselined, px)", row=3, col=1)
+    fig_qc.update_yaxes(title_text="Position (baselined, px)", row=3, col=2)
+
+    fig_qc.show()
+
+    # Print correlation statistics
+    print("\n=== SACCADE AMPLITUDE-DURATION CORRELATION ===\n")
+    if upward_saccades_df is not None and len(upward_saccades_df) > 0:
+        print(f"{get_eye_label(video_key)} saccades (n={len(upward_saccades_df)}):")
+        print(f"  Correlation (amplitude vs duration): {corr_up:.3f}")
+        print(f"  Mean amplitude: {upward_saccades_df['amplitude'].mean():.2f} px")
+        print(f"  Mean duration: {upward_saccades_df['duration'].mean():.3f} s")
+        print(f"  Amp range: {upward_saccades_df['amplitude'].min():.2f} - {upward_saccades_df['amplitude'].max():.2f} px")
+
+    if downward_saccades_df is not None and len(downward_saccades_df) > 0:
+        print(f"\n{get_eye_label(video_key)} saccades (n={len(downward_saccades_df)}):")
+        print(f"  Correlation (amplitude vs duration): {corr_down:.3f}")
+        print(f"  Mean amplitude: {downward_saccades_df['amplitude'].mean():.2f} px")
+        print(f"  Mean duration: {downward_saccades_df['duration'].mean():.3f} s")
+        print(f"  Amp range: {downward_saccades_df['amplitude'].min():.2f} - {downward_saccades_df['amplitude'].max():.2f} px")
+
+
+
+# %%
+# VISUALIZE DETECTED SACCADES (Adaptive Method)
+#-------------------------------------------------------------------------------
+# Create overlay plot showing detected saccades with duration lines and peak arrows
+
+for video_key, res in saccade_results.items():
+    dir_map = get_direction_map_for_video(video_key)
+    label_up = dir_map['upward']
+    label_down = dir_map['downward']
+
+    upward_saccades_df = res['upward_saccades_df']
+    downward_saccades_df = res['downward_saccades_df']
+    peri_saccades = res['peri_saccades']   
+    upward_segments = res['upward_segments']
+    downward_segments = res['downward_segments']
+    # Any other variables you need...
+
+    fig = make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.1,
+        subplot_titles=('X Position (px)', 'Velocity (px/s) with Detected Saccades')
+    )
+
+    # Add smoothed X position to the first subplot
+    fig.add_trace(
+        go.Scatter(
+            x=res['df']['Seconds'],
+            y=res['df']['X_smooth'],
+            mode='lines',
+            name='Smoothed X',
+            line=dict(color='blue', width=2)
+        ),
+        row=1, col=1
+    )
+
+    # Add smoothed velocity to the second subplot
+    fig.add_trace(
+        go.Scatter(
+            x=res['df']['Seconds'],
+            y=res['df']['vel_x_smooth'],
+            mode='lines',
+            name='Smoothed Velocity',
+            line=dict(color='red', width=2)
+        ),
+        row=2, col=1
+    )
+
+    # Add adaptive threshold lines for reference
+    fig.add_hline(
+        y=res['vel_thresh'],
+        line_dash="dash",
+        line_color="green",
+        opacity=0.5,
+        annotation_text=f"Adaptive threshold (±{res['vel_thresh']:.0f} px/s)",
+        row=2, col=1
+    )
+
+    fig.add_hline(
+        y=-res['vel_thresh'],
+        line_dash="dash",
+        line_color="green",
+        opacity=0.5,
+        row=2, col=1
+    )
+
+    # Set offset for saccade indicator lines (above the trace for upward, below for downward)
+    vel_max = res['df']['vel_x_smooth'].max()
+    vel_min = res['df']['vel_x_smooth'].min()
+    vel_range = vel_max - vel_min
+    line_offset = vel_range * 0.15  # 15% of velocity range
+
+    # Plot upward saccades with duration lines and peak arrows
+    if len(upward_saccades_df) > 0:
+        for idx, row in upward_saccades_df.iterrows():
+            start_time = row['start_time']
+            end_time = row['end_time']
+            peak_time = row['time']
+            peak_velocity = row['velocity']
+            
+            # Draw horizontal line spanning the saccade duration
+            # Line is positioned above the velocity trace
+            y_line_pos = vel_max + line_offset
+            
+            fig.add_shape(
+                type="line",
+                x0=start_time, y0=y_line_pos,
+                x1=end_time, y1=y_line_pos,
+                line=dict(color='green', width=3),
+                row=2, col=1
+            )
+            
+            # Add arrow annotation at the peak position pointing to the actual peak velocity
+            # Arrow points from the line to the peak velocity value on the velocity trace
+            y_arrow_start = y_line_pos
+            y_arrow_end = peak_velocity
+            
+            fig.add_annotation(
+                x=peak_time,
+                y=y_arrow_start,
+                ax=0,
+                ay=y_arrow_end - y_arrow_start,  # arrow points to peak velocity
+                arrowhead=2,  # filled arrowhead
+                arrowsize=2,
+                arrowwidth=2,
+                arrowcolor='green',
+                row=2, col=1,
+                showarrow=True
+            )
+        
+        # Add legend entry for upward saccades
+        fig.add_trace(
+            go.Scatter(
+                x=[None],
+                y=[None],
+                mode='markers',
+                name=f'{label_up} Saccades (duration lines)',
+                marker=dict(symbol='line-ns', size=15, color='green', line=dict(width=3))
+            ),
+            row=2, col=1
+        )
+
+    # Plot downward saccades with duration lines and peak arrows
+    if len(downward_saccades_df) > 0:
+        for idx, row in downward_saccades_df.iterrows():
+            start_time = row['start_time']
+            end_time = row['end_time']
+            peak_time = row['time']
+            peak_velocity = row['velocity']
+            
+            # Draw horizontal line spanning the saccade duration
+            # Line is positioned below the velocity trace
+            y_line_pos = vel_min - line_offset
+            
+            fig.add_shape(
+                type="line",
+                x0=start_time, y0=y_line_pos,
+                x1=end_time, y1=y_line_pos,
+                line=dict(color='purple', width=3),
+                row=2, col=1
+            )
+            
+            # Add arrow annotation at the peak position pointing to the actual peak velocity
+            # Arrow points from the line to the peak velocity value on the velocity trace
+            y_arrow_start = y_line_pos
+            y_arrow_end = peak_velocity
+            
+            fig.add_annotation(
+                x=peak_time,
+                y=y_arrow_start,
+                ax=0,
+                ay=y_arrow_end - y_arrow_start,  # arrow points to peak velocity
+                arrowhead=2,  # filled arrowhead
+                arrowsize=2,
+                arrowwidth=2,
+                arrowcolor='purple',
+                row=2, col=1,
+                showarrow=True
+            )
+        
+        # Add legend entry for downward saccades
+        fig.add_trace(
+            go.Scatter(
+                x=[None],
+                y=[None],
+                mode='markers',
+                name=f'{label_down} Saccades (duration lines)',
+                marker=dict(symbol='line-ns', size=15, color='purple', line=dict(width=3))
+            ),
+            row=2, col=1
+        )
+
+    # Update layout
+    fig.update_layout(
+        title=f'Detected Saccades ({get_eye_label(video_key)}): Duration Lines + Peak Arrows (QC Visualization)',
+        height=600,
+        showlegend=True,
+        legend=dict(x=0.01, y=0.99)
+    )
+
+    # Update axes
+    fig.update_xaxes(title_text="Time (s)", row=2, col=1)
+    fig.update_yaxes(title_text="X Position (px)", row=1, col=1)
+    fig.update_yaxes(title_text="Velocity (px/s)", row=2, col=1)
+
     fig.show()
 
-
-# %%
-############################################################################################################
-# INVESTIGATE issue of long stretches of consecutive very low inference predicition scores 
-############################################################################################################
-
-
-score_cutoff = 0.0000001
-columns_of_interest = ['left.score','center.score','right.score','p1.score','p2.score','p3.score','p4.score','p5.score','p6.score','p7.score','p8.score']
-total_points = len(VideoData1)
-
-
-for col in columns_of_interest:
-    count_below_threshold = (VideoData1[col] < score_cutoff).sum()
-    percentage_below_threshold = (count_below_threshold / total_points) * 100
-    
-    # Find the longest consecutive series below threshold
-    below_threshold = VideoData1[col] < score_cutoff
-    longest_series = 0
-    current_series = 0
-    
-    for value in below_threshold:
-        if value:
-            current_series += 1
-            if current_series > longest_series:
-                longest_series = current_series
-        else:
-            current_series = 0
-    
-    print(f"Column: {col} | Values below {score_cutoff}: {count_below_threshold} ({percentage_below_threshold:.2f}%) | Longest consecutive frame series: {longest_series}")
-
-
-# %%
-pympler_memory_df = utils.get_pympler_memory_usage(top_n=10)
 
 # %%
