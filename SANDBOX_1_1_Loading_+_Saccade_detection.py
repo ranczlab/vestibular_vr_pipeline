@@ -107,7 +107,190 @@ onset_offset_fraction = 0.2  # to determine saccade onset and offset, i.e. o.2 i
 n_before = 10  # Number of points before detection peak to extract for peri-saccade-segments, points, so independent of FPS 
 n_after = 30   # Number of points after detection peak to extract
 
-plot_saccade_detection_QC = True
+plot_saccade_detection_QC = False
+
+# Parameters for orienting vs compensatory saccade classification
+classify_orienting_compensatory = True  # Set to True to classify saccades as orienting vs compensatory
+bout_window = 1.5  # Time window (seconds) for grouping saccades into bouts
+pre_saccade_window = 0.3  # Time window (seconds) before saccade onset to analyze
+max_intersaccade_interval_for_classification = 5.0  # Maximum time (seconds) to extend post-saccade window until next saccade for classification
+pre_saccade_velocity_threshold = 50.0  # Velocity threshold (px/s) for detecting pre-saccade drift
+pre_saccade_drift_threshold = 10.0  # Position drift threshold (px) before saccade for compensatory classification
+post_saccade_variance_threshold = 100.0  # Position variance threshold (px²) after saccade for orienting classification
+post_saccade_position_change_threshold_percent = 50.0  # Position change threshold (% of saccade amplitude) - if post-saccade change > amplitude * this%, classify as compensatory
+
+# Adaptive threshold parameters (percentile-based)
+use_adaptive_thresholds = True  # Set to True to use adaptive thresholds based on feature distributions, False to use fixed thresholds
+adaptive_percentile_pre_velocity = 75  # Percentile for pre-saccade velocity threshold (upper percentile for compensatory detection)
+adaptive_percentile_pre_drift = 75  # Percentile for pre-saccade drift threshold (upper percentile for compensatory detection)
+adaptive_percentile_post_variance = 25  # Percentile for post-saccade variance threshold (lower percentile for orienting detection - low variance = stable)
+
+"""
+CLASSIFICATION PARAMETERS EXPLANATION:
+======================================
+
+1. bout_window (1.5 seconds)
+   - Purpose: Groups saccades that occur within this time window into "bouts"
+   - How it works: If two saccades occur within 1.5s of each other, they're grouped into the same bout
+   - Reasoning: Compensatory saccades occur in rapid succession during head rotation
+   - Typical values: 1.0-2.0 seconds (adjust based on your data)
+
+2. pre_saccade_window (0.3 seconds)
+   - Purpose: Time window BEFORE each saccade onset to analyze for drift/stability
+   - How it works: Measures mean velocity and position drift in the 0.3s before saccade starts
+     * IMPORTANT: The window is constrained to not extend before the peak time of the previous saccade
+     * This ensures we only measure the inter-saccade interval, not the period during the previous saccade
+   - Reasoning: 
+     * Compensatory: Eye drifts slowly before saccade (compensating for head rotation)
+     * Orienting: Eye is stable before saccade (at rest before quick shift)
+   - Typical values: 0.2-0.5 seconds (should capture pre-saccade behavior)
+
+3. max_intersaccade_interval_for_classification (5.0 seconds)
+   - Purpose: Maximum time to extend post-saccade window until the next saccade occurs
+   - How it works: 
+     * For each saccade, the post-saccade window dynamically extends until the next saccade starts
+     * If the next saccade occurs within max_intersaccade_interval_for_classification, use that interval
+     * If no next saccade occurs within this time, cap at max_intersaccade_interval_for_classification
+     * Measures position change/variance in this dynamic window
+   - Reasoning:
+     * Compensatory saccades: Eye position continues to change until next compensatory saccade (large position change)
+     * Orienting saccades: Eye settles at new position and stays stable (small position change)
+   - Typical values: 3-10 seconds (should capture behavior until next saccade or reasonable maximum)
+   - This parameter is key for distinguishing compensatory vs orienting based on eye position stability
+
+5. pre_saccade_velocity_threshold (50.0 px/s)
+   - Purpose: Threshold for mean absolute velocity in pre-saccade window
+   - How it works: If mean(|velocity|) > threshold → evidence of drift (compensatory)
+   - Reasoning: Compensatory saccades follow slow drift (velocity > 0)
+   - Typical values: 30-100 px/s (adjust based on your sampling rate and noise level)
+   - Too low: May misclassify orienting saccades with noise as compensatory
+   - Too high: May miss true compensatory drift
+
+6. pre_saccade_drift_threshold (10.0 px)
+   - Purpose: Threshold for position change in pre-saccade window
+   - How it works: If |position_end - position_start| > threshold → evidence of drift (compensatory)
+   - Reasoning: Compensatory saccades follow slow position drift (eye moves slowly)
+   - Typical values: 5-20 px (adjust based on your typical saccade amplitudes)
+   - Too low: May misclassify orienting saccades with small movements as compensatory
+   - Too high: May miss true compensatory drift
+
+7. post_saccade_variance_threshold (100.0 px²)
+   - Purpose: Threshold for position variance in post-saccade window
+   - How it works: If variance < threshold → stable position (orienting)
+   - Reasoning: Orienting saccades settle at new stable position (low variance)
+   - Typical values: 50-200 px² (adjust based on your noise level)
+   - Too low: May misclassify orienting saccades as compensatory
+   - Too high: May misclassify compensatory saccades as orienting
+   - Note: Less reliable for saccades in bouts (next saccade may occur soon after)
+
+8. post_saccade_position_change_threshold_percent (50.0%)
+   - Purpose: Threshold for position change in dynamic post-saccade window, expressed as percentage of saccade amplitude
+   - How it works: 
+     * Calculates total position change from end of saccade until next saccade (or max interval)
+     * Compares to saccade amplitude: if post_change > amplitude * threshold_percent → compensatory
+     * Compensatory saccades: Eye continues moving after saccade (large position change relative to amplitude)
+     * Orienting saccades: Eye settles at new position (small position change relative to amplitude)
+   - Reasoning: 
+     * Compensatory: Eye position continues changing until next compensatory saccade (change comparable to or larger than saccade amplitude)
+     * Orienting: Eye settles and stays stable (change much smaller than saccade amplitude)
+   - Typical values: 30-70% (adjust based on your data)
+   - Too low: May misclassify orienting saccades with small noise as compensatory
+   - Too high: May miss true compensatory drift patterns
+   - Key advantage: Relative to amplitude, so adapts to different saccade sizes
+
+PRACTICAL TUNING GUIDE (For QC Adjustments):
+=============================================
+When you find a miscategorized saccade during QC, here's what to adjust:
+
+⚠️ PROBLEM: Two orienting saccades close together are misclassified as compensatory
+   → SOLUTION: Decrease bout_window (e.g., 1.5 → 1.0 seconds)
+   → WHY: Makes the classifier less likely to group saccades into bouts
+
+⚠️ PROBLEM: Compensatory saccades misclassified as orienting (happens in bouts)
+   → SOLUTION: Increase bout_window (e.g., 1.5 → 2.0 seconds)
+   → WHY: Better captures rapid compensatory saccade sequences
+
+⚠️ PROBLEM: Compensatory saccades misclassified as orienting (isolated saccades)
+   → SOLUTION: Decrease pre_saccade_velocity_threshold or pre_saccade_drift_threshold
+   → WHY: Makes it easier to detect slow pre-saccade drift that indicates compensation
+   → OR: Increase post_saccade_position_change_threshold_percent (e.g., 50 → 70)
+   → WHY: Requires larger post-saccade position change to classify as compensatory
+
+⚠️ PROBLEM: Orienting saccades misclassified as compensatory (too sensitive to drift)
+   → SOLUTION: Increase pre_saccade_velocity_threshold or pre_saccade_drift_threshold
+   → WHY: Requires stronger evidence of drift before classifying as compensatory
+   → OR: Decrease post_saccade_position_change_threshold_percent (e.g., 50 → 30)
+   → WHY: Makes it harder to classify based on post-saccade position change
+
+⚠️ PROBLEM: Eye position continues moving after orienting saccades (causes misclassification)
+   → SOLUTION: Increase max_intersaccade_interval_for_classification (e.g., 5.0 → 7.0 seconds)
+   → WHY: Gives more time for eye to settle, better captures true stability
+
+⚠️ PROBLEM: Using adaptive thresholds but getting inconsistent results
+   → SOLUTION: Set use_adaptive_thresholds = False and use fixed thresholds
+   → WHY: Fixed thresholds give more predictable, reproducible results
+
+📝 QUICK REFERENCE:
+   - bout_window: Controls how close saccades need to be to form a bout (default: 1.5s)
+   - pre_saccade_velocity_threshold: How fast eye moves before saccade = compensatory (default: 50 px/s)
+   - pre_saccade_drift_threshold: How much position changes before saccade = compensatory (default: 10 px)
+   - post_saccade_position_change_threshold_percent: % of saccade amplitude as position change threshold (default: 50%)
+   - max_intersaccade_interval_for_classification: Max time to look for next saccade (default: 5.0s)
+
+CLASSIFICATION ORDER AND LOGIC:
+================================
+
+Stage 1: Temporal Clustering (Bout Detection)
+  - Groups saccades within bout_window into bouts
+  - Saccades > bout_window apart start a new bout
+  - Result: Each saccade gets a bout_id and bout_size
+
+Stage 2: Feature Extraction
+  For each saccade:
+    a) Extract pre-saccade features (pre_saccade_window before onset):
+       - Mean absolute velocity (pre_saccade_mean_velocity)
+       - Position drift (pre_saccade_position_drift)
+    b) Extract post-saccade features (DYNAMIC window):
+       - Window extends from saccade offset until next saccade start (or max_intersaccade_interval_for_classification)
+       - Position variance (post_saccade_position_variance) - measures stability until next saccade
+       - Position change (post_saccade_position_change) - total change in position until next saccade
+       - This captures whether eye settles (orienting) or continues changing (compensatory)
+
+Stage 3: Classification (ORIGINAL SIMPLE LOGIC - Conservative Starting Point)
+  Rule 1: If in a bout (bout_size >= 2)
+    - Automatically classify as compensatory
+    - Rationale: Compensatory saccades occur in rapid succession during head rotation
+  
+  Rule 2: If isolated (bout_size == 1)
+    - If pre_vel > pre_saccade_velocity_threshold OR pre_drift > pre_saccade_drift_threshold
+      → Compensatory (evidence of drift/compensation before saccade)
+    - Else if pre_vel ≤ pre_saccade_velocity_threshold AND post_var < post_saccade_variance_threshold
+      → Orienting (stable before and stable after saccade)
+    - Else
+      → Compensatory (conservative default - when uncertain)
+
+RATIONALE FOR ORDER:
+====================
+1. Temporal clustering first: Identifies which saccades are potentially related (bouts)
+2. Feature extraction: Measures key characteristics of each saccade
+3. Classification using simple rules:
+   - Bouts: Automatically compensatory (conservative - assumes bouts indicate compensatory behavior)
+   - Isolated: Feature-based classification (pre-saccade drift + post-saccade stability)
+
+KEY INSIGHT:
+============
+- Compensatory saccades: Show DRIFT before them (slow compensation for head rotation)
+- Orienting saccades: Show STABLE periods before them (eye at rest before quick shift)
+- The pre-saccade window captures the inter-saccade interval, which is the key discriminator
+
+NOTE ON CURRENT LOGIC:
+======================
+This is the original conservative starting point:
+- All saccades in bouts (>=2 saccades within bout_window) are classified as compensatory
+- Only isolated saccades are classified using features
+- This may over-classify compensatory (especially if two orienting saccades happen close together)
+- Adjust bout_window or add refinement logic if needed
+"""
 
 video2_eye = 'R' if video1_eye == 'L' else 'L' # Automatically assign eye for VideoData2
 eye_fullname = {'L': 'Left', 'R': 'Right'} # Map for full names (used in labels)
@@ -2699,7 +2882,19 @@ if VideoData1_Has_Sleap:
         onset_offset_fraction=onset_offset_fraction,
         n_before=n_before, n_after=n_after, baseline_n_points=5,
         upward_label=dir_map_v1['upward'],
-        downward_label=dir_map_v1['downward']
+        downward_label=dir_map_v1['downward'],
+        classify_orienting_compensatory=classify_orienting_compensatory,
+        bout_window=bout_window,
+        pre_saccade_window=pre_saccade_window,
+        max_intersaccade_interval_for_classification=max_intersaccade_interval_for_classification,
+        pre_saccade_velocity_threshold=pre_saccade_velocity_threshold,
+        pre_saccade_drift_threshold=pre_saccade_drift_threshold,
+        post_saccade_variance_threshold=post_saccade_variance_threshold,
+        post_saccade_position_change_threshold_percent=post_saccade_position_change_threshold_percent,
+        use_adaptive_thresholds=use_adaptive_thresholds,
+        adaptive_percentile_pre_velocity=adaptive_percentile_pre_velocity,
+        adaptive_percentile_pre_drift=adaptive_percentile_pre_drift,
+        adaptive_percentile_post_variance=adaptive_percentile_post_variance
     )
 
 
@@ -2713,7 +2908,19 @@ if VideoData2_Has_Sleap:
         onset_offset_fraction=onset_offset_fraction,
         n_before=n_before, n_after=n_after, baseline_n_points=5,
         upward_label=dir_map_v2['upward'],
-        downward_label=dir_map_v2['downward']
+        downward_label=dir_map_v2['downward'],
+        classify_orienting_compensatory=classify_orienting_compensatory,
+        bout_window=bout_window,
+        pre_saccade_window=pre_saccade_window,
+        max_intersaccade_interval_for_classification=max_intersaccade_interval_for_classification,
+        pre_saccade_velocity_threshold=pre_saccade_velocity_threshold,
+        pre_saccade_drift_threshold=pre_saccade_drift_threshold,
+        post_saccade_variance_threshold=post_saccade_variance_threshold,
+        post_saccade_position_change_threshold_percent=post_saccade_position_change_threshold_percent,
+        use_adaptive_thresholds=use_adaptive_thresholds,
+        adaptive_percentile_pre_velocity=adaptive_percentile_pre_velocity,
+        adaptive_percentile_pre_drift=adaptive_percentile_pre_drift,
+        adaptive_percentile_post_variance=adaptive_percentile_post_variance
     )
 
 # %%
@@ -3401,7 +3608,7 @@ for video_key, res in saccade_results.items():
 # VISUALIZE DETECTED SACCADES (Adaptive Method)
 #-------------------------------------------------------------------------------
 # Create overlay plot showing detected saccades with duration lines and peak arrows
-if plot_QC_saccades:
+if plot_saccade_detection_QC:
     for video_key, res in saccade_results.items():
         dir_map = get_direction_map_for_video(video_key)
         label_up = dir_map['upward']
@@ -3583,6 +3790,462 @@ if plot_QC_saccades:
         fig.update_yaxes(title_text="Velocity (px/s)", row=2, col=1)
 
         fig.show()
+
+# %%
+# TEMPORARY - param setting 
+# Parameters for orienting vs compensatory saccade classification
+classify_orienting_compensatory = True  # Set to True to classify saccades as orienting vs compensatory
+bout_window = 1.5  # Time window (seconds) for grouping saccades into bouts
+pre_saccade_window = 0.3  # Time window (seconds) before saccade onset to analyze
+max_intersaccade_interval_for_classification = 5.0  # Maximum time (seconds) to extend post-saccade window until next saccade for classification
+pre_saccade_velocity_threshold = 50.0  # Velocity threshold (px/s) for detecting pre-saccade drift
+pre_saccade_drift_threshold = 10.0  # Position drift threshold (px) before saccade for compensatory classification
+post_saccade_variance_threshold = 100.0  # Position variance threshold (px²) after saccade for orienting classification
+post_saccade_position_change_threshold_percent = 50.0  # Position change threshold (% of saccade amplitude) - if post-saccade change > amplitude * this%, classify as compensatory
+
+# Adaptive threshold parameters (percentile-based)
+use_adaptive_thresholds = True  # Set to True to use adaptive thresholds based on feature distributions, False to use fixed thresholds
+adaptive_percentile_pre_velocity = 75  # Percentile for pre-saccade velocity threshold (upper percentile for compensatory detection)
+adaptive_percentile_pre_drift = 75  # Percentile for pre-saccade drift threshold (upper percentile for compensatory detection)
+adaptive_percentile_post_variance = 25  # Percentile for post-saccade variance threshold (lower percentile for orienting detection - low variance = stable)
+
+
+# %%
+# VISUALIZE AND ANALYZE SACCADE CLASSIFICATION (Orienting vs Compensatory)
+#-------------------------------------------------------------------------------
+# Create validation plots and statistical comparisons for saccade classification
+
+for video_key, res in saccade_results.items():
+    dir_map = get_direction_map_for_video(video_key)
+    label_up = dir_map['upward']
+    label_down = dir_map['downward']
+    
+    all_saccades_df = res.get('all_saccades_df', pd.DataFrame())
+    
+    if len(all_saccades_df) == 0:
+        print(f"\n⚠️ No saccades found for {get_eye_label(video_key)}")
+        continue
+    
+    # Check if classification was performed
+    if 'saccade_type' not in all_saccades_df.columns:
+        print(f"\n⚠️ Classification not performed for {get_eye_label(video_key)}")
+        continue
+    
+    orienting_saccades = all_saccades_df[all_saccades_df['saccade_type'] == 'orienting']
+    compensatory_saccades = all_saccades_df[all_saccades_df['saccade_type'] == 'compensatory']
+    
+    print(f"\n{'='*80}")
+    print(f"CLASSIFICATION ANALYSIS: {get_eye_label(video_key)}")
+    print(f"{'='*80}")
+    
+    # Statistical comparisons
+    from scipy import stats
+    
+    print(f"\n📊 Statistical Comparisons:")
+    print(f"  Orienting saccades: {len(orienting_saccades)}")
+    print(f"  Compensatory saccades: {len(compensatory_saccades)}")
+    
+    if len(orienting_saccades) > 0 and len(compensatory_saccades) > 0:
+        # Amplitude comparison
+        orienting_amps = orienting_saccades['amplitude'].values
+        compensatory_amps = compensatory_saccades['amplitude'].values
+        amp_stat, amp_p = stats.mannwhitneyu(orienting_amps, compensatory_amps, alternative='two-sided')
+        print(f"\n  Amplitude (px):")
+        print(f"    Orienting: {orienting_amps.mean():.2f} ± {orienting_amps.std():.2f} (median: {np.median(orienting_amps):.2f})")
+        print(f"    Compensatory: {compensatory_amps.mean():.2f} ± {compensatory_amps.std():.2f} (median: {np.median(compensatory_amps):.2f})")
+        print(f"    Mann-Whitney U test: U={amp_stat:.1f}, p={amp_p:.4f}")
+        
+        # Duration comparison
+        orienting_durs = orienting_saccades['duration'].values
+        compensatory_durs = compensatory_saccades['duration'].values
+        dur_stat, dur_p = stats.mannwhitneyu(orienting_durs, compensatory_durs, alternative='two-sided')
+        print(f"\n  Duration (s):")
+        print(f"    Orienting: {orienting_durs.mean():.3f} ± {orienting_durs.std():.3f} (median: {np.median(orienting_durs):.3f})")
+        print(f"    Compensatory: {compensatory_durs.mean():.3f} ± {compensatory_durs.std():.3f} (median: {np.median(compensatory_durs):.3f})")
+        print(f"    Mann-Whitney U test: U={dur_stat:.1f}, p={dur_p:.4f}")
+        
+        # Pre-saccade velocity comparison
+        orienting_pre_vel = orienting_saccades['pre_saccade_mean_velocity'].values
+        compensatory_pre_vel = compensatory_saccades['pre_saccade_mean_velocity'].values
+        pre_vel_stat, pre_vel_p = stats.mannwhitneyu(orienting_pre_vel, compensatory_pre_vel, alternative='two-sided')
+        print(f"\n  Pre-saccade velocity (px/s):")
+        print(f"    Orienting: {orienting_pre_vel.mean():.2f} ± {orienting_pre_vel.std():.2f} (median: {np.median(orienting_pre_vel):.2f})")
+        print(f"    Compensatory: {compensatory_pre_vel.mean():.2f} ± {compensatory_pre_vel.std():.2f} (median: {np.median(compensatory_pre_vel):.2f})")
+        print(f"    Mann-Whitney U test: U={pre_vel_stat:.1f}, p={pre_vel_p:.4f}")
+        
+        # Pre-saccade drift comparison
+        orienting_pre_drift = orienting_saccades['pre_saccade_position_drift'].values
+        compensatory_pre_drift = compensatory_saccades['pre_saccade_position_drift'].values
+        pre_drift_stat, pre_drift_p = stats.mannwhitneyu(orienting_pre_drift, compensatory_pre_drift, alternative='two-sided')
+        print(f"\n  Pre-saccade position drift (px):")
+        print(f"    Orienting: {orienting_pre_drift.mean():.2f} ± {orienting_pre_drift.std():.2f} (median: {np.median(orienting_pre_drift):.2f})")
+        print(f"    Compensatory: {compensatory_pre_drift.mean():.2f} ± {compensatory_pre_drift.std():.2f} (median: {np.median(compensatory_pre_drift):.2f})")
+        print(f"    Mann-Whitney U test: U={pre_drift_stat:.1f}, p={pre_drift_p:.4f}")
+        
+        # Post-saccade variance comparison
+        orienting_post_var = orienting_saccades['post_saccade_position_variance'].values
+        compensatory_post_var = compensatory_saccades['post_saccade_position_variance'].values
+        post_var_stat, post_var_p = stats.mannwhitneyu(orienting_post_var, compensatory_post_var, alternative='two-sided')
+        print(f"\n  Post-saccade position variance (px²):")
+        print(f"    Orienting: {orienting_post_var.mean():.2f} ± {orienting_post_var.std():.2f} (median: {np.median(orienting_post_var):.2f})")
+        print(f"    Compensatory: {compensatory_post_var.mean():.2f} ± {compensatory_post_var.std():.2f} (median: {np.median(compensatory_post_var):.2f})")
+        print(f"    Mann-Whitney U test: U={post_var_stat:.1f}, p={post_var_p:.4f}")
+        
+        # Bout size for compensatory saccades
+        if len(compensatory_saccades) > 0:
+            bout_sizes = compensatory_saccades['bout_size'].values
+            print(f"\n  Bout size (compensatory saccades only):")
+            print(f"    Mean: {bout_sizes.mean():.2f} ± {bout_sizes.std():.2f} saccades")
+            print(f"    Range: {bout_sizes.min():.0f} - {bout_sizes.max():.0f} saccades")
+            print(f"    Median: {np.median(bout_sizes):.0f} saccades")
+    else:
+        print(f"  ⚠️ Cannot perform statistical comparisons - need both types present")
+    
+    # Create visualization figure
+    fig_class = make_subplots(
+        rows=2, cols=3,
+        subplot_titles=(
+            'Amplitude Distribution',
+            'Duration Distribution',
+            'Pre-saccade Velocity Distribution',
+            'Pre-saccade Position Drift',
+            'Post-saccade Position Variance',
+            'Bout Size Distribution (Compensatory)'
+        ),
+        vertical_spacing=0.12,
+        horizontal_spacing=0.1
+    )
+    
+    # Row 1, Col 1: Amplitude distributions
+    if len(orienting_saccades) > 0:
+        fig_class.add_trace(
+            go.Histogram(
+                x=orienting_saccades['amplitude'],
+                nbinsx=30,
+                name='Orienting',
+                marker_color='blue',
+                opacity=0.6
+            ),
+            row=1, col=1
+        )
+    if len(compensatory_saccades) > 0:
+        fig_class.add_trace(
+            go.Histogram(
+                x=compensatory_saccades['amplitude'],
+                nbinsx=30,
+                name='Compensatory',
+                marker_color='orange',
+                opacity=0.6
+            ),
+            row=1, col=1
+        )
+    
+    # Row 1, Col 2: Duration distributions
+    if len(orienting_saccades) > 0:
+        fig_class.add_trace(
+            go.Histogram(
+                x=orienting_saccades['duration'],
+                nbinsx=30,
+                name='Orienting',
+                marker_color='blue',
+                opacity=0.6,
+                showlegend=False
+            ),
+            row=1, col=2
+        )
+    if len(compensatory_saccades) > 0:
+        fig_class.add_trace(
+            go.Histogram(
+                x=compensatory_saccades['duration'],
+                nbinsx=30,
+                name='Compensatory',
+                marker_color='orange',
+                opacity=0.6,
+                showlegend=False
+            ),
+            row=1, col=2
+        )
+    
+    # Row 1, Col 3: Pre-saccade velocity distributions
+    if len(orienting_saccades) > 0:
+        fig_class.add_trace(
+            go.Histogram(
+                x=orienting_saccades['pre_saccade_mean_velocity'],
+                nbinsx=30,
+                name='Orienting',
+                marker_color='blue',
+                opacity=0.6,
+                showlegend=False
+            ),
+            row=1, col=3
+        )
+    if len(compensatory_saccades) > 0:
+        fig_class.add_trace(
+            go.Histogram(
+                x=compensatory_saccades['pre_saccade_mean_velocity'],
+                nbinsx=30,
+                name='Compensatory',
+                marker_color='orange',
+                opacity=0.6,
+                showlegend=False
+            ),
+            row=1, col=3
+        )
+    
+    # Row 2, Col 1: Pre-saccade drift distributions
+    if len(orienting_saccades) > 0:
+        fig_class.add_trace(
+            go.Histogram(
+                x=orienting_saccades['pre_saccade_position_drift'],
+                nbinsx=30,
+                name='Orienting',
+                marker_color='blue',
+                opacity=0.6,
+                showlegend=False
+            ),
+            row=2, col=1
+        )
+    if len(compensatory_saccades) > 0:
+        fig_class.add_trace(
+            go.Histogram(
+                x=compensatory_saccades['pre_saccade_position_drift'],
+                nbinsx=30,
+                name='Compensatory',
+                marker_color='orange',
+                opacity=0.6,
+                showlegend=False
+            ),
+            row=2, col=1
+        )
+    
+    # Row 2, Col 2: Post-saccade variance distributions
+    if len(orienting_saccades) > 0:
+        fig_class.add_trace(
+            go.Histogram(
+                x=orienting_saccades['post_saccade_position_variance'],
+                nbinsx=30,
+                name='Orienting',
+                marker_color='blue',
+                opacity=0.6,
+                showlegend=False
+            ),
+            row=2, col=2
+        )
+    if len(compensatory_saccades) > 0:
+        fig_class.add_trace(
+            go.Histogram(
+                x=compensatory_saccades['post_saccade_position_variance'],
+                nbinsx=30,
+                name='Compensatory',
+                marker_color='orange',
+                opacity=0.6,
+                showlegend=False
+            ),
+            row=2, col=2
+        )
+    
+    # Row 2, Col 3: Bout size distribution (compensatory only)
+    if len(compensatory_saccades) > 0:
+        fig_class.add_trace(
+            go.Histogram(
+                x=compensatory_saccades['bout_size'],
+                nbinsx=20,
+                name='Compensatory Bout Size',
+                marker_color='orange',
+                opacity=0.6,
+                showlegend=False
+            ),
+            row=2, col=3
+        )
+    else:
+        # Add empty trace to maintain layout
+        fig_class.add_trace(
+            go.Histogram(x=[], name='No compensatory saccades'),
+            row=2, col=3
+        )
+    
+    # Update layout
+    fig_class.update_layout(
+        title_text=f'Saccade Classification Analysis: Orienting vs Compensatory ({get_eye_label(video_key)})',
+        height=800,
+        showlegend=True,
+        legend=dict(x=0.02, y=0.98)
+    )
+    
+    # Update axes labels
+    fig_class.update_xaxes(title_text="Amplitude (px)", row=1, col=1)
+    fig_class.update_xaxes(title_text="Duration (s)", row=1, col=2)
+    fig_class.update_xaxes(title_text="Velocity (px/s)", row=1, col=3)
+    fig_class.update_xaxes(title_text="Drift (px)", row=2, col=1)
+    fig_class.update_xaxes(title_text="Variance (px²)", row=2, col=2)
+    fig_class.update_xaxes(title_text="Bout Size (saccades)", row=2, col=3)
+    
+    fig_class.update_yaxes(title_text="Count", row=1, col=1)
+    fig_class.update_yaxes(title_text="Count", row=1, col=2)
+    fig_class.update_yaxes(title_text="Count", row=1, col=3)
+    fig_class.update_yaxes(title_text="Count", row=2, col=1)
+    fig_class.update_yaxes(title_text="Count", row=2, col=2)
+    fig_class.update_yaxes(title_text="Count", row=2, col=3)
+    
+    fig_class.show()
+    
+    # Time series visualization with classification
+    fig_ts = make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.1,
+        subplot_titles=('X Position (px)', 'Velocity (px/s) with Classified Saccades')
+    )
+    
+    # Add position trace
+    fig_ts.add_trace(
+        go.Scatter(
+            x=res['df']['Seconds'],
+            y=res['df']['X_smooth'],
+            mode='lines',
+            name='Smoothed X',
+            line=dict(color='blue', width=2)
+        ),
+        row=1, col=1
+    )
+    
+    # Add velocity trace
+    fig_ts.add_trace(
+        go.Scatter(
+            x=res['df']['Seconds'],
+            y=res['df']['vel_x_smooth'],
+            mode='lines',
+            name='Smoothed Velocity',
+            line=dict(color='red', width=2)
+        ),
+        row=2, col=1
+    )
+    
+    # Add adaptive threshold lines
+    fig_ts.add_hline(
+        y=res['vel_thresh'],
+        line_dash="dash",
+        line_color="green",
+        opacity=0.5,
+        annotation_text=f"Adaptive threshold (±{res['vel_thresh']:.0f} px/s)",
+        row=2, col=1
+    )
+    fig_ts.add_hline(
+        y=-res['vel_thresh'],
+        line_dash="dash",
+        line_color="green",
+        opacity=0.5,
+        row=2, col=1
+    )
+    
+    # Calculate offset for saccade indicator lines
+    vel_max = res['df']['vel_x_smooth'].max()
+    vel_min = res['df']['vel_x_smooth'].min()
+    vel_range = vel_max - vel_min
+    line_offset = vel_range * 0.15
+    
+    # Plot orienting saccades (blue)
+    orienting_in_df = all_saccades_df[all_saccades_df['saccade_type'] == 'orienting']
+    if len(orienting_in_df) > 0:
+        for idx, row in orienting_in_df.iterrows():
+            start_time = row['start_time']
+            end_time = row['end_time']
+            peak_time = row['time']
+            peak_velocity = row['velocity']
+            
+            # Draw horizontal line
+            y_line_pos = vel_max + line_offset
+            fig_ts.add_shape(
+                type="line",
+                x0=start_time, y0=y_line_pos,
+                x1=end_time, y1=y_line_pos,
+                line=dict(color='blue', width=3),
+                row=2, col=1
+            )
+            
+            # Add arrow
+            fig_ts.add_annotation(
+                x=peak_time,
+                y=y_line_pos,
+                ax=0,
+                ay=peak_velocity - y_line_pos,
+                arrowhead=2,
+                arrowsize=2,
+                arrowwidth=2,
+                arrowcolor='blue',
+                row=2, col=1,
+                showarrow=True
+            )
+        
+        # Legend entry
+        fig_ts.add_trace(
+            go.Scatter(
+                x=[None], y=[None],
+                mode='markers',
+                name='Orienting Saccades',
+                marker=dict(symbol='line-ns', size=15, color='blue', line=dict(width=3))
+            ),
+            row=2, col=1
+        )
+    
+    # Plot compensatory saccades (orange)
+    compensatory_in_df = all_saccades_df[all_saccades_df['saccade_type'] == 'compensatory']
+    if len(compensatory_in_df) > 0:
+        for idx, row in compensatory_in_df.iterrows():
+            start_time = row['start_time']
+            end_time = row['end_time']
+            peak_time = row['time']
+            peak_velocity = row['velocity']
+            
+            # Draw horizontal line (below velocity trace)
+            y_line_pos = vel_min - line_offset
+            fig_ts.add_shape(
+                type="line",
+                x0=start_time, y0=y_line_pos,
+                x1=end_time, y1=y_line_pos,
+                line=dict(color='orange', width=3),
+                row=2, col=1
+            )
+            
+            # Add arrow
+            fig_ts.add_annotation(
+                x=peak_time,
+                y=y_line_pos,
+                ax=0,
+                ay=peak_velocity - y_line_pos,
+                arrowhead=2,
+                arrowsize=2,
+                arrowwidth=2,
+                arrowcolor='orange',
+                row=2, col=1,
+                showarrow=True
+            )
+        
+        # Legend entry
+        fig_ts.add_trace(
+            go.Scatter(
+                x=[None], y=[None],
+                mode='markers',
+                name='Compensatory Saccades',
+                marker=dict(symbol='line-ns', size=15, color='orange', line=dict(width=3))
+            ),
+            row=2, col=1
+        )
+    
+    # Update layout
+    fig_ts.update_layout(
+        title=f'Time Series with Saccade Classification ({get_eye_label(video_key)})<br><sub>Blue: Orienting, Orange: Compensatory</sub>',
+        height=600,
+        showlegend=True,
+        legend=dict(x=0.01, y=0.99)
+    )
+    
+    # Update axes
+    fig_ts.update_xaxes(title_text="Time (s)", row=2, col=1)
+    fig_ts.update_yaxes(title_text="X Position (px)", row=1, col=1)
+    fig_ts.update_yaxes(title_text="Velocity (px/s)", row=2, col=1)
+    
+    fig_ts.show()
 
 
 # %%

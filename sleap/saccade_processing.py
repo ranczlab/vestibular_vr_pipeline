@@ -436,6 +436,317 @@ def get_color_mapping(amplitudes):
     return ['rgb({}, {}, {})'.format(int(r*255), int(g*255), int(b*255)) for r, g, b, _ in colors], min_amp, max_amp
 
 
+def classify_saccades_orienting_vs_compensatory(
+    all_saccades_df,
+    df,
+    fps,
+    bout_window=1.5,
+    pre_saccade_window=0.3,
+    max_intersaccade_interval_for_classification=5.0,
+    pre_saccade_velocity_threshold=50.0,
+    pre_saccade_drift_threshold=10.0,
+    post_saccade_variance_threshold=100.0,
+    post_saccade_position_change_threshold_percent=50.0,
+    use_adaptive_thresholds=False,
+    adaptive_percentile_pre_velocity=75,
+    adaptive_percentile_pre_drift=75,
+    adaptive_percentile_post_variance=25,
+    position_col='X_smooth',
+    velocity_col='vel_x_smooth',
+    time_col='Seconds',
+    verbose=True
+):
+    """
+    Classify saccades as orienting vs compensatory based on temporal clustering and signal features.
+    
+    Parameters:
+    -----------
+    all_saccades_df : pd.DataFrame
+        Combined DataFrame of all saccades (upward + downward) with columns:
+        'time', 'start_time', 'end_time', 'duration', 'amplitude', 'velocity', 'direction'
+    df : pd.DataFrame
+        Full time series DataFrame with position and velocity data
+    fps : float
+        Frames per second
+    bout_window : float
+        Time window (seconds) for grouping saccades into bouts (default: 1.5)
+    pre_saccade_window : float
+        Time window (seconds) before saccade onset to analyze (default: 0.3)
+    max_intersaccade_interval_for_classification : float
+        Maximum time (seconds) to extend post-saccade window until next saccade (default: 5.0)
+        Post-saccade analysis dynamically extends until next saccade or this maximum
+    pre_saccade_velocity_threshold : float
+        Velocity threshold (px/s) for detecting pre-saccade drift (default: 50.0)
+    pre_saccade_drift_threshold : float
+        Position drift threshold (px) before saccade for compensatory classification (default: 10.0)
+    post_saccade_variance_threshold : float
+        Position variance threshold (px²) after saccade for orienting classification (default: 100.0)
+    post_saccade_position_change_threshold_percent : float
+        Position change threshold (% of saccade amplitude) for compensatory classification (default: 50.0)
+        If post_saccade_position_change > amplitude * threshold_percent, classify as compensatory
+    use_adaptive_thresholds : bool
+        If True, calculate thresholds from feature distributions using percentiles (default: False)
+        If False, use fixed thresholds provided as parameters
+    adaptive_percentile_pre_velocity : int
+        Percentile for adaptive pre-saccade velocity threshold (default: 75)
+        Used as upper percentile for compensatory detection
+    adaptive_percentile_pre_drift : int
+        Percentile for adaptive pre-saccade drift threshold (default: 75)
+        Used as upper percentile for compensatory detection
+    adaptive_percentile_post_variance : int
+        Percentile for adaptive post-saccade variance threshold (default: 25)
+        Used as lower percentile for orienting detection (low variance = stable)
+    position_col : str
+        Column name for position data (default: 'X_smooth')
+    velocity_col : str
+        Column name for velocity data (default: 'vel_x_smooth')
+    time_col : str
+        Column name for time data (default: 'Seconds')
+    verbose : bool
+        Whether to print classification statistics (default: True)
+        
+    Returns:
+    --------
+    pd.DataFrame : Same DataFrame with added columns:
+        'saccade_type': 'orienting' or 'compensatory' (ALL saccades are classified)
+        'bout_id': ID of bout (None for isolated saccades)
+        'bout_size': Number of saccades in bout (1 for isolated)
+        'pre_saccade_mean_velocity': Mean velocity before saccade
+        'pre_saccade_position_drift': Position change before saccade
+        'post_saccade_position_variance': Position variance in dynamic window (until next saccade or max interval)
+        'post_saccade_position_change': Total position change in dynamic window (until next saccade or max interval)
+    """
+    if len(all_saccades_df) == 0:
+        return all_saccades_df
+    
+    # Sort by time to ensure chronological order
+    all_saccades_df = all_saccades_df.sort_values('time').reset_index(drop=True)
+    
+    # Initialize new columns
+    all_saccades_df['saccade_type'] = None
+    all_saccades_df['bout_id'] = None
+    all_saccades_df['bout_size'] = 1
+    all_saccades_df['pre_saccade_mean_velocity'] = np.nan
+    all_saccades_df['pre_saccade_position_drift'] = np.nan
+    all_saccades_df['post_saccade_position_variance'] = np.nan
+    all_saccades_df['post_saccade_position_change'] = np.nan
+    
+    # Stage 1: Temporal clustering (bout detection)
+    bout_id = 0
+    current_bout_start_idx = None
+    
+    for i in range(len(all_saccades_df)):
+        if i == 0:
+            # First saccade starts a potential bout
+            current_bout_start_idx = 0
+            bout_id += 1
+            all_saccades_df.loc[i, 'bout_id'] = bout_id
+        else:
+            # Check time interval from previous saccade
+            time_interval = all_saccades_df.iloc[i]['time'] - all_saccades_df.iloc[i-1]['time']
+            
+            if time_interval <= bout_window:
+                # Within bout window - add to current bout
+                all_saccades_df.loc[i, 'bout_id'] = bout_id
+            else:
+                # Gap > bout_window - start new bout
+                bout_id += 1
+                all_saccades_df.loc[i, 'bout_id'] = bout_id
+                current_bout_start_idx = i
+    
+    # Calculate bout sizes
+    bout_sizes = all_saccades_df.groupby('bout_id').size()
+    all_saccades_df['bout_size'] = all_saccades_df['bout_id'].map(bout_sizes)
+    
+    # Stage 2: Feature extraction for each saccade
+    for idx, saccade in all_saccades_df.iterrows():
+        start_time = saccade['start_time']
+        end_time = saccade['end_time']
+        peak_time = saccade['time']
+        
+        # Find indices in full dataframe
+        start_idx = int(np.argmin(np.abs(df[time_col].to_numpy() - start_time)))
+        end_idx = int(np.argmin(np.abs(df[time_col].to_numpy() - end_time)))
+        
+        # Feature 1: Pre-saccade velocity
+        # Calculate desired window start time
+        desired_pre_window_start = start_time - pre_saccade_window
+        
+        # Constrain to previous saccade's peak time (if previous saccade exists)
+        if idx > 0:
+            previous_saccade_peak_time = all_saccades_df.iloc[idx - 1]['time']
+            # Use the maximum (most recent) of: desired start time or previous saccade peak
+            pre_window_start_time = max(desired_pre_window_start, previous_saccade_peak_time)
+        else:
+            # First saccade - no constraint, use desired window
+            pre_window_start_time = desired_pre_window_start
+        
+        pre_window_start_idx = max(0, int(np.argmin(np.abs(df[time_col].to_numpy() - pre_window_start_time))))
+        pre_saccade_mask = (df[time_col] >= pre_window_start_time) & (df[time_col] < start_time)
+        pre_saccade_velocities = df.loc[pre_saccade_mask, velocity_col]
+        pre_saccade_mean_vel = pre_saccade_velocities.abs().mean() if len(pre_saccade_velocities) > 0 else 0.0
+        
+        # Feature 2: Pre-saccade position drift
+        pre_saccade_positions = df.loc[pre_saccade_mask, position_col]
+        if len(pre_saccade_positions) > 0:
+            pre_saccade_drift = abs(pre_saccade_positions.iloc[-1] - pre_saccade_positions.iloc[0])
+        else:
+            pre_saccade_drift = 0.0
+        
+        # Feature 3: Post-saccade position stability (DYNAMIC WINDOW)
+        # Window extends from saccade offset until next saccade start (or max interval)
+        # Find next saccade
+        next_saccade_idx = idx + 1
+        if next_saccade_idx < len(all_saccades_df):
+            next_saccade_start_time = all_saccades_df.iloc[next_saccade_idx]['start_time']
+            interval_to_next = next_saccade_start_time - end_time
+            # Use interval to next saccade if within max, otherwise use max
+            dynamic_window_duration = min(interval_to_next, max_intersaccade_interval_for_classification)
+        else:
+            # Last saccade - use max interval
+            dynamic_window_duration = max_intersaccade_interval_for_classification
+        
+        post_window_end_time = end_time + dynamic_window_duration
+        post_window_end_idx = min(len(df) - 1, int(np.argmin(np.abs(df[time_col].to_numpy() - post_window_end_time))))
+        post_saccade_mask = (df[time_col] > end_time) & (df[time_col] <= post_window_end_time)
+        post_saccade_positions = df.loc[post_saccade_mask, position_col]
+        
+        if len(post_saccade_positions) > 1:
+            post_saccade_variance = post_saccade_positions.var()
+            # Calculate total position change (from end of saccade to end of window)
+            post_saccade_change = abs(post_saccade_positions.iloc[-1] - post_saccade_positions.iloc[0])
+        else:
+            post_saccade_variance = 0.0
+            post_saccade_change = 0.0
+        
+        # Store features
+        all_saccades_df.loc[idx, 'pre_saccade_mean_velocity'] = pre_saccade_mean_vel
+        all_saccades_df.loc[idx, 'pre_saccade_position_drift'] = pre_saccade_drift
+        all_saccades_df.loc[idx, 'post_saccade_position_variance'] = post_saccade_variance
+        all_saccades_df.loc[idx, 'post_saccade_position_change'] = post_saccade_change
+    
+    # Calculate adaptive thresholds if enabled (after feature extraction, before classification)
+    if use_adaptive_thresholds:
+        # Calculate thresholds from feature distributions using percentiles
+        # Filter out NaN values for percentile calculation
+        pre_velocities = all_saccades_df['pre_saccade_mean_velocity'].dropna()
+        pre_drifts = all_saccades_df['pre_saccade_position_drift'].dropna()
+        post_variances = all_saccades_df['post_saccade_position_variance'].dropna()
+        
+        # Check if we have enough data points (at least 3 for meaningful percentiles)
+        min_samples = 3
+        
+        if len(pre_velocities) >= min_samples:
+            pre_saccade_velocity_threshold = np.percentile(pre_velocities, adaptive_percentile_pre_velocity)
+        else:
+            if verbose:
+                print(f"⚠️ Warning: Only {len(pre_velocities)} pre-saccade velocity samples, using fixed threshold")
+            # Keep original fixed threshold
+            
+        if len(pre_drifts) >= min_samples:
+            pre_saccade_drift_threshold = np.percentile(pre_drifts, adaptive_percentile_pre_drift)
+        else:
+            if verbose:
+                print(f"⚠️ Warning: Only {len(pre_drifts)} pre-saccade drift samples, using fixed threshold")
+            # Keep original fixed threshold
+            
+        if len(post_variances) >= min_samples:
+            post_saccade_variance_threshold = np.percentile(post_variances, adaptive_percentile_post_variance)
+        else:
+            if verbose:
+                print(f"⚠️ Warning: Only {len(post_variances)} post-saccade variance samples, using fixed threshold")
+            # Keep original fixed threshold
+        
+        # Report thresholds used
+        if verbose:
+            print(f"\n📊 Adaptive Thresholds Calculated (from feature distributions):")
+            print(f"  Pre-saccade velocity threshold ({adaptive_percentile_pre_velocity}th percentile): {pre_saccade_velocity_threshold:.2f} px/s")
+            print(f"  Pre-saccade drift threshold ({adaptive_percentile_pre_drift}th percentile): {pre_saccade_drift_threshold:.2f} px")
+            print(f"  Post-saccade variance threshold ({adaptive_percentile_post_variance}th percentile): {post_saccade_variance_threshold:.2f} px²")
+    else:
+        if verbose:
+            print(f"\n📊 Using Fixed Thresholds:")
+            print(f"  Pre-saccade velocity threshold: {pre_saccade_velocity_threshold:.2f} px/s")
+            print(f"  Pre-saccade drift threshold: {pre_saccade_drift_threshold:.2f} px")
+            print(f"  Post-saccade variance threshold: {post_saccade_variance_threshold:.2f} px²")
+    
+    # Stage 3: Classification logic
+    # Original simple logic (conservative approach):
+    # - If in a bout (bout_size >= 2) → automatically compensatory
+    # - If isolated → use feature-based classification
+    # This is the starting point - can be refined later if needed
+    
+    for idx, saccade in all_saccades_df.iterrows():
+        bout_size = saccade['bout_size']
+        pre_vel = saccade['pre_saccade_mean_velocity']
+        pre_drift = saccade['pre_saccade_position_drift']
+        post_var = saccade['post_saccade_position_variance']
+        post_change = saccade['post_saccade_position_change']
+        amplitude = saccade['amplitude']
+        
+        # Classification rules:
+        # 1. If in a bout (bout_size >= 2), classify as compensatory
+        # 2. If isolated, use features:
+        #    - Pre-saccade velocity > threshold OR pre-saccade drift significant → compensatory
+        #    - Post-saccade position change > amplitude * threshold_percent → compensatory (eye continues moving)
+        #    - Pre-saccade velocity low AND post-saccade stable (variance AND position change) → orienting
+        
+        if bout_size >= 2:
+            # Multiple saccades in bout → compensatory
+            all_saccades_df.loc[idx, 'saccade_type'] = 'compensatory'
+        else:
+            # Isolated saccade - use feature-based classification
+            # Calculate position change threshold relative to amplitude
+            position_change_threshold = amplitude * (post_saccade_position_change_threshold_percent / 100.0)
+            
+            # Check for compensatory indicators
+            has_pre_saccade_drift = (pre_vel > pre_saccade_velocity_threshold or pre_drift > pre_saccade_drift_threshold)
+            has_post_saccade_movement = (post_change > position_change_threshold)
+            
+            if has_pre_saccade_drift or has_post_saccade_movement:
+                # Evidence of drift/compensation → compensatory
+                all_saccades_df.loc[idx, 'saccade_type'] = 'compensatory'
+            elif (pre_vel <= pre_saccade_velocity_threshold and 
+                  post_var < post_saccade_variance_threshold and
+                  post_change <= position_change_threshold):
+                # Stable before and after → orienting
+                all_saccades_df.loc[idx, 'saccade_type'] = 'orienting'
+            else:
+                # Default: if uncertain, classify as compensatory (conservative)
+                all_saccades_df.loc[idx, 'saccade_type'] = 'compensatory'
+    
+    # Print statistics
+    if verbose:
+        n_orienting = (all_saccades_df['saccade_type'] == 'orienting').sum()
+        n_compensatory = (all_saccades_df['saccade_type'] == 'compensatory').sum()
+        n_bouts = all_saccades_df['bout_id'].nunique()
+        n_isolated = (all_saccades_df['bout_size'] == 1).sum()
+        
+        print(f"\n📊 Saccade Classification Results:")
+        print(f"  Total saccades: {len(all_saccades_df)}")
+        print(f"  Orienting saccades: {n_orienting} ({n_orienting/len(all_saccades_df)*100:.1f}%)")
+        print(f"  Compensatory saccades: {n_compensatory} ({n_compensatory/len(all_saccades_df)*100:.1f}%)")
+        print(f"  Detected bouts: {n_bouts}")
+        print(f"  Isolated saccades: {n_isolated}")
+        
+        if n_orienting > 0:
+            orienting_df = all_saccades_df[all_saccades_df['saccade_type'] == 'orienting']
+            print(f"\n  Orienting saccades stats:")
+            print(f"    Mean amplitude: {orienting_df['amplitude'].mean():.2f} px")
+            print(f"    Mean duration: {orienting_df['duration'].mean():.3f} s")
+            print(f"    Mean pre-saccade velocity: {orienting_df['pre_saccade_mean_velocity'].mean():.2f} px/s")
+        
+        if n_compensatory > 0:
+            compensatory_df = all_saccades_df[all_saccades_df['saccade_type'] == 'compensatory']
+            print(f"\n  Compensatory saccades stats:")
+            print(f"    Mean amplitude: {compensatory_df['amplitude'].mean():.2f} px")
+            print(f"    Mean duration: {compensatory_df['duration'].mean():.3f} s")
+            print(f"    Mean pre-saccade velocity: {compensatory_df['pre_saccade_mean_velocity'].mean():.2f} px/s")
+            print(f"    Mean bout size: {compensatory_df['bout_size'].mean():.2f} saccades")
+    
+    return all_saccades_df
+
+
 def analyze_eye_video_saccades(
     df,
     fps,
@@ -448,10 +759,23 @@ def analyze_eye_video_saccades(
     baseline_n_points=5,
     upward_label=None,
     downward_label=None,
+    classify_orienting_compensatory=True,
+    bout_window=1.5,
+    pre_saccade_window=0.3,
+    max_intersaccade_interval_for_classification=5.0,
+    pre_saccade_velocity_threshold=50.0,
+    pre_saccade_drift_threshold=10.0,
+    post_saccade_variance_threshold=100.0,
+    post_saccade_position_change_threshold_percent=50.0,
+    use_adaptive_thresholds=False,
+    adaptive_percentile_pre_velocity=75,
+    adaptive_percentile_pre_drift=75,
+    adaptive_percentile_post_variance=25,
 ):
     """
     Analyze saccades for a given eye video dataframe.
     Performs smoothing, velocity computation, adaptive saccade detection, peri-event extraction, baselining, outlier filtering.
+    Optionally classifies saccades as orienting vs compensatory.
     Returns dict of results including all relevant outputs for stats/plots.
     """
     import numpy as np
@@ -511,9 +835,144 @@ def analyze_eye_video_saccades(
     upward_segments, upward_outliers_meta, upward_outlier_segments = filter_outlier_saccades(upward_segments_all, 'upward')
     downward_segments, downward_outliers_meta, downward_outlier_segments = filter_outlier_saccades(downward_segments_all, 'downward')
 
+    # Classify saccades as orienting vs compensatory (if enabled)
+    # Combine upward and downward saccades for classification
+    # Preserve original indices for matching
+    all_saccades_list = []
+    if len(upward_saccades_df) > 0:
+        upward_saccades_df_copy = upward_saccades_df.copy()
+        upward_saccades_df_copy['direction'] = 'upward'
+        upward_saccades_df_copy['original_index'] = upward_saccades_df_copy.index
+        upward_saccades_df_copy['is_upward'] = True
+        all_saccades_list.append(upward_saccades_df_copy)
+    if len(downward_saccades_df) > 0:
+        downward_saccades_df_copy = downward_saccades_df.copy()
+        downward_saccades_df_copy['direction'] = 'downward'
+        downward_saccades_df_copy['original_index'] = downward_saccades_df_copy.index
+        downward_saccades_df_copy['is_upward'] = False
+        all_saccades_list.append(downward_saccades_df_copy)
+    
+    if len(all_saccades_list) > 0:
+        all_saccades_df = pd.concat(all_saccades_list, ignore_index=True)
+        # Store original index mapping before classification (which sorts by time)
+        original_idx_map = {}
+        for new_idx, row in all_saccades_df.iterrows():
+            original_idx_map[new_idx] = {
+                'original_index': row['original_index'],
+                'is_upward': row['is_upward']
+            }
+        
+        # Classify saccades (if enabled)
+        if classify_orienting_compensatory:
+            all_saccades_df = classify_saccades_orienting_vs_compensatory(
+                all_saccades_df, df, fps,
+                bout_window=bout_window,
+                pre_saccade_window=pre_saccade_window,
+                max_intersaccade_interval_for_classification=max_intersaccade_interval_for_classification,
+                pre_saccade_velocity_threshold=pre_saccade_velocity_threshold,
+                pre_saccade_drift_threshold=pre_saccade_drift_threshold,
+                post_saccade_variance_threshold=post_saccade_variance_threshold,
+                post_saccade_position_change_threshold_percent=post_saccade_position_change_threshold_percent,
+                use_adaptive_thresholds=use_adaptive_thresholds,
+                adaptive_percentile_pre_velocity=adaptive_percentile_pre_velocity,
+                adaptive_percentile_pre_drift=adaptive_percentile_pre_drift,
+                adaptive_percentile_post_variance=adaptive_percentile_post_variance,
+                verbose=True
+            )
+            # Verify all saccades are classified (all branches in classification logic assign a type)
+            unclassified = all_saccades_df[all_saccades_df['saccade_type'].isna()]
+            if len(unclassified) > 0:
+                print(f"⚠️ WARNING: {len(unclassified)} saccades were not classified!")
+            else:
+                # Confirm all saccades are classified
+                n_total = len(all_saccades_df)
+                n_orienting = (all_saccades_df['saccade_type'] == 'orienting').sum()
+                n_compensatory = (all_saccades_df['saccade_type'] == 'compensatory').sum()
+                if n_orienting + n_compensatory == n_total:
+                    print(f"✅ All {n_total} saccades successfully classified ({n_orienting} orienting, {n_compensatory} compensatory)")
+        else:
+            # Skip classification - all saccades will have no saccade_type
+            all_saccades_df['saccade_type'] = None
+            all_saccades_df['bout_id'] = None
+            all_saccades_df['bout_size'] = 1
+            all_saccades_df['pre_saccade_mean_velocity'] = np.nan
+            all_saccades_df['pre_saccade_position_drift'] = np.nan
+            all_saccades_df['post_saccade_position_variance'] = np.nan
+            all_saccades_df['post_saccade_position_change'] = np.nan
+        
+        # Split back into upward and downward with classification info
+        # Match using original_index to preserve correct mapping
+        upward_saccade_map = {}  # Maps original index -> classified info
+        downward_saccade_map = {}
+        
+        if len(upward_saccades_df) > 0:
+            upward_classified = all_saccades_df[all_saccades_df['is_upward'] == True].copy()
+            # Match by original_index to preserve order
+            for new_idx, row in upward_classified.iterrows():
+                orig_idx = row['original_index']
+                upward_saccade_map[orig_idx] = {
+                    'saccade_type': row['saccade_type'],
+                    'bout_id': row['bout_id'],
+                    'bout_size': row['bout_size']
+                }
+            
+            # Merge classification columns back to original DataFrame in correct order
+            for orig_idx in upward_saccades_df.index:
+                if orig_idx in upward_saccade_map:
+                    info = upward_saccade_map[orig_idx]
+                    upward_saccades_df.loc[orig_idx, 'saccade_type'] = info['saccade_type']
+                    upward_saccades_df.loc[orig_idx, 'bout_id'] = info['bout_id']
+                    upward_saccades_df.loc[orig_idx, 'bout_size'] = info['bout_size']
+                    upward_saccades_df.loc[orig_idx, 'pre_saccade_mean_velocity'] = upward_classified[upward_classified['original_index'] == orig_idx]['pre_saccade_mean_velocity'].iloc[0]
+                    upward_saccades_df.loc[orig_idx, 'pre_saccade_position_drift'] = upward_classified[upward_classified['original_index'] == orig_idx]['pre_saccade_position_drift'].iloc[0]
+                    upward_saccades_df.loc[orig_idx, 'post_saccade_position_variance'] = upward_classified[upward_classified['original_index'] == orig_idx]['post_saccade_position_variance'].iloc[0]
+                    upward_saccades_df.loc[orig_idx, 'post_saccade_position_change'] = upward_classified[upward_classified['original_index'] == orig_idx]['post_saccade_position_change'].iloc[0]
+        
+        if len(downward_saccades_df) > 0:
+            downward_classified = all_saccades_df[all_saccades_df['is_upward'] == False].copy()
+            # Match by original_index to preserve order
+            for new_idx, row in downward_classified.iterrows():
+                orig_idx = row['original_index']
+                downward_saccade_map[orig_idx] = {
+                    'saccade_type': row['saccade_type'],
+                    'bout_id': row['bout_id'],
+                    'bout_size': row['bout_size']
+                }
+            
+            # Merge classification columns back to original DataFrame in correct order
+            for orig_idx in downward_saccades_df.index:
+                if orig_idx in downward_saccade_map:
+                    info = downward_saccade_map[orig_idx]
+                    downward_saccades_df.loc[orig_idx, 'saccade_type'] = info['saccade_type']
+                    downward_saccades_df.loc[orig_idx, 'bout_id'] = info['bout_id']
+                    downward_saccades_df.loc[orig_idx, 'bout_size'] = info['bout_size']
+                    downward_saccades_df.loc[orig_idx, 'pre_saccade_mean_velocity'] = downward_classified[downward_classified['original_index'] == orig_idx]['pre_saccade_mean_velocity'].iloc[0]
+                    downward_saccades_df.loc[orig_idx, 'pre_saccade_position_drift'] = downward_classified[downward_classified['original_index'] == orig_idx]['pre_saccade_position_drift'].iloc[0]
+                    downward_saccades_df.loc[orig_idx, 'post_saccade_position_variance'] = downward_classified[downward_classified['original_index'] == orig_idx]['post_saccade_position_variance'].iloc[0]
+                    downward_saccades_df.loc[orig_idx, 'post_saccade_position_change'] = downward_classified[downward_classified['original_index'] == orig_idx]['post_saccade_position_change'].iloc[0]
+        
+        # Add classification info to segments using saccade_id (which matches original DataFrame index)
+        for seg in peri_saccades:
+            seg_id = seg['saccade_id'].iloc[0]
+            seg_dir = seg['saccade_direction'].iloc[0]
+            
+            if seg_dir == 'upward' and seg_id in upward_saccade_map:
+                sacc_info = upward_saccade_map[seg_id]
+                seg['saccade_type'] = sacc_info['saccade_type']
+                seg['bout_id'] = sacc_info['bout_id']
+                seg['bout_size'] = sacc_info['bout_size']
+            elif seg_dir == 'downward' and seg_id in downward_saccade_map:
+                sacc_info = downward_saccade_map[seg_id]
+                seg['saccade_type'] = sacc_info['saccade_type']
+                seg['bout_id'] = sacc_info['bout_id']
+                seg['bout_size'] = sacc_info['bout_size']
+    else:
+        all_saccades_df = pd.DataFrame()
+
     summary = {
         'upward_saccades_df': upward_saccades_df,
         'downward_saccades_df': downward_saccades_df,
+        'all_saccades_df': all_saccades_df,  # Combined DataFrame with classification
         'peri_saccades': peri_saccades,
         'upward_segments': upward_segments,
         'upward_outliers_meta': upward_outliers_meta,
