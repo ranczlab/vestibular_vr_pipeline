@@ -2861,6 +2861,24 @@ if VideoData2_Has_Sleap:
 #
 
 # %%
+# TEMPORARY - param setting 
+# Parameters for orienting vs compensatory saccade classification
+classify_orienting_compensatory = True  # Set to True to classify saccades as orienting vs compensatory
+bout_window = 1.5  # Time window (seconds) for grouping saccades into bouts
+pre_saccade_window = 0.3  # Time window (seconds) before saccade onset to analyze
+max_intersaccade_interval_for_classification = 5.0  # Maximum time (seconds) to extend post-saccade window until next saccade for classification
+pre_saccade_velocity_threshold = 50.0  # Velocity threshold (px/s) for detecting pre-saccade drift
+pre_saccade_drift_threshold = 10.0  # Position drift threshold (px) before saccade for compensatory classification
+post_saccade_variance_threshold = 100.0  # Position variance threshold (px²) after saccade for orienting classification
+post_saccade_position_change_threshold_percent = 50.0  # Position change threshold (% of saccade amplitude) - if post-saccade change > amplitude * this%, classify as compensatory
+
+# Adaptive threshold parameters (percentile-based)
+use_adaptive_thresholds = True  # Set to True to use adaptive thresholds based on feature distributions, False to use fixed thresholds
+adaptive_percentile_pre_velocity = 75  # Percentile for pre-saccade velocity threshold (upper percentile for compensatory detection)
+adaptive_percentile_pre_drift = 75  # Percentile for pre-saccade drift threshold (upper percentile for compensatory detection)
+adaptive_percentile_post_variance = 25  # Percentile for post-saccade variance threshold (lower percentile for orienting detection - low variance = stable)
+
+# %%
 saccade_results = {}
 
 # Helper: map detected directions (upward/downward) to NT/TN based on eye assignment
@@ -2922,6 +2940,155 @@ if VideoData2_Has_Sleap:
         adaptive_percentile_pre_drift=adaptive_percentile_pre_drift,
         adaptive_percentile_post_variance=adaptive_percentile_post_variance
     )
+
+# %%
+# ADAPTIVE THRESHOLD DIAGNOSTIC PLOTS (only if debug=True)
+#-------------------------------------------------------------------------------
+# Plot distributions of classification features to help determine meaningful adaptive thresholds
+if debug and len(saccade_results) > 0:
+    print("\n📊 Generating adaptive threshold diagnostic plots...")
+    
+    for video_key, res in saccade_results.items():
+        all_saccades_df = res.get('all_saccades_df', pd.DataFrame())
+        
+        if len(all_saccades_df) == 0:
+            print(f"⚠️  No saccades found for {get_eye_label(video_key)}, skipping diagnostic plots")
+            continue
+        
+        # Filter out NaN values for plotting
+        pre_vel = all_saccades_df['pre_saccade_mean_velocity'].dropna()
+        pre_drift = all_saccades_df['pre_saccade_position_drift'].dropna()
+        post_var = all_saccades_df['post_saccade_position_variance'].dropna()
+        post_change = all_saccades_df['post_saccade_position_change'].dropna()
+        amplitude = all_saccades_df['amplitude'].dropna()
+        
+        # Calculate post_change / amplitude ratio (for percentage threshold visualization)
+        # Align by index to ensure matching
+        aligned_indices = post_change.index.intersection(amplitude.index)
+        post_change_aligned = post_change.loc[aligned_indices]
+        amplitude_aligned = amplitude.loc[aligned_indices]
+        post_change_ratio = (post_change_aligned / amplitude_aligned) * 100  # Convert to percentage
+        
+        # Calculate current thresholds for visualization
+        if use_adaptive_thresholds:
+            # Calculate adaptive thresholds from current data
+            if len(pre_vel) >= 3:
+                current_pre_vel_threshold = np.percentile(pre_vel, adaptive_percentile_pre_velocity)
+            else:
+                current_pre_vel_threshold = pre_saccade_velocity_threshold
+            
+            if len(pre_drift) >= 3:
+                current_pre_drift_threshold = np.percentile(pre_drift, adaptive_percentile_pre_drift)
+            else:
+                current_pre_drift_threshold = pre_saccade_drift_threshold
+            
+            if len(post_var) >= 3:
+                current_post_var_threshold = np.percentile(post_var, adaptive_percentile_post_variance)
+            else:
+                current_post_var_threshold = post_saccade_variance_threshold
+        else:
+            # Use fixed thresholds
+            current_pre_vel_threshold = pre_saccade_velocity_threshold
+            current_pre_drift_threshold = pre_saccade_drift_threshold
+            current_post_var_threshold = post_saccade_variance_threshold
+        
+        # Create figure with 2x2 subplots
+        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+        fig.suptitle(f'Adaptive Threshold Diagnostic Plots: {get_eye_label(video_key)}\n'
+                    f'(n={len(all_saccades_df)} saccades)', fontsize=14, fontweight='bold')
+        
+        # Plot 1: Pre-saccade mean velocity
+        ax = axes[0, 0]
+        if len(pre_vel) > 0:
+            ax.hist(pre_vel, bins=50, alpha=0.7, color='skyblue', edgecolor='black')
+            ax.axvline(current_pre_vel_threshold, color='red', linestyle='--', linewidth=2, 
+                      label=f'Threshold: {current_pre_vel_threshold:.2f} px/s')
+            if use_adaptive_thresholds:
+                ax.axvline(np.percentile(pre_vel, 50), color='gray', linestyle=':', linewidth=1, 
+                          label=f'Median: {np.percentile(pre_vel, 50):.2f} px/s')
+                ax.axvline(np.percentile(pre_vel, 75), color='orange', linestyle=':', linewidth=1, 
+                          label=f'75th: {np.percentile(pre_vel, 75):.2f} px/s')
+            ax.set_xlabel('Pre-saccade Mean Velocity (px/s)')
+            ax.set_ylabel('Count')
+            ax.set_title(f'Pre-saccade Velocity Distribution\n'
+                        f'{"Adaptive" if use_adaptive_thresholds else "Fixed"} threshold at '
+                        f'{adaptive_percentile_pre_velocity if use_adaptive_thresholds else "fixed"}th percentile')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+        
+        # Plot 2: Pre-saccade position drift
+        ax = axes[0, 1]
+        if len(pre_drift) > 0:
+            ax.hist(pre_drift, bins=50, alpha=0.7, color='lightgreen', edgecolor='black')
+            ax.axvline(current_pre_drift_threshold, color='red', linestyle='--', linewidth=2,
+                      label=f'Threshold: {current_pre_drift_threshold:.2f} px')
+            if use_adaptive_thresholds:
+                ax.axvline(np.percentile(pre_drift, 50), color='gray', linestyle=':', linewidth=1,
+                          label=f'Median: {np.percentile(pre_drift, 50):.2f} px')
+                ax.axvline(np.percentile(pre_drift, 75), color='orange', linestyle=':', linewidth=1,
+                          label=f'75th: {np.percentile(pre_drift, 75):.2f} px')
+            ax.set_xlabel('Pre-saccade Position Drift (px)')
+            ax.set_ylabel('Count')
+            ax.set_title(f'Pre-saccade Drift Distribution\n'
+                        f'{"Adaptive" if use_adaptive_thresholds else "Fixed"} threshold at '
+                        f'{adaptive_percentile_pre_drift if use_adaptive_thresholds else "fixed"}th percentile')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+        
+        # Plot 3: Post-saccade position variance
+        ax = axes[1, 0]
+        if len(post_var) > 0:
+            ax.hist(post_var, bins=50, alpha=0.7, color='plum', edgecolor='black')
+            ax.axvline(current_post_var_threshold, color='red', linestyle='--', linewidth=2,
+                      label=f'Threshold: {current_post_var_threshold:.2f} px²')
+            if use_adaptive_thresholds:
+                ax.axvline(np.percentile(post_var, 25), color='orange', linestyle=':', linewidth=1,
+                          label=f'25th: {np.percentile(post_var, 25):.2f} px²')
+                ax.axvline(np.percentile(post_var, 50), color='gray', linestyle=':', linewidth=1,
+                          label=f'Median: {np.percentile(post_var, 50):.2f} px²')
+            ax.set_xlabel('Post-saccade Position Variance (px²)')
+            ax.set_ylabel('Count')
+            ax.set_title(f'Post-saccade Variance Distribution\n'
+                        f'{"Adaptive" if use_adaptive_thresholds else "Fixed"} threshold at '
+                        f'{adaptive_percentile_post_variance if use_adaptive_thresholds else "fixed"}th percentile')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+        
+        # Plot 4: Post-saccade position change (as percentage of amplitude)
+        ax = axes[1, 1]
+        if len(post_change_ratio) > 0:
+            ax.hist(post_change_ratio, bins=50, alpha=0.7, color='salmon', edgecolor='black')
+            ax.axvline(post_saccade_position_change_threshold_percent, color='red', linestyle='--', 
+                      linewidth=2, label=f'Threshold: {post_saccade_position_change_threshold_percent:.1f}%')
+            ax.axvline(np.percentile(post_change_ratio, 50), color='gray', linestyle=':', linewidth=1,
+                      label=f'Median: {np.percentile(post_change_ratio, 50):.1f}%')
+            ax.axvline(np.percentile(post_change_ratio, 75), color='orange', linestyle=':', linewidth=1,
+                      label=f'75th: {np.percentile(post_change_ratio, 75):.1f}%')
+            ax.set_xlabel('Post-saccade Position Change / Amplitude (%)')
+            ax.set_ylabel('Count')
+            ax.set_title(f'Post-saccade Position Change Ratio\n'
+                        f'Fixed threshold: {post_saccade_position_change_threshold_percent:.1f}% of amplitude')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.show()
+        
+        # Print summary statistics
+        print(f"\n📈 Summary Statistics for {get_eye_label(video_key)}:")
+        if len(pre_vel) > 0:
+            print(f"  Pre-saccade velocity: mean={pre_vel.mean():.2f}, median={pre_vel.median():.2f}, "
+                  f"std={pre_vel.std():.2f} px/s")
+        if len(pre_drift) > 0:
+            print(f"  Pre-saccade drift: mean={pre_drift.mean():.2f}, median={pre_drift.median():.2f}, "
+                  f"std={pre_drift.std():.2f} px")
+        if len(post_var) > 0:
+            print(f"  Post-saccade variance: mean={post_var.mean():.2f}, median={post_var.median():.2f}, "
+                  f"std={post_var.std():.2f} px²")
+        if len(post_change_ratio) > 0:
+            print(f"  Post-saccade change ratio: mean={post_change_ratio.mean():.1f}%, "
+                  f"median={post_change_ratio.median():.1f}%, std={post_change_ratio.std():.1f}%")
+        print()
 
 # %%
 # VISUALIZE ALL SACCADES - SIDE BY SIDE
@@ -3790,24 +3957,6 @@ if plot_saccade_detection_QC:
         fig.update_yaxes(title_text="Velocity (px/s)", row=2, col=1)
 
         fig.show()
-
-# %%
-# TEMPORARY - param setting 
-# Parameters for orienting vs compensatory saccade classification
-classify_orienting_compensatory = True  # Set to True to classify saccades as orienting vs compensatory
-bout_window = 1.5  # Time window (seconds) for grouping saccades into bouts
-pre_saccade_window = 0.3  # Time window (seconds) before saccade onset to analyze
-max_intersaccade_interval_for_classification = 5.0  # Maximum time (seconds) to extend post-saccade window until next saccade for classification
-pre_saccade_velocity_threshold = 50.0  # Velocity threshold (px/s) for detecting pre-saccade drift
-pre_saccade_drift_threshold = 10.0  # Position drift threshold (px) before saccade for compensatory classification
-post_saccade_variance_threshold = 100.0  # Position variance threshold (px²) after saccade for orienting classification
-post_saccade_position_change_threshold_percent = 50.0  # Position change threshold (% of saccade amplitude) - if post-saccade change > amplitude * this%, classify as compensatory
-
-# Adaptive threshold parameters (percentile-based)
-use_adaptive_thresholds = True  # Set to True to use adaptive thresholds based on feature distributions, False to use fixed thresholds
-adaptive_percentile_pre_velocity = 75  # Percentile for pre-saccade velocity threshold (upper percentile for compensatory detection)
-adaptive_percentile_pre_drift = 75  # Percentile for pre-saccade drift threshold (upper percentile for compensatory detection)
-adaptive_percentile_post_variance = 25  # Percentile for post-saccade variance threshold (lower percentile for orienting detection - low variance = stable)
 
 
 # %%
