@@ -47,6 +47,23 @@ from sleap import processing_functions as pf
 from sleap import saccade_processing as sp
 from sleap.saccade_processing import analyze_eye_video_saccades
 
+# Reload modules to pick up latest changes (useful after code updates)
+# Set force_reload_modules = True to always reload, or False to use cached versions
+force_reload_modules = True  # Set to False for faster execution when modules haven't changed
+if force_reload_modules:
+    import importlib
+    import sleap.load_and_process
+    import sleap.processing_functions
+    import sleap.saccade_processing
+    importlib.reload(sleap.load_and_process)
+    importlib.reload(sleap.processing_functions)
+    importlib.reload(sleap.saccade_processing)
+    # Re-import aliases after reload
+    lp = sleap.load_and_process
+    pf = sleap.processing_functions
+    sp = sleap.saccade_processing
+    from sleap.saccade_processing import analyze_eye_video_saccades
+
 def get_eye_label(key):
     """Return mapped user-viewable eye label for video key."""
     return VIDEO_LABELS.get(key, key)
@@ -65,6 +82,7 @@ plot_QC_timeseries = False
 score_cutoff = 0.2 # for filtering out inferred points with low confidence, they get interpolated 
 outlier_sd_threshold = 10 # for removing outliers from the data, they get interpolated 
 NaNs_removed = False # for checking if NaNs already removed in the notebook
+debug = False  # Set to True to enable debug output across all cells (file loading, processing, etc.)
 
 # Pupil diameter filter settings (Butterworth low-pass)
 pupil_filter_cutoff_hz = 10  # Hz
@@ -75,7 +93,6 @@ min_blink_duration_ms = 50  # minimum blink duration in milliseconds
 blink_merge_window_ms = 100  # NOT CURRENTLY USED: merge window was removed to preserve good data between separate blinks
 long_blink_warning_ms = 2000  # warn if blinks exceed this duration (in ms) - user should verify these are real blinks
 blink_instance_score_threshold = 3.8  # hard threshold for blink detection - frames with instance.score below this value are considered blinks, calculated as 9 pupil points *0.2 + left/right as 1   
-blink_reporting_detailed = 0 # 1 prints detailed blink reports and manual/auto comparisons if present 
 
 # for saccades
 refractory_period = 0.1  # sec
@@ -102,7 +119,7 @@ data_path = Path('/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/
 #data_path = Path('/Users/rancze/Documents/Data/vestVR/Cohort1/No_iso_correction/Visual_mismatch_day3/B6J2717-2024-12-10T12-17-03') # only has sleap data 1
 save_path = data_path.parent / f"{data_path.name}_processedData"
 
-VideoData1, VideoData2, VideoData1_Has_Sleap, VideoData2_Has_Sleap = lp.load_videography_data(data_path)
+VideoData1, VideoData2, VideoData1_Has_Sleap, VideoData2_Has_Sleap = lp.load_videography_data(data_path, debug=debug)
 
 # Load manual blink data if available
 manual_blinks_v1 = None
@@ -356,10 +373,13 @@ plt.show()
 # Detect and print confidence scores analysis (runs before any filtering)
 #########
 
+if not debug:
+    print("ℹ️ Debug output suppressed. Set debug=True to see detailed confidence score analysis.")
+
 score_columns = ['left.score','center.score','right.score','p1.score','p2.score','p3.score','p4.score','p5.score','p6.score','p7.score','p8.score']
 
 # VideoData1 confidence score analysis
-if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
+if debug and 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
     total_points1 = len(VideoData1)
     print(f'\nℹ️ VideoData1 - Top 3 columns with most frames below {score_cutoff} confidence score:')
 
@@ -386,7 +406,7 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
         print(f"VideoData1 - #{i+1}: {col} | Values below {score_cutoff}: {count} ({pct:.2f}%) | Longest consecutive frame series: {longest}")
 
 # VideoData2 confidence score analysis
-if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
+if debug and 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
     total_points2 = len(VideoData2)
     print(f'\nℹ️ VideoData2 - Top 3 columns with most frames below {score_cutoff} confidence score:')
 
@@ -456,8 +476,9 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
 # remove low confidence points (score < threshold)
 ############################################################################################################
 if not NaNs_removed:
-    print("\n=== Score-based Filtering - point scores below threshold are replaced by interpolation ===")
-    print(f"Score threshold: {score_cutoff}")
+    if debug:
+        print("\n=== Score-based Filtering - point scores below threshold are replaced by interpolation ===")
+        print(f"Score threshold: {score_cutoff}")
     # List of point names (without .x, .y, .score)
     point_names = ['left', 'right', 'center', 'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8']
 
@@ -483,8 +504,9 @@ if not NaNs_removed:
         max_low_score_count1 = low_score_counts1[max_low_score_channel1]
         
         # Print the channel with the maximum number of low-score points
-        print(f"{get_eye_label('VideoData1')} - Channel with the maximum number of low-confidence points: {max_low_score_channel1}, Number of low-confidence points: {max_low_score_count1}")
-        print(f"{get_eye_label('VideoData1')} - A total number of {total_low_score1} low-confidence coordinate values were replaced by interpolation")
+        if debug:
+            print(f"{get_eye_label('VideoData1')} - Channel with the maximum number of low-confidence points: {max_low_score_channel1}, Number of low-confidence points: {max_low_score_count1}")
+            print(f"{get_eye_label('VideoData1')} - A total number of {total_low_score1} low-confidence coordinate values were replaced by interpolation")
 
     # VideoData2 score-based filtering
     if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
@@ -508,15 +530,17 @@ if not NaNs_removed:
         max_low_score_count2 = low_score_counts2[max_low_score_channel2]
         
         # Print the channel with the maximum number of low-score points
-        print(f"{get_eye_label('VideoData2')} - Channel with the maximum number of low-confidence points: {max_low_score_channel2}, Number of low-confidence points: {max_low_score_count2}")
-        print(f"{get_eye_label('VideoData2')} - A total number of {total_low_score2} low-confidence coordinate values were replaced by interpolation")
+        if debug:
+            print(f"{get_eye_label('VideoData2')} - Channel with the maximum number of low-confidence points: {max_low_score_channel2}, Number of low-confidence points: {max_low_score_count2}")
+            print(f"{get_eye_label('VideoData2')} - A total number of {total_low_score2} low-confidence coordinate values were replaced by interpolation")
 
     ############################################################################################################
     # remove outliers (x times SD)
     # then interpolates on all NaN values (skipped frames, low confidence inference points, outliers)
     ############################################################################################################
 
-    print("\n=== Outlier Analysis - outlier points are replaced by interpolation ===")
+    if debug:
+        print("\n=== Outlier Analysis - outlier points are replaced by interpolation ===")
 
     # VideoData1 outlier analysis and interpolation
     if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
@@ -529,13 +553,12 @@ if not NaNs_removed:
         # Find the channel with the maximum number of outliers
         max_outliers_channel1 = max(outliers1, key=outliers1.get)
         max_outliers_count1 = outliers1[max_outliers_channel1]
+        total_outliers1 = sum(outliers1.values())
 
         # Print the channel with the maximum number of outliers and the number
-        print(f"{get_eye_label('VideoData1')} - Channel with the maximum number of outliers: {max_outliers_channel1}, Number of outliers: {max_outliers_count1}")
-
-        # Print the total number of outliers
-        total_outliers1 = sum(outliers1.values())
-        print(f"{get_eye_label('VideoData1')} - A total number of {total_outliers1} outliers were replaced by interpolation")
+        if debug:
+            print(f"{get_eye_label('VideoData1')} - Channel with the maximum number of outliers: {max_outliers_channel1}, Number of outliers: {max_outliers_count1}")
+            print(f"{get_eye_label('VideoData1')} - A total number of {total_outliers1} outliers were replaced by interpolation")
 
         # Replace outliers by interpolating between the previous and subsequent non-NaN value
         for col in columns_of_interest:
@@ -556,13 +579,12 @@ if not NaNs_removed:
         # Find the channel with the maximum number of outliers
         max_outliers_channel2 = max(outliers2, key=outliers2.get)
         max_outliers_count2 = outliers2[max_outliers_channel2]
+        total_outliers2 = sum(outliers2.values())
 
         # Print the channel with the maximum number of outliers and the number
-        print(f"{get_eye_label('VideoData2')} - Channel with the maximum number of outliers: {max_outliers_channel2}, Number of outliers: {max_outliers_count2}")
-
-        # Print the total number of outliers
-        total_outliers2 = sum(outliers2.values())
-        print(f"{get_eye_label('VideoData2')} - A total number of {total_outliers2} outliers were replaced by interpolation")
+        if debug:
+            print(f"{get_eye_label('VideoData2')} - Channel with the maximum number of outliers: {max_outliers_channel2}, Number of outliers: {max_outliers_count2}")
+            print(f"{get_eye_label('VideoData2')} - A total number of {total_outliers2} outliers were replaced by interpolation")
 
         # Replace outliers by interpolating between the previous and subsequent non-NaN value
         for col in columns_of_interest:
@@ -582,10 +604,13 @@ else:
 # QC: Detect and print confidence scores analysis
 ############################################################################################################
 
+if not debug:
+    print("ℹ️ Debug output suppressed. Set debug=True to see detailed confidence score QC analysis.")
+
 columns_of_interest = ['left.score','center.score','right.score','p1.score','p2.score','p3.score','p4.score','p5.score','p6.score','p7.score','p8.score']
 
 # VideoData1 confidence score analysis
-if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
+if debug and 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
     total_points1 = len(VideoData1)
     print(f'\nℹ️ VideoData1 - Top 3 columns with most frames below {score_cutoff} confidence score:')
 
@@ -616,7 +641,7 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
         print(f"VideoData1 - #{i+1}: {col} | Values below {score_cutoff}: {count} ({percentage:.2f}%) | Longest consecutive frame series: {longest}")
 
 # VideoData2 confidence score analysis
-if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
+if debug and 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
     total_points2 = len(VideoData2)
     print(f'\nℹ️ VideoData2 - Top 3 columns with most frames below {score_cutoff} confidence score:')
 
@@ -654,12 +679,16 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
 # When instance score is low, that's typically because of a blink or similar occlusion, as there are long sequences of low scores.
 # Frames with instance.score below the hard threshold are considered potential blinks.
 
-print("=" * 80)
-print("INSTANCE.SCORE DISTRIBUTION AND BLINK DETECTION THRESHOLD")
-print("=" * 80)
-print(f"\nHard threshold: instance.score < {blink_instance_score_threshold}")
-print(f"  Frames with instance.score below this threshold will be considered potential blinks.")
-print("=" * 80)
+if not debug:
+    print("ℹ️ Debug output suppressed. Set debug=True to see detailed instance score distribution analysis.")
+
+if debug:
+    print("=" * 80)
+    print("INSTANCE.SCORE DISTRIBUTION AND BLINK DETECTION THRESHOLD")
+    print("=" * 80)
+    print(f"\nHard threshold: instance.score < {blink_instance_score_threshold}")
+    print(f"  Frames with instance.score below this threshold will be considered potential blinks.")
+    print("=" * 80)
 
 # Only analyze for dataset(s) that exist
 has_v1 = "VideoData1_Has_Sleap" in globals() and VideoData1_Has_Sleap
@@ -717,7 +746,7 @@ if has_v1 or has_v2:
     plt.show()
 
 # Report the statistics for available VideoData
-if has_v1:
+if debug and has_v1:
     print(f"\n{'='*80}")
     print(f"VideoData1 Results:")
     print(f"{'='*80}")
@@ -757,7 +786,7 @@ if has_v1:
             else:
                 print(f"    Section {i}: index {start_idx}-{end_idx} (length {sec['length']} frames)")
 
-if has_v2:
+if debug and has_v2:
     print(f"\n{'='*80}")
     print(f"VideoData2 Results:")
     print(f"{'='*80}")
@@ -797,16 +826,20 @@ if has_v2:
             else:
                 print(f"    Section {i}: index {start_idx}-{end_idx} (length {sec['length']} frames)")
 
-print(f"\n{'='*80}")
-print("Note: This threshold will be used for blink detection in the next cell.")
-print("      Frames with instance.score below this threshold are considered potential blinks.")
-print("=" * 80)
+if debug:
+    print(f"\n{'='*80}")
+    print("Note: This threshold will be used for blink detection in the next cell.")
+    print("      Frames with instance.score below this threshold are considered potential blinks.")
+    print("=" * 80)
 
 
 
 # %%
 # Blink detection using instance.score - mark blinks and set coordinates to NaN (keep them as NaN, no interpolation)
 ############################################################################################################
+
+if not debug:
+    print("ℹ️ Debug output suppressed. Set debug=True to see detailed blink detection information.")
 
 # Capture all print output to save to file
 
@@ -829,11 +862,13 @@ original_stdout = sys.stdout
 sys.stdout = TeeOutput(original_stdout, output_buffer)
 
 # Run blink detection code with output captured
-print("\n=== Blink Detection ===")
+if debug:
+    print("\n=== Blink Detection ===")
 
 # VideoData1 blink detection
 if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
-    print(f"\n{get_eye_label('VideoData1')} - Blink Detection")
+    if debug:
+        print(f"\n{get_eye_label('VideoData1')} - Blink Detection")
     
     # Calculate frame-based durations (using FPS_1 if available, otherwise estimate)
     if 'FPS_1' in globals():
@@ -843,12 +878,14 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
     
     long_blink_warning_frames = int(long_blink_warning_ms / 1000 * fps_1)
     
-    print(f"  FPS: {fps_1:.2f}")
-    print(f"  Long blink warning threshold: {long_blink_warning_frames} frames ({long_blink_warning_ms}ms)")
+    if debug:
+        print(f"  FPS: {fps_1:.2f}")
+        print(f"  Long blink warning threshold: {long_blink_warning_frames} frames ({long_blink_warning_ms}ms)")
     
     # Use hard threshold from user parameters
     blink_threshold_v1 = blink_instance_score_threshold
-    print(f"  Using hard threshold: {blink_threshold_v1:.4f}")
+    if debug:
+        print(f"  Using hard threshold: {blink_threshold_v1:.4f}")
     
     # Find all blink segments - use very lenient min_frames (1) to capture all segments
     # No filtering by frame count - short blinks are OK to interpolate
@@ -860,18 +897,21 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
         max_frames=999999  # Very high limit - essentially no maximum
     )
     
-    print(f"  Found {len(all_blink_segments_v1)} blink segments")
+    if debug:
+        print(f"  Found {len(all_blink_segments_v1)} blink segments")
     
     # Filter out blinks shorter than 4 frames
     min_frames_threshold = 4
     blink_segments_v1 = [blink for blink in all_blink_segments_v1 if blink['length'] >= min_frames_threshold]
     short_blink_segments_v1 = [blink for blink in all_blink_segments_v1 if blink['length'] < min_frames_threshold]
-    print(f"  After filtering <{min_frames_threshold} frames: {len(blink_segments_v1)} blink segment(s), {len(short_blink_segments_v1)} short segment(s) will be interpolated")
+    if debug:
+        print(f"  After filtering <{min_frames_threshold} frames: {len(blink_segments_v1)} blink segment(s), {len(short_blink_segments_v1)} short segment(s) will be interpolated")
     
     # Merge blinks within 10 frames into blink bouts
     merge_window_frames = 10
     blink_bouts_v1 = pf.merge_nearby_blinks(blink_segments_v1, merge_window_frames)
-    print(f"  After merging blinks within {merge_window_frames} frames: {len(blink_bouts_v1)} blink bout(s)")
+    if debug:
+        print(f"  After merging blinks within {merge_window_frames} frames: {len(blink_bouts_v1)} blink bout(s)")
     
     # Check for long blinks and warn if needed
     long_blinks_warnings_v1 = []
@@ -898,10 +938,11 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
         for warn in long_blinks_warnings_v1:
             print(f"      Blink {warn['blink_num']}: frames {warn['frames']}, duration {warn['duration_ms']:.1f}ms - Please verify this is a real blink in the video")
     
-    print(f"  Detected {len(blink_segments_v1)} blink segment(s)\n")
+    if debug:
+        print(f"  Detected {len(blink_segments_v1)} blink segment(s)\n")
     
     # Print all detected blinks once (detailed)
-    if len(blink_segments_v1) > 0 and ('blink_reporting_detailed' in globals() and blink_reporting_detailed == 1):
+    if debug and len(blink_segments_v1) > 0:
         print(f"  Detected blinks:")
         for i, blink in enumerate(blink_segments_v1, 1):
             start_idx = blink['start_idx']
@@ -925,7 +966,7 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
             print(f"    Blink {i}: {frame_info}, {blink['length']} frames, {duration_ms:.1f}ms, mean score: {blink['mean_score']:.4f}")
         
         # DIAGNOSTIC: Direct comparison of manual vs auto-detected blinks (detailed)
-        if ('blink_reporting_detailed' in globals() and blink_reporting_detailed == 1) and ('manual_blinks_v1' in globals() and manual_blinks_v1 is not None):
+        if debug and ('manual_blinks_v1' in globals() and manual_blinks_v1 is not None):
             # Get auto-detected blink frame ranges
             auto_blinks_v1 = []
             for i, blink in enumerate(blink_segments_v1, 1):
@@ -1009,11 +1050,12 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
                     print(f"      Auto {auto['num']}: frames {auto['start']}-{auto['end']}, length={auto['length']} frames")
             else:
                 print(f"      (all auto-detected blinks have manual matches)")
-        elif 'blink_reporting_detailed' in globals() and blink_reporting_detailed == 1:
+        elif debug:
             print(f"\n   ⚠️ WARNING: Manual blink comparison skipped - Video1_manual_blinks.csv not found in data_path")
         
         # Interpolate over short blinks (keep long blinks as NaN)
-        print(f"\n  Interpolating short blinks (< {min_frames_threshold} frames):")
+        if debug:
+            print(f"\n  Interpolating short blinks (< {min_frames_threshold} frames):")
         short_blink_frames_v1 = 0
         if len(short_blink_segments_v1) > 0:
             # Mark short blinks as NaN
@@ -1026,9 +1068,11 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
             # Interpolate all NaNs (this fills short blinks)
             VideoData1[columns_of_interest] = VideoData1[columns_of_interest].interpolate(method='linear', limit_direction='both')
             
-            print(f"    Interpolated {short_blink_frames_v1} frames from {len(short_blink_segments_v1)} short blink segment(s)")
+            if debug:
+                print(f"    Interpolated {short_blink_frames_v1} frames from {len(short_blink_segments_v1)} short blink segment(s)")
         else:
-            print(f"    No short blinks to interpolate")
+            if debug:
+                print(f"    No short blinks to interpolate")
         
         # Mark long blinks by setting coordinates to NaN (these remain as NaN, not interpolated)
         recording_start_time = VideoData1['Seconds'].iloc[0]
@@ -1039,19 +1083,23 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
             VideoData1.loc[VideoData1.index[start_idx:end_idx+1], columns_of_interest] = np.nan
             total_blink_frames_v1 += blink['length']
         
-        print(f"  Total long blink frames marked (kept as NaN): {total_blink_frames_v1} frames "
-              f"({total_blink_frames_v1/fps_1*1000:.1f}ms)")
+        if debug:
+            print(f"  Total long blink frames marked (kept as NaN): {total_blink_frames_v1} frames "
+                  f"({total_blink_frames_v1/fps_1*1000:.1f}ms)")
         
         # Calculate blink bout rate
         recording_duration_min = (VideoData1['Seconds'].iloc[-1] - VideoData1['Seconds'].iloc[0]) / 60
         blink_bout_rate = len(blink_bouts_v1) / recording_duration_min if recording_duration_min > 0 else 0
-        print(f"  Blink bout rate: {blink_bout_rate:.2f} blink bouts/minute")
+        if debug:
+            print(f"  Blink bout rate: {blink_bout_rate:.2f} blink bouts/minute")
     else:
-        print("  No blinks detected")
+        if debug:
+            print("  No blinks detected")
 
 # VideoData2 blink detection
 if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
-    print(f"\n{get_eye_label('VideoData2')} - Blink Detection")
+    if debug:
+        print(f"\n{get_eye_label('VideoData2')} - Blink Detection")
     
     # Calculate frame-based durations (using FPS_2 if available, otherwise estimate)
     if 'FPS_2' in globals():
@@ -1061,12 +1109,14 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
     
     long_blink_warning_frames = int(long_blink_warning_ms / 1000 * fps_2)
     
-    print(f"  FPS: {fps_2:.2f}")
-    print(f"  Long blink warning threshold: {long_blink_warning_frames} frames ({long_blink_warning_ms}ms)")
+    if debug:
+        print(f"  FPS: {fps_2:.2f}")
+        print(f"  Long blink warning threshold: {long_blink_warning_frames} frames ({long_blink_warning_ms}ms)")
     
     # Use hard threshold from user parameters
     blink_threshold_v2 = blink_instance_score_threshold
-    print(f"  Using hard threshold: {blink_threshold_v2:.4f}")
+    if debug:
+        print(f"  Using hard threshold: {blink_threshold_v2:.4f}")
     
     # Find all blink segments - use very lenient min_frames (1) to capture all segments
     # No filtering by frame count - short blinks are OK to interpolate
@@ -1078,18 +1128,21 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
         max_frames=999999  # Very high limit - essentially no maximum
     )
     
-    print(f"  Found {len(all_blink_segments_v2)} blink segments")
+    if debug:
+        print(f"  Found {len(all_blink_segments_v2)} blink segments")
     
     # Filter out blinks shorter than 4 frames
     min_frames_threshold = 4
     blink_segments_v2 = [blink for blink in all_blink_segments_v2 if blink['length'] >= min_frames_threshold]
     short_blink_segments_v2 = [blink for blink in all_blink_segments_v2 if blink['length'] < min_frames_threshold]
-    print(f"  After filtering <{min_frames_threshold} frames: {len(blink_segments_v2)} blink segment(s), {len(short_blink_segments_v2)} short segment(s) will be interpolated")
+    if debug:
+        print(f"  After filtering <{min_frames_threshold} frames: {len(blink_segments_v2)} blink segment(s), {len(short_blink_segments_v2)} short segment(s) will be interpolated")
     
     # Merge blinks within 10 frames into blink bouts
     merge_window_frames = 10
     blink_bouts_v2 = pf.merge_nearby_blinks(blink_segments_v2, merge_window_frames)
-    print(f"  After merging blinks within {merge_window_frames} frames: {len(blink_bouts_v2)} blink bout(s)")
+    if debug:
+        print(f"  After merging blinks within {merge_window_frames} frames: {len(blink_bouts_v2)} blink bout(s)")
     
     # Check for long blinks and warn if needed
     long_blinks_warnings_v2 = []
@@ -1116,10 +1169,11 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
         for warn in long_blinks_warnings_v2:
             print(f"      Blink {warn['blink_num']}: frames {warn['frames']}, duration {warn['duration_ms']:.1f}ms - Please verify this is a real blink in the video")
     
-    print(f"  Detected {len(blink_segments_v2)} blink segment(s)\n")
+    if debug:
+        print(f"  Detected {len(blink_segments_v2)} blink segment(s)\n")
     
     # Print all detected blinks once (detailed)
-    if len(blink_segments_v2) > 0 and ('blink_reporting_detailed' in globals() and blink_reporting_detailed == 1):
+    if debug and len(blink_segments_v2) > 0:
         print(f"  Detected blinks:")
         for i, blink in enumerate(blink_segments_v2, 1):
             start_idx = blink['start_idx']
@@ -1143,7 +1197,7 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
             print(f"    Blink {i}: {frame_info}, {blink['length']} frames, {duration_ms:.1f}ms, mean score: {blink['mean_score']:.4f}")
         
         # DIAGNOSTIC: Direct comparison of manual vs auto-detected blinks (detailed)
-        if ('blink_reporting_detailed' in globals() and blink_reporting_detailed == 1) and ('manual_blinks_v2' in globals() and manual_blinks_v2 is not None):
+        if debug and ('manual_blinks_v2' in globals() and manual_blinks_v2 is not None):
             # Get auto-detected blink frame ranges
             auto_blinks_v2 = []
             for i, blink in enumerate(blink_segments_v2, 1):
@@ -1227,11 +1281,12 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
                     print(f"      Auto {auto['num']}: frames {auto['start']}-{auto['end']}, length={auto['length']} frames")
             else:
                 print(f"      (all auto-detected blinks have manual matches)")
-        elif 'blink_reporting_detailed' in globals() and blink_reporting_detailed == 1:
+        elif debug:
             print(f"\n   ⚠️ WARNING: Manual blink comparison skipped - Video2_manual_blinks.csv not found in data_path")
         
         # Interpolate over short blinks (keep long blinks as NaN)
-        print(f"\n  Interpolating short blinks (< {min_frames_threshold} frames):")
+        if debug:
+            print(f"\n  Interpolating short blinks (< {min_frames_threshold} frames):")
         short_blink_frames_v2 = 0
         if len(short_blink_segments_v2) > 0:
             # Mark short blinks as NaN
@@ -1244,9 +1299,11 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
             # Interpolate all NaNs (this fills short blinks)
             VideoData2[columns_of_interest] = VideoData2[columns_of_interest].interpolate(method='linear', limit_direction='both')
             
-            print(f"    Interpolated {short_blink_frames_v2} frames from {len(short_blink_segments_v2)} short blink segment(s)")
+            if debug:
+                print(f"    Interpolated {short_blink_frames_v2} frames from {len(short_blink_segments_v2)} short blink segment(s)")
         else:
-            print(f"    No short blinks to interpolate")
+            if debug:
+                print(f"    No short blinks to interpolate")
         
         # Mark long blinks by setting coordinates to NaN (these remain as NaN, not interpolated)
         recording_start_time = VideoData2['Seconds'].iloc[0]
@@ -1257,24 +1314,28 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
             VideoData2.loc[VideoData2.index[start_idx:end_idx+1], columns_of_interest] = np.nan
             total_blink_frames_v2 += blink['length']
         
-        print(f"  Total long blink frames marked (kept as NaN): {total_blink_frames_v2} frames "
-              f"({total_blink_frames_v2/fps_2*1000:.1f}ms)")
+        if debug:
+            print(f"  Total long blink frames marked (kept as NaN): {total_blink_frames_v2} frames "
+                  f"({total_blink_frames_v2/fps_2*1000:.1f}ms)")
         
         # Calculate blink bout rate
         recording_duration_min = (VideoData2['Seconds'].iloc[-1] - VideoData2['Seconds'].iloc[0]) / 60
         blink_bout_rate = len(blink_bouts_v2) / recording_duration_min if recording_duration_min > 0 else 0
-        print(f"  Blink bout rate: {blink_bout_rate:.2f} blink bouts/minute")
+        if debug:
+            print(f"  Blink bout rate: {blink_bout_rate:.2f} blink bouts/minute")
     else:
-        print("  No blinks detected")
+        if debug:
+            print("  No blinks detected")
 
 print("\n✅ Blink detection complete. Blink periods remain as NaN (not interpolated).")
 
 # Compare blink bout timing between VideoData1 and VideoData2 (between eyes)
 if ('VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap and 
     'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap):
-    print("\n" + "="*80)
-    print("BLINK BOUT TIMING COMPARISON: VideoData1 vs VideoData2 (Between Eyes)")
-    print("="*80)
+    if debug:
+        print("\n" + "="*80)
+        print("BLINK BOUT TIMING COMPARISON: VideoData1 vs VideoData2 (Between Eyes)")
+        print("="*80)
     
     # Get blink bout frame ranges for both videos (if they exist)
     # Check if blink_bouts variables exist (they are created during blink detection)
@@ -1390,38 +1451,39 @@ if ('VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap and
         total_v1_independent = len(v1_independent)
         total_v2_independent = len(v2_independent)
         
-        print(f"\nBlink bout counts:")
-        print(f"  VideoData1: {total_v1_bouts} blink bout(s)")
-        print(f"  VideoData2: {total_v2_bouts} blink bout(s)")
-        print(f"  Concurrent: {total_concurrent} bout(s) (overlapping frames)")
-        print(f"  VideoData1 only: {total_v1_independent} bout(s)")
-        print(f"  VideoData2 only: {total_v2_independent} bout(s)")
-        
-        if total_v1_bouts > 0 and total_v2_bouts > 0:
-            concurrent_pct_v1 = (total_concurrent / total_v1_bouts) * 100
-            concurrent_pct_v2 = (total_concurrent / total_v2_bouts) * 100
-            print(f"\nConcurrency percentage:")
-            print(f"  {concurrent_pct_v1:.1f}% of VideoData1 bouts are concurrent with VideoData2")
-            print(f"  {concurrent_pct_v2:.1f}% of VideoData2 bouts are concurrent with VideoData1")
+        if debug:
+            print(f"\nBlink bout counts:")
+            print(f"  VideoData1: {total_v1_bouts} blink bout(s)")
+            print(f"  VideoData2: {total_v2_bouts} blink bout(s)")
+            print(f"  Concurrent: {total_concurrent} bout(s) (overlapping frames)")
+            print(f"  VideoData1 only: {total_v1_independent} bout(s)")
+            print(f"  VideoData2 only: {total_v2_independent} bout(s)")
             
-            # Calculate timing offsets for concurrent bouts
-            if len(concurrent_bouts) > 0:
-                time_offsets_ms = []
-                for cb in concurrent_bouts:
-                    # Calculate offset from start times (already in Seconds)
-                    offset_ms = (cb['v1_start_time'] - cb['v2_start_time']) * 1000
-                    time_offsets_ms.append(offset_ms)
-                    cb['time_offset_ms'] = offset_ms
+            if total_v1_bouts > 0 and total_v2_bouts > 0:
+                concurrent_pct_v1 = (total_concurrent / total_v1_bouts) * 100
+                concurrent_pct_v2 = (total_concurrent / total_v2_bouts) * 100
+                print(f"\nConcurrency percentage:")
+                print(f"  {concurrent_pct_v1:.1f}% of VideoData1 bouts are concurrent with VideoData2")
+                print(f"  {concurrent_pct_v2:.1f}% of VideoData2 bouts are concurrent with VideoData1")
                 
-                mean_offset = np.mean(time_offsets_ms)
-                std_offset = np.std(time_offsets_ms)
-                print(f"\nTiming offset for concurrent bouts:")
-                print(f"  Mean offset (VideoData1 - VideoData2): {mean_offset:.2f} ms")
-                print(f"  Std offset: {std_offset:.2f} ms")
-                print(f"  Range: {min(time_offsets_ms):.2f} to {max(time_offsets_ms):.2f} ms")
-        
-        # Visualization removed per request
-        print("="*80)
+                # Calculate timing offsets for concurrent bouts
+                if len(concurrent_bouts) > 0:
+                    time_offsets_ms = []
+                    for cb in concurrent_bouts:
+                        # Calculate offset from start times (already in Seconds)
+                        offset_ms = (cb['v1_start_time'] - cb['v2_start_time']) * 1000
+                        time_offsets_ms.append(offset_ms)
+                        cb['time_offset_ms'] = offset_ms
+                    
+                    mean_offset = np.mean(time_offsets_ms)
+                    std_offset = np.std(time_offsets_ms)
+                    print(f"\nTiming offset for concurrent bouts:")
+                    print(f"  Mean offset (VideoData1 - VideoData2): {mean_offset:.2f} ms")
+                    print(f"  Std offset: {std_offset:.2f} ms")
+                    print(f"  Range: {min(time_offsets_ms):.2f} to {max(time_offsets_ms):.2f} ms")
+            
+            # Visualization removed per request
+            print("="*80)
     elif has_bouts_v1 or has_bouts_v2:
         print(f"\n⚠️ Cannot compare blink bouts - only one eye has blink bouts detected:")
         if has_bouts_v1:
@@ -1898,7 +1960,8 @@ if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
     # )
 
     # Cross-correlation analysis
-    print("=== Cross-Correlation Analysis ===")
+    if debug:
+        print("=== Cross-Correlation Analysis ===")
 
     # Get pupil diameter data
     # Use filtered diameter data (with NaN restored at blink positions)
@@ -1937,11 +2000,13 @@ if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
         if pupil1_std > 0 and pupil2_std > 0:
             pupil1_z = (pupil1_clean - pupil1_mean) / pupil1_std
             pupil2_z = (pupil2_clean - pupil2_mean) / pupil2_std
-            print(f"Applied z-score normalization to pupil diameter signals (accounts for different camera magnifications)")
-            print(f"  VideoData1: mean={pupil1_mean:.2f}, std={pupil1_std:.2f}")
-            print(f"  VideoData2: mean={pupil2_mean:.2f}, std={pupil2_std:.2f}")
+            if debug:
+                print(f"Applied z-score normalization to pupil diameter signals (accounts for different camera magnifications)")
+                print(f"  VideoData1: mean={pupil1_mean:.2f}, std={pupil1_std:.2f}")
+                print(f"  VideoData2: mean={pupil2_mean:.2f}, std={pupil2_std:.2f}")
         else:
-            print("⚠️ Warning: Zero variance detected, using raw signals (no normalization)")
+            if debug:
+                print("⚠️ Warning: Zero variance detected, using raw signals (no normalization)")
             pupil1_z = pupil1_clean
             pupil2_z = pupil2_clean
         
@@ -1963,7 +2028,8 @@ if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
             peak_lag_time = lag_times[peak_idx]
             peak_lag_time_display = peak_lag_time # for final QC figure 
             
-            print(f"Peak lag (time): {peak_lag_time:.4f} seconds")
+            if debug:
+                print(f"Peak lag (time): {peak_lag_time:.4f} seconds")
 
         
             # Normalize correlation to [-1, 1] range (for z-scored signals, this is standard normalization)
@@ -1971,9 +2037,11 @@ if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
             if norm_factor > 0:
                 correlation_normalized = correlation / norm_factor
                 peak_correlation_normalized = correlation_normalized[peak_idx]
-                print(f"Peak normalized correlation: {peak_correlation_normalized:.4f}")
+                if debug:
+                    print(f"Peak normalized correlation: {peak_correlation_normalized:.4f}")
             else:
-                print("❌ Error: Cannot normalize correlation (zero variance)")
+                if debug:
+                    print("❌ Error: Cannot normalize correlation (zero variance)")
                 correlation_normalized = correlation
                 peak_correlation_normalized = 0
             
@@ -2034,23 +2102,27 @@ if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
             pearson_r_display = pearson_r
             pearson_p_display = pearson_p
             
-            print(f"\n=== Additional Statistics ===")
-            print(f"Pearson correlation coefficient: {pearson_r:.2f}")
+            if debug:
+                print(f"\n=== Additional Statistics ===")
+                print(f"Pearson correlation coefficient: {pearson_r:.2f}")
 
-            # Handle extremely small p-values
-            if pearson_p < 1e-300:
-                print(f'Pearson p-value: < 1e-300 (extremely significant)')
-            else:
-                print(f'Pearson p-value: {pearson_p:.5e}')
+                # Handle extremely small p-values
+                if pearson_p < 1e-300:
+                    print(f'Pearson p-value: < 1e-300 (extremely significant)')
+                else:
+                    print(f'Pearson p-value: {pearson_p:.5e}')
             
         except Exception as e:
-            print(f"❌ Error in additional statistics: {e}")
+            if debug:
+                print(f"❌ Error in additional statistics: {e}")
             pearson_r_display = None
             pearson_p_display = None
     else:
-        print("❌ Cannot calculate additional statistics - insufficient data")
+        if debug:
+            print("❌ Cannot calculate additional statistics - insufficient data")
 else:
-    print("Only one eye is present, no pupil diameter cross-correlation can be done")
+    if debug:
+        print("Only one eye is present, no pupil diameter cross-correlation can be done")
 
 # %%
 # check if Second values match 1:1 between VideoData and SleapVideoData then merge them into VideoData
@@ -2738,18 +2810,19 @@ for video_key, res in saccade_results.items():
     upward_segments, upward_outliers_meta, upward_outlier_segments = sp.filter_outlier_saccades(upward_segments_all, 'upward')
     downward_segments, downward_outliers_meta, downward_outlier_segments = sp.filter_outlier_saccades(downward_segments_all, 'downward')
 
-    print(f"Plotting {len(upward_segments)} {label_up} and {len(downward_segments)} {label_down} saccades...")
-    if len(upward_outliers_meta) > 0 or len(downward_outliers_meta) > 0:
-        print(f"   Excluded {len(upward_outliers_meta)} {label_up} outlier(s) and {len(downward_outliers_meta)} {label_down} outlier(s)")
+    if debug:
+        print(f"Plotting {len(upward_segments)} {label_up} and {len(downward_segments)} {label_down} saccades...")
+        if len(upward_outliers_meta) > 0 or len(downward_outliers_meta) > 0:
+            print(f"   Excluded {len(upward_outliers_meta)} {label_up} outlier(s) and {len(downward_outliers_meta)} {label_down} outlier(s)")
 
-    if len(upward_outliers_meta) > 0:
+    if debug and len(upward_outliers_meta) > 0:
         print(f"\n   {label_up} outliers (first 5):")
         for i, out in enumerate(upward_outliers_meta[:5]):
             pass
         if len(upward_outliers_meta) > 5:
             print(f"      ... and {len(upward_outliers_meta) - 5} more")
 
-    if len(downward_outliers_meta) > 0:
+    if debug and len(downward_outliers_meta) > 0:
         print(f"\n   {label_down} outliers (first 5):")
         for i, out in enumerate(downward_outliers_meta[:5]):
             pass
@@ -2869,7 +2942,7 @@ for video_key, res in saccade_results.items():
         min_length = min(len(pos) for pos in aligned_positions)
         max_length = max(len(pos) for pos in aligned_positions)
         
-        if min_length != max_length:
+        if min_length != max_length and debug:
             print(f"⚠️  Warning: {label_up} segments have variable lengths after alignment ({min_length} to {max_length} points). Using minimum length {min_length}.")
         
         # Truncate all segments to same length and stack
@@ -2909,7 +2982,7 @@ for video_key, res in saccade_results.items():
         min_length_down = min(len(seg) for seg in downward_segments)
         max_length_down = max(len(seg) for seg in downward_segments)
         
-        if min_length_down != max_length_down:
+        if min_length_down != max_length_down and debug:
             print(f"⚠️  Warning: {label_down} segments have variable lengths ({min_length_down} to {max_length_down} points). Using minimum length {min_length_down}.")
         
         # Stack all segments as arrays (each row is one saccade, columns are time points)
@@ -3047,7 +3120,8 @@ for video_key, res in saccade_results.items():
 
     else:
         all_vel_min, all_vel_max = -1000, 1000
-        print(f"   ⚠️  No velocity values found, using default range: [{all_vel_min:.2f}, {all_vel_max:.2f}] px/s")
+        if debug:
+            print(f"   ⚠️  No velocity values found, using default range: [{all_vel_min:.2f}, {all_vel_max:.2f}] px/s")
 
     # Add padding to prevent clipping (20% padding on each side)
     vel_range = all_vel_max - all_vel_min
@@ -3076,33 +3150,34 @@ for video_key, res in saccade_results.items():
     fig_all.show()
 
     # Print statistics
-    print(f"\n=== OVERLAY SUMMARY ===")
-    if len(upward_segments) > 0:
-        up_amps = [seg['saccade_amplitude'].iloc[0] for seg in upward_segments]
-        up_durs = [seg['saccade_duration'].iloc[0] for seg in upward_segments]
-        print(f"{label_up} saccades: {len(upward_segments)}")
-        print(f"  Mean amplitude: {np.mean(up_amps):.2f} px")
-        print(f"  Mean duration: {np.mean(up_durs):.3f} s")
+    if debug:
+        print(f"\n=== OVERLAY SUMMARY ===")
+        if len(upward_segments) > 0:
+            up_amps = [seg['saccade_amplitude'].iloc[0] for seg in upward_segments]
+            up_durs = [seg['saccade_duration'].iloc[0] for seg in upward_segments]
+            print(f"{label_up} saccades: {len(upward_segments)}")
+            print(f"  Mean amplitude: {np.mean(up_amps):.2f} px")
+            print(f"  Mean duration: {np.mean(up_durs):.3f} s")
 
-    if len(downward_segments) > 0:
-        down_amps = [seg['saccade_amplitude'].iloc[0] for seg in downward_segments]
-        down_durs = [seg['saccade_duration'].iloc[0] for seg in downward_segments]
-        print(f"{label_down} saccades: {len(downward_segments)}")
-        print(f"  Mean amplitude: {np.mean(down_amps):.2f} px")
-        print(f"  Mean duration: {np.mean(down_durs):.3f} s")
+        if len(downward_segments) > 0:
+            down_amps = [seg['saccade_amplitude'].iloc[0] for seg in downward_segments]
+            down_durs = [seg['saccade_duration'].iloc[0] for seg in downward_segments]
+            print(f"{label_down} saccades: {len(downward_segments)}")
+            print(f"  Mean amplitude: {np.mean(down_amps):.2f} px")
+            print(f"  Mean duration: {np.mean(down_durs):.3f} s")
 
-    print(f"\n⏱️  Time alignment: All saccades aligned to threshold crossing (Time_rel_threshold=0)")
-    if len(all_upward_times) > 0 and len(all_downward_times) > 0:
-        # Use the wider range for reporting
-        overall_x_min = min(np.min(all_upward_times), np.min(all_downward_times))
-        overall_x_max = max(np.max(all_upward_times), np.max(all_downward_times))
-        print(f"📏 Window: {n_before} points before + {n_after} points after threshold crossing (actual time range: {overall_x_min:.3f} to {overall_x_max:.3f} s)")
-    elif len(all_upward_times) > 0:
-        print(f"📏 Window: {n_before} points before + {n_after} points after threshold crossing ({label_up} actual time range: {np.min(all_upward_times):.3f} to {np.max(all_upward_times):.3f} s)")
-    elif len(all_downward_times) > 0:
-        print(f"📏 Window: {n_before} points before + {n_after} points after threshold crossing ({label_down} actual time range: {np.min(all_downward_times):.3f} to {np.max(all_downward_times):.3f} s)")
-    else:
-        print(f"📏 Window: {n_before} points before + {n_after} points after threshold crossing")
+        print(f"\n⏱️  Time alignment: All saccades aligned to threshold crossing (Time_rel_threshold=0)")
+        if len(all_upward_times) > 0 and len(all_downward_times) > 0:
+            # Use the wider range for reporting
+            overall_x_min = min(np.min(all_upward_times), np.min(all_downward_times))
+            overall_x_max = max(np.max(all_upward_times), np.max(all_downward_times))
+            print(f"📏 Window: {n_before} points before + {n_after} points after threshold crossing (actual time range: {overall_x_min:.3f} to {overall_x_max:.3f} s)")
+        elif len(all_upward_times) > 0:
+            print(f"📏 Window: {n_before} points before + {n_after} points after threshold crossing ({label_up} actual time range: {np.min(all_upward_times):.3f} to {np.max(all_upward_times):.3f} s)")
+        elif len(all_downward_times) > 0:
+            print(f"📏 Window: {n_before} points before + {n_after} points after threshold crossing ({label_down} actual time range: {np.min(all_downward_times):.3f} to {np.max(all_downward_times):.3f} s)")
+        else:
+            print(f"📏 Window: {n_before} points before + {n_after} points after threshold crossing")
 
 
 
@@ -3359,20 +3434,21 @@ for video_key, res in saccade_results.items():
     fig_qc.show()
 
     # Print correlation statistics
-    print("\n=== SACCADE AMPLITUDE-DURATION CORRELATION ===\n")
-    if upward_saccades_df is not None and len(upward_saccades_df) > 0:
-        print(f"{get_eye_label(video_key)} saccades (n={len(upward_saccades_df)}):")
-        print(f"  Correlation (amplitude vs duration): {corr_up:.3f}")
-        print(f"  Mean amplitude: {upward_saccades_df['amplitude'].mean():.2f} px")
-        print(f"  Mean duration: {upward_saccades_df['duration'].mean():.3f} s")
-        print(f"  Amp range: {upward_saccades_df['amplitude'].min():.2f} - {upward_saccades_df['amplitude'].max():.2f} px")
+    if debug:
+        print("\n=== SACCADE AMPLITUDE-DURATION CORRELATION ===\n")
+        if upward_saccades_df is not None and len(upward_saccades_df) > 0:
+            print(f"{get_eye_label(video_key)} saccades (n={len(upward_saccades_df)}):")
+            print(f"  Correlation (amplitude vs duration): {corr_up:.3f}")
+            print(f"  Mean amplitude: {upward_saccades_df['amplitude'].mean():.2f} px")
+            print(f"  Mean duration: {upward_saccades_df['duration'].mean():.3f} s")
+            print(f"  Amp range: {upward_saccades_df['amplitude'].min():.2f} - {upward_saccades_df['amplitude'].max():.2f} px")
 
-    if downward_saccades_df is not None and len(downward_saccades_df) > 0:
-        print(f"\n{get_eye_label(video_key)} saccades (n={len(downward_saccades_df)}):")
-        print(f"  Correlation (amplitude vs duration): {corr_down:.3f}")
-        print(f"  Mean amplitude: {downward_saccades_df['amplitude'].mean():.2f} px")
-        print(f"  Mean duration: {downward_saccades_df['duration'].mean():.3f} s")
-        print(f"  Amp range: {downward_saccades_df['amplitude'].min():.2f} - {downward_saccades_df['amplitude'].max():.2f} px")
+        if downward_saccades_df is not None and len(downward_saccades_df) > 0:
+            print(f"\n{get_eye_label(video_key)} saccades (n={len(downward_saccades_df)}):")
+            print(f"  Correlation (amplitude vs duration): {corr_down:.3f}")
+            print(f"  Mean amplitude: {downward_saccades_df['amplitude'].mean():.2f} px")
+            print(f"  Mean duration: {downward_saccades_df['duration'].mean():.3f} s")
+            print(f"  Amp range: {downward_saccades_df['amplitude'].min():.2f} - {downward_saccades_df['amplitude'].max():.2f} px")
 
 
 
