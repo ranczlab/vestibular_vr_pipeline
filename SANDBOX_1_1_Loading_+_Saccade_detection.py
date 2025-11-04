@@ -68,6 +68,8 @@ def get_eye_label(key):
     """Return mapped user-viewable eye label for video key."""
     return VIDEO_LABELS.get(key, key)
 
+NaNs_removed = False # keep as false here, it is to checking if NaNs already removed if the notebook cell is rerun
+
 
 # symbols to use ✅ ℹ️ ⚠️ ❗
 
@@ -77,12 +79,12 @@ def get_eye_label(key):
 
 # User-editable friendly labels for plotting and console output:
 
+debug = True  # Set to True to enable debug output across all cells (file loading, processing, etc.)
+
 video1_eye = 'L'  # Options: 'L' or 'R'; which eye does VideoData1 represent? ('L' = Left, 'R' = Right)
 plot_QC_timeseries = False
 score_cutoff = 0.2 # for filtering out inferred points with low confidence, they get interpolated 
 outlier_sd_threshold = 10 # for removing outliers from the data, they get interpolated 
-NaNs_removed = False # for checking if NaNs already removed in the notebook
-debug = False  # Set to True to enable debug output across all cells (file loading, processing, etc.)
 
 # Pupil diameter filter settings (Butterworth low-pass)
 pupil_filter_cutoff_hz = 10  # Hz
@@ -601,78 +603,6 @@ else:
 
 
 # %%
-# QC: Detect and print confidence scores analysis
-############################################################################################################
-
-if not debug:
-    print("ℹ️ Debug output suppressed. Set debug=True to see detailed confidence score QC analysis.")
-
-columns_of_interest = ['left.score','center.score','right.score','p1.score','p2.score','p3.score','p4.score','p5.score','p6.score','p7.score','p8.score']
-
-# VideoData1 confidence score analysis
-if debug and 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
-    total_points1 = len(VideoData1)
-    print(f'\nℹ️ VideoData1 - Top 3 columns with most frames below {score_cutoff} confidence score:')
-
-    # Calculate statistics for all columns
-    video1_stats = []
-    for col in columns_of_interest:
-        count_below_threshold = (VideoData1[col] < score_cutoff).sum()
-        percentage_below_threshold = (count_below_threshold / total_points1) * 100
-
-        # Find the longest consecutive series below threshold
-        below_threshold = VideoData1[col] < score_cutoff
-        longest_series = 0
-        current_series = 0
-
-        for value in below_threshold:
-            if value:
-                current_series += 1
-                if current_series > longest_series:
-                    longest_series = current_series
-            else:
-                current_series = 0
-
-        video1_stats.append((col, count_below_threshold, percentage_below_threshold, longest_series))
-
-    # Sort by count_below_threshold and show top 3
-    video1_stats.sort(key=lambda x: x[1], reverse=True)
-    for i, (col, count, percentage, longest) in enumerate(video1_stats[:3]):
-        print(f"VideoData1 - #{i+1}: {col} | Values below {score_cutoff}: {count} ({percentage:.2f}%) | Longest consecutive frame series: {longest}")
-
-# VideoData2 confidence score analysis
-if debug and 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
-    total_points2 = len(VideoData2)
-    print(f'\nℹ️ VideoData2 - Top 3 columns with most frames below {score_cutoff} confidence score:')
-
-    # Calculate statistics for all columns
-    video2_stats = []
-    for col in columns_of_interest:
-        count_below_threshold = (VideoData2[col] < score_cutoff).sum()
-        percentage_below_threshold = (count_below_threshold / total_points2) * 100
-        
-        # Find the longest consecutive series below threshold
-        below_threshold = VideoData2[col] < score_cutoff
-        longest_series = 0
-        current_series = 0
-        
-        for value in below_threshold:
-            if value:
-                current_series += 1
-                if current_series > longest_series:
-                    longest_series = current_series
-            else:
-                current_series = 0
-        
-        video2_stats.append((col, count_below_threshold, percentage_below_threshold, longest_series))
-
-    # Sort by count_below_threshold and show top 3
-    video2_stats.sort(key=lambda x: x[1], reverse=True)
-    for i, (col, count, percentage, longest) in enumerate(video2_stats[:3]):
-        print(f"VideoData2 - #{i+1}: {col} | Values below {score_cutoff}: {count} ({percentage:.2f}%) | Longest consecutive frame series: {longest}")
-
-
-# %%
 # Instance.score distribution and hard threshold for blink detection
 ############################################################################################################
 # Plotting the distribution of instance scores and using hard threshold for blink detection.
@@ -746,85 +676,92 @@ if has_v1 or has_v2:
     plt.show()
 
 # Report the statistics for available VideoData
-if debug and has_v1:
-    print(f"\n{'='*80}")
-    print(f"VideoData1 Results:")
-    print(f"{'='*80}")
+# Always show key stats: number/percentile below threshold and longest consecutive segment
+if has_v1:
+    print(f"\nVideoData1 - Instance Score Threshold Analysis:")
     print(f"  Hard threshold: {blink_instance_score_threshold}")
     
     # Calculate percentile for reference
     v1_percentile = (VideoData1['instance.score'] < blink_instance_score_threshold).sum() / len(VideoData1) * 100
-    print(f"  Percentile: {v1_percentile:.2f}% (i.e., {v1_percentile:.2f}% of frames have instance.score < {blink_instance_score_threshold})")
-    
     v1_num_low = (VideoData1['instance.score'] < blink_instance_score_threshold).sum()
     v1_total = len(VideoData1)
     v1_pct_low = (v1_num_low / v1_total) * 100
-    print(f"  Frames below threshold: {v1_num_low} / {v1_total} ({v1_pct_low:.2f}%)")
     
     # Find longest consecutive segments
     low_sections_v1 = pf.find_longest_lowscore_sections(VideoData1['instance.score'], blink_instance_score_threshold, top_n=1)
     longest_consecutive_v1 = low_sections_v1[0]['length'] if low_sections_v1 else 0
     longest_consecutive_v1_ms = (longest_consecutive_v1 / fps_1_for_threshold) * 1000 if fps_1_for_threshold and longest_consecutive_v1 > 0 else None
-    print(f"  Longest consecutive segment below threshold: {longest_consecutive_v1} frames", end="")
+    
+    # Always print key stats
+    print(f"  Frames below threshold: {v1_num_low} / {v1_total} ({v1_pct_low:.2f}%)")
+    print(f"  Longest consecutive segment: {longest_consecutive_v1} frames", end="")
     if longest_consecutive_v1_ms:
         print(f" ({longest_consecutive_v1_ms:.1f}ms)")
     else:
         print()
     
-    # Report the top 5 longest consecutive sections
-    low_sections_v1 = pf.find_longest_lowscore_sections(VideoData1['instance.score'], blink_instance_score_threshold, top_n=5)
-    if len(low_sections_v1) > 0:
-        print(f"\n  Top 5 longest consecutive sections where instance.score < threshold:")
-        for i, sec in enumerate(low_sections_v1, 1):
-            start_idx = sec['start_idx']
-            end_idx = sec['end_idx']
-            start_time = VideoData1.index[start_idx] if isinstance(VideoData1.index, pd.DatetimeIndex) else start_idx
-            end_time = VideoData1.index[end_idx] if isinstance(VideoData1.index, pd.DatetimeIndex) else end_idx
-            sec_duration_ms = (sec['length'] / fps_1_for_threshold) * 1000 if fps_1_for_threshold else None
-            if sec_duration_ms:
-                print(f"    Section {i}: index {start_idx}-{end_idx} (length {sec['length']} frames, {sec_duration_ms:.1f}ms)")
-            else:
-                print(f"    Section {i}: index {start_idx}-{end_idx} (length {sec['length']} frames)")
+    # Detailed stats only in debug mode
+    if debug:
+        print(f"\n  Detailed statistics:")
+        print(f"  Percentile: {v1_percentile:.2f}% (i.e., {v1_percentile:.2f}% of frames have instance.score < {blink_instance_score_threshold})")
+        
+        # Report the top 5 longest consecutive sections
+        low_sections_v1 = pf.find_longest_lowscore_sections(VideoData1['instance.score'], blink_instance_score_threshold, top_n=5)
+        if len(low_sections_v1) > 0:
+            print(f"\n  Top 5 longest consecutive sections where instance.score < threshold:")
+            for i, sec in enumerate(low_sections_v1, 1):
+                start_idx = sec['start_idx']
+                end_idx = sec['end_idx']
+                start_time = VideoData1.index[start_idx] if isinstance(VideoData1.index, pd.DatetimeIndex) else start_idx
+                end_time = VideoData1.index[end_idx] if isinstance(VideoData1.index, pd.DatetimeIndex) else end_idx
+                sec_duration_ms = (sec['length'] / fps_1_for_threshold) * 1000 if fps_1_for_threshold else None
+                if sec_duration_ms:
+                    print(f"    Section {i}: index {start_idx}-{end_idx} (length {sec['length']} frames, {sec_duration_ms:.1f}ms)")
+                else:
+                    print(f"    Section {i}: index {start_idx}-{end_idx} (length {sec['length']} frames)")
 
-if debug and has_v2:
-    print(f"\n{'='*80}")
-    print(f"VideoData2 Results:")
-    print(f"{'='*80}")
+if has_v2:
+    print(f"\nVideoData2 - Instance Score Threshold Analysis:")
     print(f"  Hard threshold: {blink_instance_score_threshold}")
     
     # Calculate percentile for reference
     v2_percentile = (VideoData2['instance.score'] < blink_instance_score_threshold).sum() / len(VideoData2) * 100
-    print(f"  Percentile: {v2_percentile:.2f}% (i.e., {v2_percentile:.2f}% of frames have instance.score < {blink_instance_score_threshold})")
-    
     v2_num_low = (VideoData2['instance.score'] < blink_instance_score_threshold).sum()
     v2_total = len(VideoData2)
     v2_pct_low = (v2_num_low / v2_total) * 100
-    print(f"  Frames below threshold: {v2_num_low} / {v2_total} ({v2_pct_low:.2f}%)")
     
     # Find longest consecutive segments
     low_sections_v2 = pf.find_longest_lowscore_sections(VideoData2['instance.score'], blink_instance_score_threshold, top_n=1)
     longest_consecutive_v2 = low_sections_v2[0]['length'] if low_sections_v2 else 0
     longest_consecutive_v2_ms = (longest_consecutive_v2 / fps_2_for_threshold) * 1000 if fps_2_for_threshold and longest_consecutive_v2 > 0 else None
-    print(f"  Longest consecutive segment below threshold: {longest_consecutive_v2} frames", end="")
+    
+    # Always print key stats
+    print(f"  Frames below threshold: {v2_num_low} / {v2_total} ({v2_pct_low:.2f}%)")
+    print(f"  Longest consecutive segment: {longest_consecutive_v2} frames", end="")
     if longest_consecutive_v2_ms:
         print(f" ({longest_consecutive_v2_ms:.1f}ms)")
     else:
         print()
     
-    # Report the top 5 longest consecutive sections
-    low_sections_v2 = pf.find_longest_lowscore_sections(VideoData2['instance.score'], blink_instance_score_threshold, top_n=5)
-    if len(low_sections_v2) > 0:
-        print(f"\n  Top 5 longest consecutive sections where instance.score < threshold:")
-        for i, sec in enumerate(low_sections_v2, 1):
-            start_idx = sec['start_idx']
-            end_idx = sec['end_idx']
-            start_time = VideoData2.index[start_idx] if isinstance(VideoData2.index, pd.DatetimeIndex) else start_idx
-            end_time = VideoData2.index[end_idx] if isinstance(VideoData2.index, pd.DatetimeIndex) else end_idx
-            sec_duration_ms = (sec['length'] / fps_2_for_threshold) * 1000 if fps_2_for_threshold else None
-            if sec_duration_ms:
-                print(f"    Section {i}: index {start_idx}-{end_idx} (length {sec['length']} frames, {sec_duration_ms:.1f}ms)")
-            else:
-                print(f"    Section {i}: index {start_idx}-{end_idx} (length {sec['length']} frames)")
+    # Detailed stats only in debug mode
+    if debug:
+        print(f"\n  Detailed statistics:")
+        print(f"  Percentile: {v2_percentile:.2f}% (i.e., {v2_percentile:.2f}% of frames have instance.score < {blink_instance_score_threshold})")
+        
+        # Report the top 5 longest consecutive sections
+        low_sections_v2 = pf.find_longest_lowscore_sections(VideoData2['instance.score'], blink_instance_score_threshold, top_n=5)
+        if len(low_sections_v2) > 0:
+            print(f"\n  Top 5 longest consecutive sections where instance.score < threshold:")
+            for i, sec in enumerate(low_sections_v2, 1):
+                start_idx = sec['start_idx']
+                end_idx = sec['end_idx']
+                start_time = VideoData2.index[start_idx] if isinstance(VideoData2.index, pd.DatetimeIndex) else start_idx
+                end_time = VideoData2.index[end_idx] if isinstance(VideoData2.index, pd.DatetimeIndex) else end_idx
+                sec_duration_ms = (sec['length'] / fps_2_for_threshold) * 1000 if fps_2_for_threshold else None
+                if sec_duration_ms:
+                    print(f"    Section {i}: index {start_idx}-{end_idx} (length {sec['length']} frames, {sec_duration_ms:.1f}ms)")
+                else:
+                    print(f"    Section {i}: index {start_idx}-{end_idx} (length {sec['length']} frames)")
 
 if debug:
     print(f"\n{'='*80}")
@@ -897,21 +834,23 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
         max_frames=999999  # Very high limit - essentially no maximum
     )
     
-    if debug:
-        print(f"  Found {len(all_blink_segments_v1)} blink segments")
+    # Always print key blink detection stats
+    print(f"{get_eye_label('VideoData1')} - Found {len(all_blink_segments_v1)} blink segments")
     
     # Filter out blinks shorter than 4 frames
     min_frames_threshold = 4
     blink_segments_v1 = [blink for blink in all_blink_segments_v1 if blink['length'] >= min_frames_threshold]
     short_blink_segments_v1 = [blink for blink in all_blink_segments_v1 if blink['length'] < min_frames_threshold]
-    if debug:
-        print(f"  After filtering <{min_frames_threshold} frames: {len(blink_segments_v1)} blink segment(s), {len(short_blink_segments_v1)} short segment(s) will be interpolated")
+    
+    # Always print filtering stats
+    print(f"  After filtering <{min_frames_threshold} frames: {len(blink_segments_v1)} blink segment(s), {len(short_blink_segments_v1)} short segment(s) will be interpolated")
     
     # Merge blinks within 10 frames into blink bouts
     merge_window_frames = 10
     blink_bouts_v1 = pf.merge_nearby_blinks(blink_segments_v1, merge_window_frames)
-    if debug:
-        print(f"  After merging blinks within {merge_window_frames} frames: {len(blink_bouts_v1)} blink bout(s)")
+    
+    # Always print bout count
+    print(f"  After merging blinks within {merge_window_frames} frames: {len(blink_bouts_v1)} blink bout(s)")
     
     # Check for long blinks and warn if needed
     long_blinks_warnings_v1 = []
@@ -939,6 +878,10 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
             print(f"      Blink {warn['blink_num']}: frames {warn['frames']}, duration {warn['duration_ms']:.1f}ms - Please verify this is a real blink in the video")
     
     if debug:
+        print(f"\n  Detailed blink detection information:")
+        print(f"  FPS: {fps_1:.2f}")
+        print(f"  Long blink warning threshold: {long_blink_warning_frames} frames ({long_blink_warning_ms}ms)")
+        print(f"  Using hard threshold: {blink_threshold_v1:.4f}")
         print(f"  Detected {len(blink_segments_v1)} blink segment(s)\n")
     
     # Print all detected blinks once (detailed)
@@ -1128,21 +1071,23 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
         max_frames=999999  # Very high limit - essentially no maximum
     )
     
-    if debug:
-        print(f"  Found {len(all_blink_segments_v2)} blink segments")
+    # Always print key blink detection stats
+    print(f"{get_eye_label('VideoData2')} - Found {len(all_blink_segments_v2)} blink segments")
     
     # Filter out blinks shorter than 4 frames
     min_frames_threshold = 4
     blink_segments_v2 = [blink for blink in all_blink_segments_v2 if blink['length'] >= min_frames_threshold]
     short_blink_segments_v2 = [blink for blink in all_blink_segments_v2 if blink['length'] < min_frames_threshold]
-    if debug:
-        print(f"  After filtering <{min_frames_threshold} frames: {len(blink_segments_v2)} blink segment(s), {len(short_blink_segments_v2)} short segment(s) will be interpolated")
+    
+    # Always print filtering stats
+    print(f"  After filtering <{min_frames_threshold} frames: {len(blink_segments_v2)} blink segment(s), {len(short_blink_segments_v2)} short segment(s) will be interpolated")
     
     # Merge blinks within 10 frames into blink bouts
     merge_window_frames = 10
     blink_bouts_v2 = pf.merge_nearby_blinks(blink_segments_v2, merge_window_frames)
-    if debug:
-        print(f"  After merging blinks within {merge_window_frames} frames: {len(blink_bouts_v2)} blink bout(s)")
+    
+    # Always print bout count
+    print(f"  After merging blinks within {merge_window_frames} frames: {len(blink_bouts_v2)} blink bout(s)")
     
     # Check for long blinks and warn if needed
     long_blinks_warnings_v2 = []
@@ -1170,6 +1115,10 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
             print(f"      Blink {warn['blink_num']}: frames {warn['frames']}, duration {warn['duration_ms']:.1f}ms - Please verify this is a real blink in the video")
     
     if debug:
+        print(f"\n  Detailed blink detection information:")
+        print(f"  FPS: {fps_2:.2f}")
+        print(f"  Long blink warning threshold: {long_blink_warning_frames} frames ({long_blink_warning_ms}ms)")
+        print(f"  Using hard threshold: {blink_threshold_v2:.4f}")
         print(f"  Detected {len(blink_segments_v2)} blink segment(s)\n")
     
     # Print all detected blinks once (detailed)
@@ -1871,8 +1820,8 @@ if VideoData2_Has_Sleap:
 
 # VideoData1 filtering
 if VideoData1_Has_Sleap:
-    print(f"\n=== VideoData1 Filtering ===")
-    # Butterworth filter parameters - 10 Hz low-pass filter
+    print(f"\n=== Filtering pupil diameter for VideoData1  ===")
+    # Butterworth filter parameters - pupil_filter_cutoff_hz low-pass filter
     fs1 = 1 / np.median(np.diff(SleapVideoData1['Seconds']))  # Sampling frequency (Hz)
     order = pupil_filter_order
 
@@ -1897,8 +1846,8 @@ if VideoData1_Has_Sleap:
 
 # VideoData2 filtering
 if VideoData2_Has_Sleap:
-    print(f"=== VideoData2 Filtering ===")
-    # Butterworth filter parameters - 10 Hz low-pass filter
+    print(f"=== Filtering pupil diameter for VideoData1 ===")
+    # Butterworth filter parameters - pupil_filter_cutoff_hz low-pass filter
     fs2 = 1 / np.median(np.diff(SleapVideoData2['Seconds']))  # Sampling frequency (Hz)
     order = pupil_filter_order
 
@@ -1960,8 +1909,7 @@ if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
     # )
 
     # Cross-correlation analysis
-    if debug:
-        print("=== Cross-Correlation Analysis ===")
+    print("=== Cross-Correlation Analysis ===")
 
     # Get pupil diameter data
     # Use filtered diameter data (with NaN restored at blink positions)
@@ -2000,13 +1948,11 @@ if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
         if pupil1_std > 0 and pupil2_std > 0:
             pupil1_z = (pupil1_clean - pupil1_mean) / pupil1_std
             pupil2_z = (pupil2_clean - pupil2_mean) / pupil2_std
-            if debug:
-                print(f"Applied z-score normalization to pupil diameter signals (accounts for different camera magnifications)")
-                print(f"  VideoData1: mean={pupil1_mean:.2f}, std={pupil1_std:.2f}")
-                print(f"  VideoData2: mean={pupil2_mean:.2f}, std={pupil2_std:.2f}")
+            print(f"Applied z-score normalization to pupil diameter signals (accounts for different camera magnifications)")
+            print(f"  VideoData1: mean={pupil1_mean:.2f}, std={pupil1_std:.2f}")
+            print(f"  VideoData2: mean={pupil2_mean:.2f}, std={pupil2_std:.2f}")
         else:
-            if debug:
-                print("⚠️ Warning: Zero variance detected, using raw signals (no normalization)")
+            print("⚠️ Warning: Zero variance detected, using raw signals (no normalization)")
             pupil1_z = pupil1_clean
             pupil2_z = pupil2_clean
         
@@ -2028,8 +1974,7 @@ if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
             peak_lag_time = lag_times[peak_idx]
             peak_lag_time_display = peak_lag_time # for final QC figure 
             
-            if debug:
-                print(f"Peak lag (time): {peak_lag_time:.4f} seconds")
+            print(f"Peak lag (time): {peak_lag_time:.4f} seconds")
 
         
             # Normalize correlation to [-1, 1] range (for z-scored signals, this is standard normalization)
@@ -2037,11 +1982,9 @@ if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
             if norm_factor > 0:
                 correlation_normalized = correlation / norm_factor
                 peak_correlation_normalized = correlation_normalized[peak_idx]
-                if debug:
-                    print(f"Peak normalized correlation: {peak_correlation_normalized:.4f}")
+                print(f"Peak normalized correlation: {peak_correlation_normalized:.4f}")
             else:
-                if debug:
-                    print("❌ Error: Cannot normalize correlation (zero variance)")
+                print("❌ Error: Cannot normalize correlation (zero variance)")
                 correlation_normalized = correlation
                 peak_correlation_normalized = 0
             
@@ -2102,27 +2045,23 @@ if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
             pearson_r_display = pearson_r
             pearson_p_display = pearson_p
             
-            if debug:
-                print(f"\n=== Additional Statistics ===")
-                print(f"Pearson correlation coefficient: {pearson_r:.2f}")
+            print(f"\n=== Additional Statistics ===")
+            print(f"Pearson correlation coefficient: {pearson_r:.2f}")
 
-                # Handle extremely small p-values
-                if pearson_p < 1e-300:
-                    print(f'Pearson p-value: < 1e-300 (extremely significant)')
-                else:
-                    print(f'Pearson p-value: {pearson_p:.5e}')
+            # Handle extremely small p-values
+            if pearson_p < 1e-300:
+                print(f'Pearson p-value: < 1e-300 (extremely significant)')
+            else:
+                print(f'Pearson p-value: {pearson_p:.5e}')
             
         except Exception as e:
-            if debug:
-                print(f"❌ Error in additional statistics: {e}")
+            print(f"❌ Error in additional statistics: {e}")
             pearson_r_display = None
             pearson_p_display = None
     else:
-        if debug:
-            print("❌ Cannot calculate additional statistics - insufficient data")
+        print("❌ Cannot calculate additional statistics - insufficient data")
 else:
-    if debug:
-        print("Only one eye is present, no pupil diameter cross-correlation can be done")
+    print("Only one eye is present, no pupil diameter cross-correlation can be done")
 
 # %%
 # check if Second values match 1:1 between VideoData and SleapVideoData then merge them into VideoData
@@ -2560,158 +2499,158 @@ plt.show()
 
 # %%
 # Create interactive time series plots using plotly for browser viewing
+if plot_QC_timeseries:
+    # Create subplots for the time series (3 rows now instead of 2)
+    # Need to enable secondary_y for the third panel
+    fig = make_subplots(
+        rows=3, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        subplot_titles=(
+            f"{get_eye_label('VideoData1')} - center.X Time Series",
+            f"{get_eye_label('VideoData2')} - center.X Time Series",
+            "Ellipse.Center.X Comparison with Difference"
+        ),
+        specs=[[{}], [{}], [{"secondary_y": True}]]  # Enable secondary_y for row 3
+    )
 
-# Create subplots for the time series (3 rows now instead of 2)
-# Need to enable secondary_y for the third panel
-fig = make_subplots(
-    rows=3, cols=1,
-    shared_xaxes=True,
-    vertical_spacing=0.08,
-    subplot_titles=(
-        f"{get_eye_label('VideoData1')} - center.X Time Series",
-        f"{get_eye_label('VideoData2')} - center.X Time Series",
-        "Ellipse.Center.X Comparison with Difference"
-    ),
-    specs=[[{}], [{}], [{"secondary_y": True}]]  # Enable secondary_y for row 3
-)
+    # Panel 1: VideoData1 center coordinates - Time Series
+    if VideoData1_Has_Sleap:
+        fig.add_trace(go.Scatter(
+            x=VideoData1_centered['Seconds'],
+            y=VideoData1_centered['center.x'],
+            mode='lines',
+            name='center.x original',
+            line=dict(color='blue', width=0.5),
+            opacity=0.6
+        ), row=1, col=1)
+        
+        fig.add_trace(go.Scatter(
+            x=VideoData1['Seconds'],
+            y=VideoData1['Ellipse.Center.X'],
+            mode='lines',
+            name='Ellipse Center.X',
+            line=dict(color='red', width=0.5),
+            opacity=0.6
+        ), row=1, col=1)
 
-# Panel 1: VideoData1 center coordinates - Time Series
-if VideoData1_Has_Sleap:
-    fig.add_trace(go.Scatter(
-        x=VideoData1_centered['Seconds'],
-        y=VideoData1_centered['center.x'],
-        mode='lines',
-        name='center.x original',
-        line=dict(color='blue', width=0.5),
-        opacity=0.6
-    ), row=1, col=1)
-    
-    fig.add_trace(go.Scatter(
-        x=VideoData1['Seconds'],
-        y=VideoData1['Ellipse.Center.X'],
-        mode='lines',
-        name='Ellipse Center.X',
-        line=dict(color='red', width=0.5),
-        opacity=0.6
-    ), row=1, col=1)
+    # Panel 2: VideoData2 center coordinates - Time Series
+    if VideoData2_Has_Sleap:
+        fig.add_trace(go.Scatter(
+            x=VideoData2_centered['Seconds'],
+            y=VideoData2_centered['center.x'],
+            mode='lines',
+            name='center.x original',
+            line=dict(color='blue', width=0.5),
+            opacity=0.6
+        ), row=2, col=1)
+        
+        fig.add_trace(go.Scatter(
+            x=VideoData2['Seconds'],
+            y=VideoData2['Ellipse.Center.X'],
+            mode='lines',
+            name='Ellipse Center.X',
+            line=dict(color='red', width=0.5),
+            opacity=0.6
+        ), row=2, col=1)
 
-# Panel 2: VideoData2 center coordinates - Time Series
-if VideoData2_Has_Sleap:
-    fig.add_trace(go.Scatter(
-        x=VideoData2_centered['Seconds'],
-        y=VideoData2_centered['center.x'],
-        mode='lines',
-        name='center.x original',
-        line=dict(color='blue', width=0.5),
-        opacity=0.6
-    ), row=2, col=1)
-    
-    fig.add_trace(go.Scatter(
-        x=VideoData2['Seconds'],
-        y=VideoData2['Ellipse.Center.X'],
-        mode='lines',
-        name='Ellipse Center.X',
-        line=dict(color='red', width=0.5),
-        opacity=0.6
-    ), row=2, col=1)
+    # Panel 3: Ellipse.Center.X Comparison with difference
+    if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
+        # Plot the individual traces
+        fig.add_trace(go.Scatter(
+            x=VideoData1['Seconds'],
+            y=VideoData1['Ellipse.Center.X'],
+            mode='lines',
+            name='VideoData1 Ellipse.Center.X',
+            line=dict(color='#FF7F00', width=0.5),  # Orange
+            opacity=0.6
+        ), row=3, col=1)
+        
+        fig.add_trace(go.Scatter(
+            x=VideoData2['Seconds'],
+            y=VideoData2['Ellipse.Center.X'],
+            mode='lines',
+            name='VideoData2 Ellipse.Center.X',
+            line=dict(color='#9370DB', width=0.5),  # Purple
+            opacity=0.6
+        ), row=3, col=1)
+        
+        # Plot the difference on secondary y-axis
+        # Align the data to the same length and normalize for fair comparison
+        min_length = min(len(VideoData1), len(VideoData2))
+        
+        # Normalize data (z-score) to account for different scales
+        center_x1_aligned = VideoData1['Ellipse.Center.X'].iloc[:min_length]
+        center_x2_aligned = VideoData2['Ellipse.Center.X'].iloc[:min_length]
+        
+        # Calculate mean and std for normalization
+        mean1 = center_x1_aligned.mean()
+        std1 = center_x1_aligned.std()
+        mean2 = center_x2_aligned.mean()
+        std2 = center_x2_aligned.std()
+        
+        # Normalize both datasets
+        center_x1_norm = (center_x1_aligned - mean1) / std1
+        center_x2_norm = (center_x2_aligned - mean2) / std2
+        
+        # Calculate difference of normalized data
+        center_x_diff = center_x1_norm - center_x2_norm
+        seconds_aligned = VideoData1['Seconds'].iloc[:min_length]
+        
+        fig.add_trace(go.Scatter(
+            x=seconds_aligned,
+            y=center_x_diff,
+            mode='lines',
+            name='Difference (normalized)',
+            line=dict(color='green', width=0.5),
+            opacity=0.6
+        ), row=3, col=1, secondary_y=True)
+        
+    elif VideoData1_Has_Sleap:
+        fig.add_trace(go.Scatter(
+            x=VideoData1['Seconds'],
+            y=VideoData1['Ellipse.Center.X'],
+            mode='lines',
+            name='VideoData1 Ellipse.Center.X',
+            line=dict(color='#FF7F00', width=0.5),
+            opacity=0.6
+        ), row=3, col=1)
+    elif VideoData2_Has_Sleap:
+        fig.add_trace(go.Scatter(
+            x=VideoData2['Seconds'],
+            y=VideoData2['Ellipse.Center.X'],
+            mode='lines',
+            name='VideoData2 Ellipse.Center.X',
+            line=dict(color='#9370DB', width=0.5),
+            opacity=0.6
+        ), row=3, col=1)
 
-# Panel 3: Ellipse.Center.X Comparison with difference
-if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
-    # Plot the individual traces
-    fig.add_trace(go.Scatter(
-        x=VideoData1['Seconds'],
-        y=VideoData1['Ellipse.Center.X'],
-        mode='lines',
-        name='VideoData1 Ellipse.Center.X',
-        line=dict(color='#FF7F00', width=0.5),  # Orange
-        opacity=0.6
-    ), row=3, col=1)
-    
-    fig.add_trace(go.Scatter(
-        x=VideoData2['Seconds'],
-        y=VideoData2['Ellipse.Center.X'],
-        mode='lines',
-        name='VideoData2 Ellipse.Center.X',
-        line=dict(color='#9370DB', width=0.5),  # Purple
-        opacity=0.6
-    ), row=3, col=1)
-    
-    # Plot the difference on secondary y-axis
-    # Align the data to the same length and normalize for fair comparison
-    min_length = min(len(VideoData1), len(VideoData2))
-    
-    # Normalize data (z-score) to account for different scales
-    center_x1_aligned = VideoData1['Ellipse.Center.X'].iloc[:min_length]
-    center_x2_aligned = VideoData2['Ellipse.Center.X'].iloc[:min_length]
-    
-    # Calculate mean and std for normalization
-    mean1 = center_x1_aligned.mean()
-    std1 = center_x1_aligned.std()
-    mean2 = center_x2_aligned.mean()
-    std2 = center_x2_aligned.std()
-    
-    # Normalize both datasets
-    center_x1_norm = (center_x1_aligned - mean1) / std1
-    center_x2_norm = (center_x2_aligned - mean2) / std2
-    
-    # Calculate difference of normalized data
-    center_x_diff = center_x1_norm - center_x2_norm
-    seconds_aligned = VideoData1['Seconds'].iloc[:min_length]
-    
-    fig.add_trace(go.Scatter(
-        x=seconds_aligned,
-        y=center_x_diff,
-        mode='lines',
-        name='Difference (normalized)',
-        line=dict(color='green', width=0.5),
-        opacity=0.6
-    ), row=3, col=1, secondary_y=True)
-    
-elif VideoData1_Has_Sleap:
-    fig.add_trace(go.Scatter(
-        x=VideoData1['Seconds'],
-        y=VideoData1['Ellipse.Center.X'],
-        mode='lines',
-        name='VideoData1 Ellipse.Center.X',
-        line=dict(color='#FF7F00', width=0.5),
-        opacity=0.6
-    ), row=3, col=1)
-elif VideoData2_Has_Sleap:
-    fig.add_trace(go.Scatter(
-        x=VideoData2['Seconds'],
-        y=VideoData2['Ellipse.Center.X'],
-        mode='lines',
-        name='VideoData2 Ellipse.Center.X',
-        line=dict(color='#9370DB', width=0.5),
-        opacity=0.6
-    ), row=3, col=1)
+    # Update layout
+    fig.update_layout(
+        height=1200,  # Increased height for 3 panels
+        title_text=f'{data_path} - Eye Tracking Time Series QC',
+        showlegend=True,
+        hovermode='x unified'
+    )
 
-# Update layout
-fig.update_layout(
-    height=1200,  # Increased height for 3 panels
-    title_text=f'{data_path} - Eye Tracking Time Series QC',
-    showlegend=True,
-    hovermode='x unified'
-)
+    # Update axes
+    fig.update_xaxes(title_text="Time (s)", row=3, col=1)
+    fig.update_yaxes(title_text="Position (pixels)", row=1, col=1)
+    fig.update_yaxes(title_text="Position (pixels)", row=2, col=1)
+    fig.update_yaxes(title_text="Center X (pixels)", row=3, col=1)
 
-# Update axes
-fig.update_xaxes(title_text="Time (s)", row=3, col=1)
-fig.update_yaxes(title_text="Position (pixels)", row=1, col=1)
-fig.update_yaxes(title_text="Position (pixels)", row=2, col=1)
-fig.update_yaxes(title_text="Center X (pixels)", row=3, col=1)
+    # Update secondary y-axis for difference plot
+    if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
+        fig.update_yaxes(title_text="Normalized Difference (z-score)", row=3, col=1, secondary_y=True)
 
-# Update secondary y-axis for difference plot
-if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
-    fig.update_yaxes(title_text="Normalized Difference (z-score)", row=3, col=1, secondary_y=True)
+    # Show in browser
+    fig.show(renderer='browser')
 
-# Show in browser
-fig.show(renderer='browser')
-
-# Also save as HTML
-save_path.mkdir(parents=True, exist_ok=True)
-html_path = save_path / "Eye_data_QC_time_series.html"
-fig.write_html(html_path)
-print(f"✅ Interactive time series plot saved to: {html_path}")
+    # Also save as HTML
+    save_path.mkdir(parents=True, exist_ok=True)
+    html_path = save_path / "Eye_data_QC_time_series.html"
+    fig.write_html(html_path)
+    print(f"✅ Interactive time series plot saved to: {html_path}")
 
 
 # %%
@@ -2741,34 +2680,6 @@ if VideoData2_Has_Sleap:
 # %%
 saccade_results = {}
 
-if VideoData1_Has_Sleap:
-    print(f"\n🔎 === Source: ({get_eye_label('VideoData1')}) ===\n")
-    df1 = VideoData1[['Ellipse.Center.X', 'Seconds']].copy()
-    saccade_results['VideoData1'] = analyze_eye_video_saccades(
-        df1, FPS_1, get_eye_label('VideoData1'),
-        k=k1, refractory_period=refractory_period,
-        onset_offset_fraction=onset_offset_fraction,
-        n_before=n_before, n_after=n_after, baseline_n_points=5
-    )
-
-
-if VideoData2_Has_Sleap:
-    print(f"\n🔎 === Source: ({get_eye_label('VideoData2')}) ===\n")
-    df2 = VideoData2[['Ellipse.Center.X', 'Seconds']].copy()
-    saccade_results['VideoData2'] = analyze_eye_video_saccades(
-        df2, FPS_2, get_eye_label('VideoData2'),
-        k=k2, refractory_period=refractory_period,
-        onset_offset_fraction=onset_offset_fraction,
-        n_before=n_before, n_after=n_after, baseline_n_points=5
-    )
-
-# %%
-# VISUALIZE ALL SACCADES - SIDE BY SIDE
-#-------------------------------------------------------------------------------
-# Plot all upward and downward saccades aligned by time with position and velocity traces
-
-# Create figure with 4 columns in a single row: up pos, up vel, down pos, down vel
-
 # Helper: map detected directions (upward/downward) to NT/TN based on eye assignment
 # Left eye: upward→NT, downward→TN; Right eye: upward→TN, downward→NT
 def get_direction_map_for_video(video_key):
@@ -2777,6 +2688,40 @@ def get_direction_map_for_video(video_key):
         return {'upward': 'NT', 'downward': 'TN'}
     else:
         return {'upward': 'TN', 'downward': 'NT'}
+
+if VideoData1_Has_Sleap:
+    print(f"\n🔎 === Source: ({get_eye_label('VideoData1')}) ===\n")
+    df1 = VideoData1[['Ellipse.Center.X', 'Seconds']].copy()
+    dir_map_v1 = get_direction_map_for_video('VideoData1')
+    saccade_results['VideoData1'] = analyze_eye_video_saccades(
+        df1, FPS_1, get_eye_label('VideoData1'),
+        k=k1, refractory_period=refractory_period,
+        onset_offset_fraction=onset_offset_fraction,
+        n_before=n_before, n_after=n_after, baseline_n_points=5,
+        upward_label=dir_map_v1['upward'],
+        downward_label=dir_map_v1['downward']
+    )
+
+
+if VideoData2_Has_Sleap:
+    print(f"\n🔎 === Source: ({get_eye_label('VideoData2')}) ===\n")
+    df2 = VideoData2[['Ellipse.Center.X', 'Seconds']].copy()
+    dir_map_v2 = get_direction_map_for_video('VideoData2')
+    saccade_results['VideoData2'] = analyze_eye_video_saccades(
+        df2, FPS_2, get_eye_label('VideoData2'),
+        k=k2, refractory_period=refractory_period,
+        onset_offset_fraction=onset_offset_fraction,
+        n_before=n_before, n_after=n_after, baseline_n_points=5,
+        upward_label=dir_map_v2['upward'],
+        downward_label=dir_map_v2['downward']
+    )
+
+# %%
+# VISUALIZE ALL SACCADES - SIDE BY SIDE
+#-------------------------------------------------------------------------------
+# Plot all upward and downward saccades aligned by time with position and velocity traces
+
+# Create figure with 4 columns in a single row: up pos, up vel, down pos, down vel
 
 for video_key, res in saccade_results.items():
     dir_map = get_direction_map_for_video(video_key)
@@ -3456,188 +3401,188 @@ for video_key, res in saccade_results.items():
 # VISUALIZE DETECTED SACCADES (Adaptive Method)
 #-------------------------------------------------------------------------------
 # Create overlay plot showing detected saccades with duration lines and peak arrows
+if plot_QC_saccades:
+    for video_key, res in saccade_results.items():
+        dir_map = get_direction_map_for_video(video_key)
+        label_up = dir_map['upward']
+        label_down = dir_map['downward']
 
-for video_key, res in saccade_results.items():
-    dir_map = get_direction_map_for_video(video_key)
-    label_up = dir_map['upward']
-    label_down = dir_map['downward']
+        upward_saccades_df = res['upward_saccades_df']
+        downward_saccades_df = res['downward_saccades_df']
+        peri_saccades = res['peri_saccades']   
+        upward_segments = res['upward_segments']
+        downward_segments = res['downward_segments']
+        # Any other variables you need...
 
-    upward_saccades_df = res['upward_saccades_df']
-    downward_saccades_df = res['downward_saccades_df']
-    peri_saccades = res['peri_saccades']   
-    upward_segments = res['upward_segments']
-    downward_segments = res['downward_segments']
-    # Any other variables you need...
+        fig = make_subplots(
+            rows=2, cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.1,
+            subplot_titles=('X Position (px)', 'Velocity (px/s) with Detected Saccades')
+        )
 
-    fig = make_subplots(
-        rows=2, cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.1,
-        subplot_titles=('X Position (px)', 'Velocity (px/s) with Detected Saccades')
-    )
-
-    # Add smoothed X position to the first subplot
-    fig.add_trace(
-        go.Scatter(
-            x=res['df']['Seconds'],
-            y=res['df']['X_smooth'],
-            mode='lines',
-            name='Smoothed X',
-            line=dict(color='blue', width=2)
-        ),
-        row=1, col=1
-    )
-
-    # Add smoothed velocity to the second subplot
-    fig.add_trace(
-        go.Scatter(
-            x=res['df']['Seconds'],
-            y=res['df']['vel_x_smooth'],
-            mode='lines',
-            name='Smoothed Velocity',
-            line=dict(color='red', width=2)
-        ),
-        row=2, col=1
-    )
-
-    # Add adaptive threshold lines for reference
-    fig.add_hline(
-        y=res['vel_thresh'],
-        line_dash="dash",
-        line_color="green",
-        opacity=0.5,
-        annotation_text=f"Adaptive threshold (±{res['vel_thresh']:.0f} px/s)",
-        row=2, col=1
-    )
-
-    fig.add_hline(
-        y=-res['vel_thresh'],
-        line_dash="dash",
-        line_color="green",
-        opacity=0.5,
-        row=2, col=1
-    )
-
-    # Set offset for saccade indicator lines (above the trace for upward, below for downward)
-    vel_max = res['df']['vel_x_smooth'].max()
-    vel_min = res['df']['vel_x_smooth'].min()
-    vel_range = vel_max - vel_min
-    line_offset = vel_range * 0.15  # 15% of velocity range
-
-    # Plot upward saccades with duration lines and peak arrows
-    if len(upward_saccades_df) > 0:
-        for idx, row in upward_saccades_df.iterrows():
-            start_time = row['start_time']
-            end_time = row['end_time']
-            peak_time = row['time']
-            peak_velocity = row['velocity']
-            
-            # Draw horizontal line spanning the saccade duration
-            # Line is positioned above the velocity trace
-            y_line_pos = vel_max + line_offset
-            
-            fig.add_shape(
-                type="line",
-                x0=start_time, y0=y_line_pos,
-                x1=end_time, y1=y_line_pos,
-                line=dict(color='green', width=3),
-                row=2, col=1
-            )
-            
-            # Add arrow annotation at the peak position pointing to the actual peak velocity
-            # Arrow points from the line to the peak velocity value on the velocity trace
-            y_arrow_start = y_line_pos
-            y_arrow_end = peak_velocity
-            
-            fig.add_annotation(
-                x=peak_time,
-                y=y_arrow_start,
-                ax=0,
-                ay=y_arrow_end - y_arrow_start,  # arrow points to peak velocity
-                arrowhead=2,  # filled arrowhead
-                arrowsize=2,
-                arrowwidth=2,
-                arrowcolor='green',
-                row=2, col=1,
-                showarrow=True
-            )
-        
-        # Add legend entry for upward saccades
+        # Add smoothed X position to the first subplot
         fig.add_trace(
             go.Scatter(
-                x=[None],
-                y=[None],
-                mode='markers',
-                name=f'{label_up} Saccades (duration lines)',
-                marker=dict(symbol='line-ns', size=15, color='green', line=dict(width=3))
+                x=res['df']['Seconds'],
+                y=res['df']['X_smooth'],
+                mode='lines',
+                name='Smoothed X',
+                line=dict(color='blue', width=2)
+            ),
+            row=1, col=1
+        )
+
+        # Add smoothed velocity to the second subplot
+        fig.add_trace(
+            go.Scatter(
+                x=res['df']['Seconds'],
+                y=res['df']['vel_x_smooth'],
+                mode='lines',
+                name='Smoothed Velocity',
+                line=dict(color='red', width=2)
             ),
             row=2, col=1
         )
 
-    # Plot downward saccades with duration lines and peak arrows
-    if len(downward_saccades_df) > 0:
-        for idx, row in downward_saccades_df.iterrows():
-            start_time = row['start_time']
-            end_time = row['end_time']
-            peak_time = row['time']
-            peak_velocity = row['velocity']
-            
-            # Draw horizontal line spanning the saccade duration
-            # Line is positioned below the velocity trace
-            y_line_pos = vel_min - line_offset
-            
-            fig.add_shape(
-                type="line",
-                x0=start_time, y0=y_line_pos,
-                x1=end_time, y1=y_line_pos,
-                line=dict(color='purple', width=3),
-                row=2, col=1
-            )
-            
-            # Add arrow annotation at the peak position pointing to the actual peak velocity
-            # Arrow points from the line to the peak velocity value on the velocity trace
-            y_arrow_start = y_line_pos
-            y_arrow_end = peak_velocity
-            
-            fig.add_annotation(
-                x=peak_time,
-                y=y_arrow_start,
-                ax=0,
-                ay=y_arrow_end - y_arrow_start,  # arrow points to peak velocity
-                arrowhead=2,  # filled arrowhead
-                arrowsize=2,
-                arrowwidth=2,
-                arrowcolor='purple',
-                row=2, col=1,
-                showarrow=True
-            )
-        
-        # Add legend entry for downward saccades
-        fig.add_trace(
-            go.Scatter(
-                x=[None],
-                y=[None],
-                mode='markers',
-                name=f'{label_down} Saccades (duration lines)',
-                marker=dict(symbol='line-ns', size=15, color='purple', line=dict(width=3))
-            ),
+        # Add adaptive threshold lines for reference
+        fig.add_hline(
+            y=res['vel_thresh'],
+            line_dash="dash",
+            line_color="green",
+            opacity=0.5,
+            annotation_text=f"Adaptive threshold (±{res['vel_thresh']:.0f} px/s)",
             row=2, col=1
         )
 
-    # Update layout
-    fig.update_layout(
-        title=f'Detected Saccades ({get_eye_label(video_key)}): Duration Lines + Peak Arrows (QC Visualization)',
-        height=600,
-        showlegend=True,
-        legend=dict(x=0.01, y=0.99)
-    )
+        fig.add_hline(
+            y=-res['vel_thresh'],
+            line_dash="dash",
+            line_color="green",
+            opacity=0.5,
+            row=2, col=1
+        )
 
-    # Update axes
-    fig.update_xaxes(title_text="Time (s)", row=2, col=1)
-    fig.update_yaxes(title_text="X Position (px)", row=1, col=1)
-    fig.update_yaxes(title_text="Velocity (px/s)", row=2, col=1)
+        # Set offset for saccade indicator lines (above the trace for upward, below for downward)
+        vel_max = res['df']['vel_x_smooth'].max()
+        vel_min = res['df']['vel_x_smooth'].min()
+        vel_range = vel_max - vel_min
+        line_offset = vel_range * 0.15  # 15% of velocity range
 
-    fig.show()
+        # Plot upward saccades with duration lines and peak arrows
+        if len(upward_saccades_df) > 0:
+            for idx, row in upward_saccades_df.iterrows():
+                start_time = row['start_time']
+                end_time = row['end_time']
+                peak_time = row['time']
+                peak_velocity = row['velocity']
+                
+                # Draw horizontal line spanning the saccade duration
+                # Line is positioned above the velocity trace
+                y_line_pos = vel_max + line_offset
+                
+                fig.add_shape(
+                    type="line",
+                    x0=start_time, y0=y_line_pos,
+                    x1=end_time, y1=y_line_pos,
+                    line=dict(color='green', width=3),
+                    row=2, col=1
+                )
+                
+                # Add arrow annotation at the peak position pointing to the actual peak velocity
+                # Arrow points from the line to the peak velocity value on the velocity trace
+                y_arrow_start = y_line_pos
+                y_arrow_end = peak_velocity
+                
+                fig.add_annotation(
+                    x=peak_time,
+                    y=y_arrow_start,
+                    ax=0,
+                    ay=y_arrow_end - y_arrow_start,  # arrow points to peak velocity
+                    arrowhead=2,  # filled arrowhead
+                    arrowsize=2,
+                    arrowwidth=2,
+                    arrowcolor='green',
+                    row=2, col=1,
+                    showarrow=True
+                )
+            
+            # Add legend entry for upward saccades
+            fig.add_trace(
+                go.Scatter(
+                    x=[None],
+                    y=[None],
+                    mode='markers',
+                    name=f'{label_up} Saccades (duration lines)',
+                    marker=dict(symbol='line-ns', size=15, color='green', line=dict(width=3))
+                ),
+                row=2, col=1
+            )
+
+        # Plot downward saccades with duration lines and peak arrows
+        if len(downward_saccades_df) > 0:
+            for idx, row in downward_saccades_df.iterrows():
+                start_time = row['start_time']
+                end_time = row['end_time']
+                peak_time = row['time']
+                peak_velocity = row['velocity']
+                
+                # Draw horizontal line spanning the saccade duration
+                # Line is positioned below the velocity trace
+                y_line_pos = vel_min - line_offset
+                
+                fig.add_shape(
+                    type="line",
+                    x0=start_time, y0=y_line_pos,
+                    x1=end_time, y1=y_line_pos,
+                    line=dict(color='purple', width=3),
+                    row=2, col=1
+                )
+                
+                # Add arrow annotation at the peak position pointing to the actual peak velocity
+                # Arrow points from the line to the peak velocity value on the velocity trace
+                y_arrow_start = y_line_pos
+                y_arrow_end = peak_velocity
+                
+                fig.add_annotation(
+                    x=peak_time,
+                    y=y_arrow_start,
+                    ax=0,
+                    ay=y_arrow_end - y_arrow_start,  # arrow points to peak velocity
+                    arrowhead=2,  # filled arrowhead
+                    arrowsize=2,
+                    arrowwidth=2,
+                    arrowcolor='purple',
+                    row=2, col=1,
+                    showarrow=True
+                )
+            
+            # Add legend entry for downward saccades
+            fig.add_trace(
+                go.Scatter(
+                    x=[None],
+                    y=[None],
+                    mode='markers',
+                    name=f'{label_down} Saccades (duration lines)',
+                    marker=dict(symbol='line-ns', size=15, color='purple', line=dict(width=3))
+                ),
+                row=2, col=1
+            )
+
+        # Update layout
+        fig.update_layout(
+            title=f'Detected Saccades ({get_eye_label(video_key)}): Duration Lines + Peak Arrows (QC Visualization)',
+            height=600,
+            showlegend=True,
+            legend=dict(x=0.01, y=0.99)
+        )
+
+        # Update axes
+        fig.update_xaxes(title_text="Time (s)", row=2, col=1)
+        fig.update_yaxes(title_text="X Position (px)", row=1, col=1)
+        fig.update_yaxes(title_text="Velocity (px/s)", row=2, col=1)
+
+        fig.show()
 
 
 # %%

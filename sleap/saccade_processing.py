@@ -10,7 +10,7 @@ import matplotlib.cm as cm
 
 def detect_saccades_adaptive(df, position_col='X_smooth', velocity_col='vel_x_smooth', 
                              time_col='Seconds', fps=None, k=5, refractory_period=0.1,
-                             onset_offset_fraction=0.2, verbose=True):
+                             onset_offset_fraction=0.2, verbose=True, upward_label=None, downward_label=None):
     """
     Detect saccades using adaptive statistical threshold method.
     
@@ -147,21 +147,19 @@ def detect_saccades_adaptive(df, position_col='X_smooth', velocity_col='vel_x_sm
     downward_saccades_df = pd.DataFrame(downward_saccades)
     
     if verbose:
-        print(f"\n✅ Detected {len(pos_peaks)} upward saccades")
-        print(f"✅ Detected {len(neg_peaks)} downward saccades")
+        # Format direction labels for output
+        upward_str = f"upward ({upward_label})" if upward_label else "upward"
+        downward_str = f"downward ({downward_label})" if downward_label else "downward"
         
-        # Print summary statistics
+        print(f"\n✅ Detected {len(pos_peaks)} {upward_str} saccades")
+        print(f"✅ Detected {len(neg_peaks)} {downward_str} saccades")
+        
+        # Print summary statistics (compact format)
         if len(upward_saccades) > 0:
-            print(f"\nUpward saccades - mean velocity: {upward_saccades_df['velocity'].mean():.2f} px/s")
-            print(f"Upward saccades - mean duration: {upward_saccades_df['duration'].mean():.3f} s")
-            print(f"Upward saccades - mean amplitude: {upward_saccades_df['amplitude'].mean():.2f} px")
-            print(f"Upward saccades - std amplitude: {upward_saccades_df['amplitude'].std():.2f} px")
+            print(f"Upward saccades - mean velocity: {upward_saccades_df['velocity'].mean():.2f} px/s, mean duration: {upward_saccades_df['duration'].mean():.3f} s, mean amplitude: {upward_saccades_df['amplitude'].mean():.2f} px, std amplitude: {upward_saccades_df['amplitude'].std():.2f} px")
         
         if len(downward_saccades) > 0:
-            print(f"\nDownward saccades - mean velocity: {downward_saccades_df['velocity'].mean():.2f} px/s")
-            print(f"Downward saccades - mean duration: {downward_saccades_df['duration'].mean():.3f} s")
-            print(f"Downward saccades - mean amplitude: {downward_saccades_df['amplitude'].mean():.2f} px")
-            print(f"Downward saccades - std amplitude: {downward_saccades_df['amplitude'].std():.2f} px")
+            print(f"Downward saccades - mean velocity: {downward_saccades_df['velocity'].mean():.2f} px/s, mean duration: {downward_saccades_df['duration'].mean():.3f} s, mean amplitude: {downward_saccades_df['amplitude'].mean():.2f} px, std amplitude: {downward_saccades_df['amplitude'].std():.2f} px")
     
     return upward_saccades_df, downward_saccades_df, vel_thresh
 
@@ -448,6 +446,8 @@ def analyze_eye_video_saccades(
     n_before=10,
     n_after=30,
     baseline_n_points=5,
+    upward_label=None,
+    downward_label=None,
 ):
     """
     Analyze saccades for a given eye video dataframe.
@@ -485,7 +485,9 @@ def analyze_eye_video_saccades(
         k=k,
         refractory_period=refractory_period,
         onset_offset_fraction=onset_offset_fraction,
-        verbose=True
+        verbose=True,
+        upward_label=upward_label,
+        downward_label=downward_label
     )
 
     # Peri-saccade segment extraction
