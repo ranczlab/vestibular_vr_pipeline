@@ -20,7 +20,7 @@ def fill_with_empty_rows_based_on_index(df, new_index_column_name='frame_idx'):
     
     return df
 
-def load_videography_data(path):
+def load_videography_data(path, debug=False):
     
     #print('ℹ️ Load_and_process.load_videography_data() function expects the following format of SLEAP outputs:')
     #print('"VideoData1_1904-01-01T23-59-59.sleap.csv"')
@@ -49,15 +49,40 @@ def load_videography_data(path):
     print(f'\nOutputs of SLEAP found in VideoData1: {vd1_has_sleap}')
     print(f'Outputs of SLEAP found in VideoData2: {vd2_has_sleap}')
 
+    # DEBUG: Print collected files before timestamp parsing
+    if debug:
+        print(f'\n🔍 DEBUG: Files collected for VideoData1 ({len(vd1_files)} files):')
+        for f in vd1_files:
+            print(f'  - {f}')
+            # Show what would be extracted as timestamp
+            try:
+                extracted = f.split('_')[1].split('.')[0]
+                print(f'    → Extracted timestamp string: "{extracted}"')
+            except (IndexError, AttributeError) as e:
+                print(f'    → ERROR extracting timestamp: {e}')
+        
+        print(f'\n🔍 DEBUG: Files collected for VideoData2 ({len(vd2_files)} files):')
+        for f in vd2_files:
+            print(f'  - {f}')
+            # Show what would be extracted as timestamp
+            try:
+                extracted = f.split('_')[1].split('.')[0]
+                print(f'    → Extracted timestamp string: "{extracted}"')
+            except (IndexError, AttributeError) as e:
+                print(f'    → ERROR extracting timestamp: {e}')
+        
+        print(f'\n🔍 DEBUG: Attempting to parse timestamps...')
+
     # Sorting filenames chronologically
     #sorted_vd1_files = pd.to_datetime(pd.Series([x.split('_')[1].split('.')[0] for x in vd1_files])).sort_values()
     #sorted_vd2_files = pd.to_datetime(pd.Series([x.split('_')[1].split('.')[0] for x in vd2_files])).sort_values()
     sorted_vd1_files = pd.to_datetime(pd.Series([x.split('_')[1].split('.')[0] for x in vd1_files]), format='%Y-%m-%dT%H-%M-%S').sort_values()
     sorted_vd2_files = pd.to_datetime(pd.Series([x.split('_')[1].split('.')[0] for x in vd2_files]), format='%Y-%m-%dT%H-%M-%S').sort_values()
     
-    print(f'Found .csv VideoData logs timestamped at:')
-    for ts in sorted_vd1_files.values:
-        print('-',ts)
+    if debug:
+        print(f'Found .csv VideoData logs timestamped at:')
+        for ts in sorted_vd1_files.values:
+            print('-',ts)
     
     print(f'\n📋 LOADING {len(sorted_vd1_files)} VideoData1 file(s) and {len(sorted_vd2_files)} VideoData2 file(s)\n')
     
@@ -283,14 +308,15 @@ def load_videography_data(path):
             print(f"      After merge: {len(vd2_out)} rows")
             print(f"      Difference: {len(vd2_out) - len(read_vd2_dfs)} rows")
     
-    print('\n' + '='*80)
-    print('✅ DIAGNOSTIC SUMMARY: Frame Index Alignment Complete')
-    print('='*80)
-    if len(vd1_out) > 0:
-        print(f'VideoData1 final dataframe: {len(vd1_out)} rows, frame_idx range {vd1_out["frame_idx"].min()}-{vd1_out["frame_idx"].max()}')
-    if len(vd2_out) > 0:
-        print(f'VideoData2 final dataframe: {len(vd2_out)} rows, frame_idx range {vd2_out["frame_idx"].min()}-{vd2_out["frame_idx"].max()}')
-    print('='*80 + '\n')
+    if debug:
+        print('\n' + '='*80)
+        print('✅ DIAGNOSTIC SUMMARY: Frame Index Alignment Complete')
+        print('='*80)
+        if len(vd1_out) > 0:
+            print(f'VideoData1 final dataframe: {len(vd1_out)} rows, frame_idx range {vd1_out["frame_idx"].min()}-{vd1_out["frame_idx"].max()}')
+        if len(vd2_out) > 0:
+            print(f'VideoData2 final dataframe: {len(vd2_out)} rows, frame_idx range {vd2_out["frame_idx"].min()}-{vd2_out["frame_idx"].max()}')
+        print('='*80 + '\n')
     
     return vd1_out, vd2_out, vd1_has_sleap, vd2_has_sleap
 
