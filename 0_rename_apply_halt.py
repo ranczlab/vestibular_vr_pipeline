@@ -1,183 +1,118 @@
-import os
+#!/usr/bin/env python3
+"""
+rename_2s.py
+
+Find every directory named "aligned_data" under ROOT_DIR, and:
+ - rename files containing ":2s" -> "_2s"
+ - optionally rename directories containing ":2s" -> "_2s" (bottom-up to avoid traversal issues)
+
+Usage:
+    python3 rename_2s.py [--root ROOT_DIR] [--rename-dirs] [--dry-run]
+
+Defaults:
+    ROOT_DIR = "/home/ikharitonov/RANCZLAB-NAS/data/ONIX/20250409_Cohort3_rotation"
+"""
+
+import argparse
 from pathlib import Path
 import shutil
+import sys
 
-def rename_files_with_pattern(old_pattern="Apply halt: 2s", new_pattern="Apply_halt_2s", 
-                             file_extensions=['.csv', '.pdf'], dry_run=True):
-    """
-    Rename files containing a specific pattern in their filename.
-    
-    Parameters:
-    -----------
-    data_directory : str or Path
-        Root directory to search for files
-    old_pattern : str
-        Pattern to search for in filenames
-    new_pattern : str
-        Pattern to replace with
-    file_extensions : list
-        List of file extensions to process (e.g., ['.csv', '.pdf'])
-    dry_run : bool
-        If True, only shows what would be renamed without actually renaming
-    
-    Returns:
-    --------
-    dict : Summary of operations
-    """
-    
-    data_path = Path("~/RANCZLAB-NAS/data/ONIX/20250409_Cohort3_rotation/Open_loop_day1").expanduser()
-    
-    if not data_path.exists():
-        print(f"❌ Directory does not exist: {data_path}")
-        return {'error': 'Directory not found'}
-    
-    results = {
-        'found_files': [],
-        'renamed_files': [],
-        'errors': [],
-        'total_found': 0,
-        'total_renamed': 0
-    }
-    
-    print(f"🔍 Searching in: {data_path}")
-    print(f"📋 Looking for pattern: '{old_pattern}'")
-    print(f"🔄 Will replace with: '{new_pattern}'")
-    print(f"📁 File types: {file_extensions}")
-    print(f"🧪 Dry run mode: {'ON' if dry_run else 'OFF'}")
-    print("-" * 60)
-    
-    # Search for files recursively
-    for file_path in data_path.rglob('*'):
-        if file_path.is_file():
-            # Check if file has the right extension
-            if any(file_path.name.lower().endswith(ext.lower()) for ext in file_extensions):
-                # Check if filename contains the pattern
-                if old_pattern in file_path.name:
-                    results['found_files'].append(str(file_path))
-                    results['total_found'] += 1
-                    
-                    # Create new filename
-                    new_filename = file_path.name.replace(old_pattern, new_pattern)
-                    new_file_path = file_path.parent / new_filename
-                    
-                    print(f"📄 Found: {file_path.name}")
-                    print(f"   ➡️  New: {new_filename}")
-                    print(f"   📁 In: {file_path.parent}")
-                    
-                    if not dry_run:
-                        try:
-                            # Rename the file
-                            file_path.rename(new_file_path)
-                            results['renamed_files'].append({
-                                'old_path': str(file_path),
-                                'new_path': str(new_file_path),
-                                'old_name': file_path.name,
-                                'new_name': new_filename
-                            })
-                            results['total_renamed'] += 1
-                            print(f"   ✅ Renamed successfully!")
-                            
-                        except Exception as e:
-                            error_info = {
-                                'file': str(file_path),
-                                'error': str(e),
-                                'operation': 'rename'
-                            }
-                            results['errors'].append(error_info)
-                            print(f"   ❌ Error renaming: {str(e)}")
-                    else:
-                        print(f"   🧪 [DRY RUN] Would rename to: {new_filename}")
-                    
-                    print()  # Empty line for readability
-    
-    # Print summary
-    print("=" * 60)
-    print("SUMMARY")
-    print("=" * 60)
-    print(f"Total files found with pattern: {results['total_found']}")
-    
-    if dry_run:
-        print(f"Files that WOULD be renamed: {results['total_found']}")
-        print("\n🧪 This was a DRY RUN - no files were actually renamed.")
-        print("   Set dry_run=False to perform actual renaming.")
-    else:
-        print(f"Files successfully renamed: {results['total_renamed']}")
-        print(f"Errors encountered: {len(results['errors'])}")
-        
-        if results['errors']:
-            print("\nErrors:")
-            for error in results['errors']:
-                print(f"  - {Path(error['file']).name}: {error['error']}")
-    
-    return results
+def find_aligned_dirs(root: Path):
+    return [p for p in root.rglob('aligned_data') if p.is_dir()]
 
+def safe_move(src: Path, dst: Path, dry_run: bool):
+    if dst.exists():
+        print(f"[SKIP] target exists: {dst}")
+        return False
+    print(f"{'DRY ' if dry_run else ''}RENAME: {src} -> {dst}")
+    if not dry_run:
+        try:
+            # use shutil.move which can handle cross-filesystem moves
+            shutil.move(str(src), str(dst))
+            return True
+        except Exception as e:
+            print(f"[ERROR] failed to rename {src} -> {dst}: {e}")
+            return False
+    return True
 
-def rename_files_in_multiple_directories(data_directories, old_pattern="Apply halt: 2s", 
-                                       new_pattern="Apply_halt_2s", file_extensions=['.csv', '.pdf'], 
-                                       dry_run=True):
-    """
-    Rename files in multiple directories.
-    
-    Parameters:
-    -----------
-    data_directories : list
-        List of directory paths to process
-    """
-    
-    all_results = {
-        'directories_processed': 0,
-        'total_found': 0,
-        'total_renamed': 0,
-        'total_errors': 0,
-        'directory_results': []
-    }
-    
-    for data_dir in data_directories:
-        print(f"\n{'='*80}")
-        print(f"PROCESSING DIRECTORY: {data_dir}")
-        print(f"{'='*80}")
-        
-        results = rename_files_with_pattern(
-            data_directory=data_dir,
-            old_pattern=old_pattern,
-            new_pattern=new_pattern,
-            file_extensions=file_extensions,
-            dry_run=dry_run
-        )
-        
-        if 'error' not in results:
-            all_results['directories_processed'] += 1
-            all_results['total_found'] += results['total_found']
-            all_results['total_renamed'] += results['total_renamed']
-            all_results['total_errors'] += len(results['errors'])
-            all_results['directory_results'].append({
-                'directory': str(data_dir),
-                'results': results
-            })
-    
-    # Overall summary
-    print(f"\n{'='*80}")
-    print("OVERALL SUMMARY")
-    print(f"{'='*80}")
-    print(f"Directories processed: {all_results['directories_processed']}")
-    print(f"Total files found: {all_results['total_found']}")
-    
-    if dry_run:
-        print(f"Total files that WOULD be renamed: {all_results['total_found']}")
-    else:
-        print(f"Total files renamed: {all_results['total_renamed']}")
-        print(f"Total errors: {all_results['total_errors']}")
-    
-    return all_results
+def process_files_in_dir(aligned_dir: Path, dry_run: bool):
+    renamed = 0
+    errors = 0
+    for f in aligned_dir.iterdir():
+        # only files (not directories)
+        if f.is_file() and ": 2s" in f.name:
+            new_name = f.name.replace(": 2s", "_2s")
+            new_path = f.with_name(new_name)
+            ok = safe_move(f, new_path, dry_run)
+            if ok:
+                renamed += 1
+            else:
+                errors += 1
+    return renamed, errors
 
+def process_dirs_with_colon2s(root: Path, dry_run: bool):
+    # Rename directories containing ":2s"
+    # Do bottom-up so we don't break traversal (sort by depth descending)
+    dirs = [p for p in root.rglob('*') if p.is_dir() and ":2s" in p.name]
+    dirs_sorted = sorted(dirs, key=lambda p: len(p.parts), reverse=True)
+    renamed = 0
+    errors = 0
+    for d in dirs_sorted:
+        new_name = d.name.replace(": 2s", "_2s")
+        new_path = d.with_name(new_name)
+        ok = safe_move(d, new_path, dry_run)
+        if ok:
+            renamed += 1
+        else:
+            errors += 1
+    return renamed, errors
 
-# Example usage:
-if __name__ == "__main__":    
-    # First, run in dry-run mode to see what would be changed
-    print("🧪 RUNNING IN DRY-RUN MODE FIRST...")
-    results = rename_files_with_pattern(
-        old_pattern="Apply halt: 2s",
-        new_pattern="Apply_halt_2s",
-        file_extensions=['.csv', '.pdf'],
-        dry_run=False  # Set to False to actually rename files
-    )
+def main():
+    parser = argparse.ArgumentParser(description="Rename ': 2s' -> '_2s' in files inside aligned_data folders.")
+    parser.add_argument('--root', '-r',
+                        default="/home/ikharitonov/RANCZLAB-NAS/data/ONIX/20250409_Cohort3_rotation,
+                        help="Root directory to search under.")
+    parser.add_argument('--rename-dirs', action='store_true',
+                        help="Also rename directories containing ': 2s' -> '_2s' (bottom-up).")
+    parser.add_argument('--dry-run', action='store_true',
+                        help="Only print what would be done; do not actually rename.")
+    args = parser.parse_args()
+
+    root = Path(args.root)
+    if not root.exists() or not root.is_dir():
+        print(f"[ERROR] Root directory does not exist or is not a directory: {root}")
+        sys.exit(1)
+
+    aligned_dirs = find_aligned_dirs(root)
+    print(f"Found {len(aligned_dirs)} 'aligned_data' directory(ies) under {root}\n")
+
+    total_renamed_files = 0
+    total_file_errors = 0
+
+    for ad in aligned_dirs:
+        print(f"Processing: {ad}")
+        r, e = process_files_in_dir(ad, args.dry_run)
+        total_renamed_files += r
+        total_file_errors += e
+
+    total_renamed_dirs = 0
+    total_dir_errors = 0
+    if args.rename_dirs:
+        print("\nRenaming directories containing ': 2s' (bottom-up)...")
+        r, e = process_dirs_with_colon2s(root, args.dry_run)
+        total_renamed_dirs += r
+        total_dir_errors += e
+
+    print("\n--- Summary ---")
+    print(f"Aligned_data dirs processed : {len(aligned_dirs)}")
+    print(f"Files renamed               : {total_renamed_files}")
+    print(f"File rename errors/skipped  : {total_file_errors}")
+    if args.rename_dirs:
+        print(f"Dirs renamed                : {total_renamed_dirs}")
+        print(f"Dir rename errors/skipped   : {total_dir_errors}")
+    print(f"{'DRY RUN - no changes made' if args.dry_run else 'Changes applied'}")
+
+if __name__ == "__main__":
+    main()
+
