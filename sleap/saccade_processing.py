@@ -10,7 +10,7 @@ import matplotlib.cm as cm
 
 def detect_saccades_adaptive(df, position_col='X_smooth', velocity_col='vel_x_smooth', 
                              time_col='Seconds', fps=None, k=5, refractory_period=0.1,
-                             onset_offset_fraction=0.2, verbose=True, upward_label=None, downward_label=None):
+                             onset_offset_fraction=0.2, peak_width=1, verbose=True, upward_label=None, downward_label=None):
     """
     Detect saccades using adaptive statistical threshold method.
     
@@ -32,6 +32,8 @@ def detect_saccades_adaptive(df, position_col='X_smooth', velocity_col='vel_x_sm
         Minimum time (in seconds) between saccades (default: 0.1)
     onset_offset_fraction : float
         Fraction of peak velocity threshold for onset/offset detection (default: 0.2)
+    peak_width : int
+        Minimum peak width in samples for find_peaks (default: 1)
     verbose : bool
         Whether to print detection statistics (default: True)
         
@@ -58,7 +60,7 @@ def detect_saccades_adaptive(df, position_col='X_smooth', velocity_col='vel_x_sm
         df[velocity_col],
         height=vel_thresh,  # Minimum peak height
         distance=int(fps * refractory_period),  # Minimum distance between peaks (~100ms refractory period)
-        width=1  # Minimum peak width in samples
+        width=peak_width  # Minimum peak width in samples
     )
     
     # Find negative peaks (downward saccades) by inverting the signal
@@ -66,7 +68,7 @@ def detect_saccades_adaptive(df, position_col='X_smooth', velocity_col='vel_x_sm
         -df[velocity_col],  # Invert to find troughs
         height=vel_thresh,  # Same threshold
         distance=int(fps * refractory_period),
-        width=1
+        width=peak_width
     )
     
     # 3. Extract saccade information
@@ -79,12 +81,17 @@ def detect_saccades_adaptive(df, position_col='X_smooth', velocity_col='vel_x_sm
         start_idx = peak_idx
         end_idx = peak_idx
         
-        # Find onset (go backward)
+        # Find onset (go backward) - use threshold_fraction for sensitivity to catch early movement
         while start_idx > 0 and abs(df.iloc[start_idx][velocity_col]) > vel_thresh * onset_offset_fraction:
             start_idx -= 1
         
-        # Find offset (go forward)
-        while end_idx < len(df) - 1 and abs(df.iloc[end_idx][velocity_col]) > vel_thresh * onset_offset_fraction:
+        # Find offset (go forward) - use FULL threshold since saccade is only above full threshold briefly
+        # This is more accurate for low sampling rate where velocity is only above threshold for 1 frame
+        while end_idx < len(df) - 1 and abs(df.iloc[end_idx][velocity_col]) > vel_thresh:
+            end_idx += 1
+        # After loop: end_idx points to last frame with velocity > full threshold
+        # Increment to get frame AFTER velocity dropped below full threshold
+        if end_idx < len(df) - 1:
             end_idx += 1
         
         onset_time = df.iloc[start_idx][time_col]
@@ -115,12 +122,17 @@ def detect_saccades_adaptive(df, position_col='X_smooth', velocity_col='vel_x_sm
         start_idx = peak_idx
         end_idx = peak_idx
         
-        # Find onset
+        # Find onset (go backward) - use threshold_fraction for sensitivity to catch early movement
         while start_idx > 0 and abs(df.iloc[start_idx][velocity_col]) > vel_thresh * onset_offset_fraction:
             start_idx -= 1
         
-        # Find offset
-        while end_idx < len(df) - 1 and abs(df.iloc[end_idx][velocity_col]) > vel_thresh * onset_offset_fraction:
+        # Find offset (go forward) - use FULL threshold since saccade is only above full threshold briefly
+        # This is more accurate for low sampling rate where velocity is only above threshold for 1 frame
+        while end_idx < len(df) - 1 and abs(df.iloc[end_idx][velocity_col]) > vel_thresh:
+            end_idx += 1
+        # After loop: end_idx points to last frame with velocity > full threshold
+        # Increment to get frame AFTER velocity dropped below full threshold
+        if end_idx < len(df) - 1:
             end_idx += 1
         
         onset_time = df.iloc[start_idx][time_col]
@@ -757,6 +769,8 @@ def analyze_eye_video_saccades(
     n_before=10,
     n_after=30,
     baseline_n_points=5,
+    saccade_smoothing_window=5,
+    saccade_peak_width=1,
     upward_label=None,
     downward_label=None,
     classify_orienting_compensatory=True,
@@ -788,7 +802,7 @@ def analyze_eye_video_saccades(
     df = df.reset_index(drop=True)
     df['X_smooth'] = (
         df['Ellipse.Center.X']
-        .rolling(window=5, center=True)
+        .rolling(window=saccade_smoothing_window, center=True)
         .median()
         .bfill()
         .ffill()
@@ -809,6 +823,7 @@ def analyze_eye_video_saccades(
         k=k,
         refractory_period=refractory_period,
         onset_offset_fraction=onset_offset_fraction,
+        peak_width=saccade_peak_width,
         verbose=True,
         upward_label=upward_label,
         downward_label=downward_label
