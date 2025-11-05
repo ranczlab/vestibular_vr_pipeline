@@ -107,7 +107,12 @@ onset_offset_fraction = 0.2  # to determine saccade onset and offset, i.e. o.2 i
 n_before = 10  # Number of points before detection peak to extract for peri-saccade-segments, points, so independent of FPS 
 n_after = 30   # Number of points after detection peak to extract
 
-plot_saccade_detection_QC = False
+# Additional saccade detection parameters
+baseline_n_points = 5  # Number of points before threshold crossing to use for baseline calculation
+saccade_smoothing_window = 5  # Rolling median window size for position smoothing (frames)
+saccade_peak_width = 1  # Minimum peak width in samples for find_peaks (frames)
+
+plot_saccade_detection_QC = True
 
 # Parameters for orienting vs compensatory saccade classification
 classify_orienting_compensatory = True  # Set to True to classify saccades as orienting vs compensatory
@@ -2861,22 +2866,41 @@ if VideoData2_Has_Sleap:
 #
 
 # %%
-# TEMPORARY - param setting 
-# Parameters for orienting vs compensatory saccade classification
-classify_orienting_compensatory = True  # Set to True to classify saccades as orienting vs compensatory
-bout_window = 1.5  # Time window (seconds) for grouping saccades into bouts
-pre_saccade_window = 0.3  # Time window (seconds) before saccade onset to analyze
-max_intersaccade_interval_for_classification = 5.0  # Maximum time (seconds) to extend post-saccade window until next saccade for classification
-pre_saccade_velocity_threshold = 50.0  # Velocity threshold (px/s) for detecting pre-saccade drift
-pre_saccade_drift_threshold = 10.0  # Position drift threshold (px) before saccade for compensatory classification
-post_saccade_variance_threshold = 100.0  # Position variance threshold (px²) after saccade for orienting classification
-post_saccade_position_change_threshold_percent = 50.0  # Position change threshold (% of saccade amplitude) - if post-saccade change > amplitude * this%, classify as compensatory
+# # TEMPORARY - param setting 
+# # Parameters for orienting vs compensatory saccade classification
+# classify_orienting_compensatory = True  # Set to True to classify saccades as orienting vs compensatory
+# bout_window = 1.5  # Time window (seconds) for grouping saccades into bouts
+# pre_saccade_window = 0.3  # Time window (seconds) before saccade onset to analyze
+# max_intersaccade_interval_for_classification = 5.0  # Maximum time (seconds) to extend post-saccade window until next saccade for classification
+# pre_saccade_velocity_threshold = 50.0  # Velocity threshold (px/s) for detecting pre-saccade drift
+# pre_saccade_drift_threshold = 10.0  # Position drift threshold (px) before saccade for compensatory classification
+# post_saccade_variance_threshold = 100.0  # Position variance threshold (px²) after saccade for orienting classification
+# post_saccade_position_change_threshold_percent = 50.0  # Position change threshold (% of saccade amplitude) - if post-saccade change > amplitude * this%, classify as compensatory
 
-# Adaptive threshold parameters (percentile-based)
-use_adaptive_thresholds = True  # Set to True to use adaptive thresholds based on feature distributions, False to use fixed thresholds
-adaptive_percentile_pre_velocity = 75  # Percentile for pre-saccade velocity threshold (upper percentile for compensatory detection)
-adaptive_percentile_pre_drift = 75  # Percentile for pre-saccade drift threshold (upper percentile for compensatory detection)
-adaptive_percentile_post_variance = 25  # Percentile for post-saccade variance threshold (lower percentile for orienting detection - low variance = stable)
+# # Adaptive threshold parameters (percentile-based)
+# use_adaptive_thresholds = False  # Set to True to use adaptive thresholds based on feature distributions, False to use fixed thresholds
+# adaptive_percentile_pre_velocity = 75  # Percentile for pre-saccade velocity threshold (upper percentile for compensatory detection)
+# adaptive_percentile_pre_drift = 75  # Percentile for pre-saccade drift threshold (upper percentile for compensatory detection)
+# adaptive_percentile_post_variance = 25  # Percentile for post-saccade variance threshold (lower percentile for orienting detection - low variance = stable)
+
+# for saccades
+refractory_period = 0.1  # sec
+## Separate adaptive saccade threshold (k) for each video:
+k1 = 6  # for VideoData1 (L)
+k2 = 6  # for VideoData2 (R)
+
+# for adaptive saccade threshold - Number of standard deviations (adjustable: 2-4 range works well) 
+onset_offset_fraction = 0.2  # to determine saccade onset and offset, i.e. o.2 is 20% of the peak velocity
+n_before = 10  # Number of points before detection peak to extract for peri-saccade-segments, points, so independent of FPS 
+n_after = 30   # Number of points after detection peak to extract
+
+# Additional saccade detection parameters
+baseline_n_points = 5  # Number of points before threshold crossing to use for baseline calculation
+saccade_smoothing_window = 5  # Rolling median window size for position smoothing (frames)
+saccade_peak_width = 1  # Minimum peak width in samples for find_peaks (frames)
+
+plot_saccade_detection_QC = True
+
 
 # %%
 saccade_results = {}
@@ -2898,7 +2922,9 @@ if VideoData1_Has_Sleap:
         df1, FPS_1, get_eye_label('VideoData1'),
         k=k1, refractory_period=refractory_period,
         onset_offset_fraction=onset_offset_fraction,
-        n_before=n_before, n_after=n_after, baseline_n_points=5,
+        n_before=n_before, n_after=n_after, baseline_n_points=baseline_n_points,
+        saccade_smoothing_window=saccade_smoothing_window,
+        saccade_peak_width=saccade_peak_width,
         upward_label=dir_map_v1['upward'],
         downward_label=dir_map_v1['downward'],
         classify_orienting_compensatory=classify_orienting_compensatory,
@@ -2924,7 +2950,9 @@ if VideoData2_Has_Sleap:
         df2, FPS_2, get_eye_label('VideoData2'),
         k=k2, refractory_period=refractory_period,
         onset_offset_fraction=onset_offset_fraction,
-        n_before=n_before, n_after=n_after, baseline_n_points=5,
+        n_before=n_before, n_after=n_after, baseline_n_points=baseline_n_points,
+        saccade_smoothing_window=saccade_smoothing_window,
+        saccade_peak_width=saccade_peak_width,
         upward_label=dir_map_v2['upward'],
         downward_label=dir_map_v2['downward'],
         classify_orienting_compensatory=classify_orienting_compensatory,
