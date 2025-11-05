@@ -164,10 +164,7 @@ class BehavioralAnalyzer:
                  threshold_plot_bins: int = 50,
                  min_bout_duration_s: float = 0.2,
                  running_percentile: float = 10,
-                 turning_percentile: Optional[float] = None,
-                 use_correlation_based_turning: bool = True,
-                 correlation_threshold: float = 0.5,
-                 correlation_window_s: float = 1.0):
+                 turning_percentile: Optional[float] = None):
         """
         Initialize analyzer with loaded data.
         
@@ -185,15 +182,8 @@ class BehavioralAnalyzer:
         running_percentile : float
             Percentile to use for running threshold calculation (default: 10)
         turning_percentile : Optional[float]
-            If provided, use percentile method (like running) instead of IQR method.
-            None (default) uses IQR method. Set to a value (e.g., 10, 25) to use percentile.
-        use_correlation_based_turning : bool
-            If True, use correlation-based method for turning threshold (default: True).
-            If False, use the standard IQR or percentile method.
-        correlation_threshold : float
-            Minimum correlation coefficient for high-correlation periods (default: 0.5)
-        correlation_window_s : float
-            Window size in seconds for rolling correlation calculation (default: 1.0)
+            Percentile to use on values below median for turning threshold (default: 25).
+            If None, uses 25th percentile.
         """
         self.data_path = data_path
         self.mouse_name = loaded_data.get("mouse_name", "Unknown")
@@ -209,9 +199,6 @@ class BehavioralAnalyzer:
         self.min_bout_duration_s = min_bout_duration_s
         self.running_percentile = running_percentile
         self.turning_percentile = turning_percentile
-        self.use_correlation_based_turning = use_correlation_based_turning
-        self.correlation_threshold = correlation_threshold
-        self.correlation_window_s = correlation_window_s
         
     def slice_data_until_block_timer_elapsed(self):
         """
@@ -527,11 +514,10 @@ class BehavioralAnalyzer:
                                velocities: np.ndarray,
                                plot: bool = True,
                                title: str = "Turning Velocity Distribution",
-                               plot_bins: int = 50,
-                               percentile: Optional[float] = None) -> Tuple[float, Optional[plt.Figure]]:
+                               plot_bins: int = 50) -> Tuple[float, Optional[plt.Figure]]:
         """
-        Find threshold for turning behavior.
-        Can use either percentile method (like running) or IQR method (default).
+        Find threshold for turning behavior using the median.
+        Only uses values above minimum threshold (0.01) to calculate the median.
         
         Parameters:
         -----------
@@ -543,13 +529,11 @@ class BehavioralAnalyzer:
             Plot title
         plot_bins : int
             Number of bins for histogram
-        percentile : Optional[float]
-            If provided, use percentile method (like running). None uses IQR method.
             
         Returns:
         --------
         threshold : float
-            Calculated threshold
+            Calculated threshold (median of values above 0.01)
         fig : Optional[plt.Figure]
             Figure if plot=True, None otherwise
         """
@@ -560,83 +544,31 @@ class BehavioralAnalyzer:
             print(f"⚠️ Warning: Not enough valid data points ({len(valid_velocities)}) after filtering")
             return 0.0, None
         
-        # If percentile is specified, use percentile method (like running)
-        if percentile is not None:
-            # Exclude values below 0.01 (same as running)
-            valid_velocities_filtered = valid_velocities[valid_velocities >= 0.01]
-            
-            if len(valid_velocities_filtered) < 100:
-                print(f"⚠️ Warning: Not enough valid data points after filtering")
-                return 0.0, None
-            
-            threshold = np.percentile(valid_velocities_filtered, percentile)
-            method = f"{percentile:.0f}th percentile"
-            
-            # Create plot if requested
-            fig = None
-            if plot:
-                fig, ax = plt.subplots(figsize=(10, 6))
-                
-                # Plot histogram
-                ax.hist(valid_velocities_filtered, bins=plot_bins, density=True, alpha=0.6, 
-                       color='gray', edgecolor='white', label='Data')
-                
-                # Plot threshold
-                ax.axvline(threshold, color='green', linestyle='-', linewidth=2, 
-                          label=f'Threshold ({method}) = {threshold:.2f}')
-                ax.axvline(0.01, color='red', linestyle='--', linewidth=1, alpha=0.5, label='Min value (0.01)')
-                
-                ax.set_xlabel('Velocity (deg/s)', fontsize=12)
-                ax.set_ylabel('Density', fontsize=12)
-                ax.set_title(title, fontsize=14, fontweight='bold')
-                ax.legend(fontsize=10)
-                ax.grid(True, alpha=0.3)
-                plt.tight_layout()
-            
-            print(f"✅ Turning threshold found ({method}): {threshold:.3f}")
-            return threshold, fig
+        # Only use values above 0.01 (minimum threshold)
+        min_threshold = 0.01
+        valid_velocities_filtered = valid_velocities[valid_velocities >= min_threshold]
         
-        # Otherwise, use IQR method (original method)
-        # Calculate statistics
-        q25 = np.percentile(valid_velocities, 25)
-        q50 = np.percentile(valid_velocities, 50)  # median
-        q75 = np.percentile(valid_velocities, 75)
-        iqr = q75 - q25
+        if len(valid_velocities_filtered) < 100:
+            print(f"⚠️ Warning: Not enough valid data points after filtering")
+            return 0.0, None
         
-        # Use median + 1.5 * IQR method (similar to outlier detection)
-        # This gives a higher threshold that captures actual turning behavior
-        threshold_iqr = q50 + 1.5 * iqr
-        
-        # Also calculate 25th percentile as a fallback
-        threshold_percentile = q25
-        
-        # Use the higher of the two methods, but ensure it's reasonable
-        threshold = max(threshold_iqr, threshold_percentile)
-        
-        # If the IQR method gives something too high, use 25th percentile instead
-        if threshold_iqr > np.percentile(valid_velocities, 90):
-            threshold = threshold_percentile
-            method = "25th percentile"
-        else:
-            method = "median + 1.5*IQR"
+        # Use median of values above minimum threshold as the turning threshold
+        threshold = np.median(valid_velocities_filtered)
+        method = f"median (of values above {min_threshold})"
 
         # Create plot if requested
         fig = None
         if plot:
             fig, ax = plt.subplots(figsize=(10, 6))
             
-            # Plot histogram
-            ax.hist(valid_velocities, bins=plot_bins, density=True, alpha=0.6, 
-                   color='gray', edgecolor='white', label='Data')
+            # Plot histogram of all filtered velocities
+            ax.hist(valid_velocities_filtered, bins=plot_bins, density=True, alpha=0.6, 
+                   color='gray', edgecolor='white', label='All velocities')
             
-            # Plot threshold
+            # Plot threshold (median)
             ax.axvline(threshold, color='green', linestyle='-', linewidth=2, 
-                      label=f'Threshold ({method}) = {threshold:.2f}')
-            
-            # Plot IQR calculation reference lines
-            ax.axvline(q50, color='blue', linestyle='--', linewidth=1.5, alpha=0.7, label=f'Median = {q50:.2f}')
-            ax.axvline(q25, color='orange', linestyle='--', linewidth=1.5, alpha=0.7, label=f'Q25 = {q25:.2f}')
-            ax.axvline(q75, color='orange', linestyle='--', linewidth=1.5, alpha=0.7, label=f'Q75 = {q75:.2f}')
+                      label=f'Threshold (median) = {threshold:.2f}')
+            ax.axvline(min_threshold, color='red', linestyle='--', linewidth=1, alpha=0.5, label=f'Min threshold ({min_threshold})')
             
             ax.set_xlabel('Velocity (deg/s)', fontsize=12)
             ax.set_ylabel('Density', fontsize=12)
@@ -646,7 +578,6 @@ class BehavioralAnalyzer:
             plt.tight_layout()
         
         print(f"✅ Turning threshold found ({method}): {threshold:.3f}")
-        print(f"   Q25: {q25:.3f}, Median: {q50:.3f}, Q75: {q75:.3f}, IQR: {iqr:.3f}")
         
         return threshold, fig
     
@@ -834,37 +765,14 @@ class BehavioralAnalyzer:
         
         motor_velocities = self.sliced_data["Motor_Velocity"].values
         
-        # Check if Velocity_0X exists for correlation-based method
-        if self.use_correlation_based_turning and "Velocity_0X" in self.sliced_data.columns:
-            running_velocities = self.sliced_data["Velocity_0X"].values
-            abs_turning_velocities = np.abs(motor_velocities)
-            
-            # Use correlation-based threshold
-            threshold, fig = self.find_threshold_turning_correlation_based(
-                running_velocities=running_velocities,
-                turning_velocities=abs_turning_velocities,
-                window_size_s=self.correlation_window_s,
-                correlation_threshold=self.correlation_threshold,
-                plot=True,
-                title=f"Turning Velocity Distribution (Correlation-based) - {self.mouse_name}",
-                plot_bins=self.threshold_plot_bins,
-                percentile=self.turning_percentile if self.turning_percentile is not None else 10
-            )
-        else:
-            # Use standard method (IQR or percentile)
-            if not self.use_correlation_based_turning:
-                print("ℹ️ Using standard threshold method (correlation-based disabled)")
-            else:
-                print("ℹ️ Velocity_0X not found, falling back to standard threshold method")
-            
-            abs_velocities = np.abs(motor_velocities)
-            threshold, fig = self.find_threshold_turning(
-                abs_velocities,
-                plot=True,
-                title=f"Turning Velocity Distribution - {self.mouse_name}",
-                plot_bins=self.threshold_plot_bins,
-                percentile=self.turning_percentile
-            )
+        # Use median as threshold
+        abs_velocities = np.abs(motor_velocities)
+        threshold, fig = self.find_threshold_turning(
+            abs_velocities,
+            plot=True,
+            title=f"Turning Velocity Distribution - {self.mouse_name}",
+            plot_bins=self.threshold_plot_bins
+        )
         
         # Save threshold plot
         if fig is not None:
@@ -1182,10 +1090,7 @@ def run_behavioral_analysis(loaded_data: Dict[Path, Dict],
                            plot_bins: int = 50,
                            min_bout_duration_s: float = 0.2,
                            running_percentile: float = 10,
-                           turning_percentile: Optional[float] = None,
-                           use_correlation_based_turning: bool = True,
-                           correlation_threshold: float = 0.5,
-                           correlation_window_s: float = 1.0):
+                           turning_percentile: Optional[float] = None):
     """
     Run behavioral analysis for all loaded data paths.
     
@@ -1207,15 +1112,8 @@ def run_behavioral_analysis(loaded_data: Dict[Path, Dict],
     running_percentile : float
         Percentile to use for running threshold calculation (default: 10)
     turning_percentile : Optional[float]
-        If provided, use percentile method for turning (like running) instead of IQR method.
-        None (default) uses IQR method. Set to a value (e.g., 10, 25) to use percentile.
-    use_correlation_based_turning : bool
-        If True, use correlation-based method for turning threshold (default: True).
-        Uses periods where running and turning are highly correlated.
-    correlation_threshold : float
-        Minimum correlation coefficient for high-correlation periods (default: 0.5)
-    correlation_window_s : float
-        Window size in seconds for rolling correlation calculation (default: 1.0)
+        Percentile to use on values below median for turning threshold (default: 25).
+        If None, uses 25th percentile.
     """
     output_base_dir.mkdir(parents=True, exist_ok=True)
     
@@ -1241,10 +1139,7 @@ def run_behavioral_analysis(loaded_data: Dict[Path, Dict],
                 threshold_plot_bins=plot_bins,
                 min_bout_duration_s=min_bout_duration_s,
                 running_percentile=running_percentile,
-                turning_percentile=turning_percentile,
-                use_correlation_based_turning=use_correlation_based_turning,
-                correlation_threshold=correlation_threshold,
-                correlation_window_s=correlation_window_s
+                turning_percentile=turning_percentile
             )
             results, figures = analyzer.run_full_analysis(output_base_dir, encoder_column, exp_day)
             
