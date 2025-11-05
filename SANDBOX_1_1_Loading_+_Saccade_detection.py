@@ -130,173 +130,6 @@ adaptive_percentile_pre_velocity = 75  # Percentile for pre-saccade velocity thr
 adaptive_percentile_pre_drift = 75  # Percentile for pre-saccade drift threshold (upper percentile for compensatory detection)
 adaptive_percentile_post_variance = 25  # Percentile for post-saccade variance threshold (lower percentile for orienting detection - low variance = stable)
 
-"""
-CLASSIFICATION PARAMETERS EXPLANATION:
-======================================
-
-1. bout_window (1.5 seconds)
-   - Purpose: Groups saccades that occur within this time window into "bouts"
-   - How it works: If two saccades occur within 1.5s of each other, they're grouped into the same bout
-   - Reasoning: Compensatory saccades occur in rapid succession during head rotation
-   - Typical values: 1.0-2.0 seconds (adjust based on your data)
-
-2. pre_saccade_window (0.3 seconds)
-   - Purpose: Time window BEFORE each saccade onset to analyze for drift/stability
-   - How it works: Measures mean velocity and position drift in the 0.3s before saccade starts
-     * IMPORTANT: The window is constrained to not extend before the peak time of the previous saccade
-     * This ensures we only measure the inter-saccade interval, not the period during the previous saccade
-   - Reasoning: 
-     * Compensatory: Eye drifts slowly before saccade (compensating for head rotation)
-     * Orienting: Eye is stable before saccade (at rest before quick shift)
-   - Typical values: 0.2-0.5 seconds (should capture pre-saccade behavior)
-
-3. max_intersaccade_interval_for_classification (5.0 seconds)
-   - Purpose: Maximum time to extend post-saccade window until the next saccade occurs
-   - How it works: 
-     * For each saccade, the post-saccade window dynamically extends until the next saccade starts
-     * If the next saccade occurs within max_intersaccade_interval_for_classification, use that interval
-     * If no next saccade occurs within this time, cap at max_intersaccade_interval_for_classification
-     * Measures position change/variance in this dynamic window
-   - Reasoning:
-     * Compensatory saccades: Eye position continues to change until next compensatory saccade (large position change)
-     * Orienting saccades: Eye settles at new position and stays stable (small position change)
-   - Typical values: 3-10 seconds (should capture behavior until next saccade or reasonable maximum)
-   - This parameter is key for distinguishing compensatory vs orienting based on eye position stability
-
-5. pre_saccade_velocity_threshold (50.0 px/s)
-   - Purpose: Threshold for mean absolute velocity in pre-saccade window
-   - How it works: If mean(|velocity|) > threshold → evidence of drift (compensatory)
-   - Reasoning: Compensatory saccades follow slow drift (velocity > 0)
-   - Typical values: 30-100 px/s (adjust based on your sampling rate and noise level)
-   - Too low: May misclassify orienting saccades with noise as compensatory
-   - Too high: May miss true compensatory drift
-
-6. pre_saccade_drift_threshold (10.0 px)
-   - Purpose: Threshold for position change in pre-saccade window
-   - How it works: If |position_end - position_start| > threshold → evidence of drift (compensatory)
-   - Reasoning: Compensatory saccades follow slow position drift (eye moves slowly)
-   - Typical values: 5-20 px (adjust based on your typical saccade amplitudes)
-   - Too low: May misclassify orienting saccades with small movements as compensatory
-   - Too high: May miss true compensatory drift
-
-7. post_saccade_variance_threshold (100.0 px²)
-   - Purpose: Threshold for position variance in post-saccade window
-   - How it works: If variance < threshold → stable position (orienting)
-   - Reasoning: Orienting saccades settle at new stable position (low variance)
-   - Typical values: 50-200 px² (adjust based on your noise level)
-   - Too low: May misclassify orienting saccades as compensatory
-   - Too high: May misclassify compensatory saccades as orienting
-   - Note: Less reliable for saccades in bouts (next saccade may occur soon after)
-
-8. post_saccade_position_change_threshold_percent (50.0%)
-   - Purpose: Threshold for position change in dynamic post-saccade window, expressed as percentage of saccade amplitude
-   - How it works: 
-     * Calculates total position change from end of saccade until next saccade (or max interval)
-     * Compares to saccade amplitude: if post_change > amplitude * threshold_percent → compensatory
-     * Compensatory saccades: Eye continues moving after saccade (large position change relative to amplitude)
-     * Orienting saccades: Eye settles at new position (small position change relative to amplitude)
-   - Reasoning: 
-     * Compensatory: Eye position continues changing until next compensatory saccade (change comparable to or larger than saccade amplitude)
-     * Orienting: Eye settles and stays stable (change much smaller than saccade amplitude)
-   - Typical values: 30-70% (adjust based on your data)
-   - Too low: May misclassify orienting saccades with small noise as compensatory
-   - Too high: May miss true compensatory drift patterns
-   - Key advantage: Relative to amplitude, so adapts to different saccade sizes
-
-PRACTICAL TUNING GUIDE (For QC Adjustments):
-=============================================
-When you find a miscategorized saccade during QC, here's what to adjust:
-
-⚠️ PROBLEM: Two orienting saccades close together are misclassified as compensatory
-   → SOLUTION: Decrease bout_window (e.g., 1.5 → 1.0 seconds)
-   → WHY: Makes the classifier less likely to group saccades into bouts
-
-⚠️ PROBLEM: Compensatory saccades misclassified as orienting (happens in bouts)
-   → SOLUTION: Increase bout_window (e.g., 1.5 → 2.0 seconds)
-   → WHY: Better captures rapid compensatory saccade sequences
-
-⚠️ PROBLEM: Compensatory saccades misclassified as orienting (isolated saccades)
-   → SOLUTION: Decrease pre_saccade_velocity_threshold or pre_saccade_drift_threshold
-   → WHY: Makes it easier to detect slow pre-saccade drift that indicates compensation
-   → OR: Increase post_saccade_position_change_threshold_percent (e.g., 50 → 70)
-   → WHY: Requires larger post-saccade position change to classify as compensatory
-
-⚠️ PROBLEM: Orienting saccades misclassified as compensatory (too sensitive to drift)
-   → SOLUTION: Increase pre_saccade_velocity_threshold or pre_saccade_drift_threshold
-   → WHY: Requires stronger evidence of drift before classifying as compensatory
-   → OR: Decrease post_saccade_position_change_threshold_percent (e.g., 50 → 30)
-   → WHY: Makes it harder to classify based on post-saccade position change
-
-⚠️ PROBLEM: Eye position continues moving after orienting saccades (causes misclassification)
-   → SOLUTION: Increase max_intersaccade_interval_for_classification (e.g., 5.0 → 7.0 seconds)
-   → WHY: Gives more time for eye to settle, better captures true stability
-
-⚠️ PROBLEM: Using adaptive thresholds but getting inconsistent results
-   → SOLUTION: Set use_adaptive_thresholds = False and use fixed thresholds
-   → WHY: Fixed thresholds give more predictable, reproducible results
-
-📝 QUICK REFERENCE:
-   - bout_window: Controls how close saccades need to be to form a bout (default: 1.5s)
-   - pre_saccade_velocity_threshold: How fast eye moves before saccade = compensatory (default: 50 px/s)
-   - pre_saccade_drift_threshold: How much position changes before saccade = compensatory (default: 10 px)
-   - post_saccade_position_change_threshold_percent: % of saccade amplitude as position change threshold (default: 50%)
-   - max_intersaccade_interval_for_classification: Max time to look for next saccade (default: 5.0s)
-
-CLASSIFICATION ORDER AND LOGIC:
-================================
-
-Stage 1: Temporal Clustering (Bout Detection)
-  - Groups saccades within bout_window into bouts
-  - Saccades > bout_window apart start a new bout
-  - Result: Each saccade gets a bout_id and bout_size
-
-Stage 2: Feature Extraction
-  For each saccade:
-    a) Extract pre-saccade features (pre_saccade_window before onset):
-       - Mean absolute velocity (pre_saccade_mean_velocity)
-       - Position drift (pre_saccade_position_drift)
-    b) Extract post-saccade features (DYNAMIC window):
-       - Window extends from saccade offset until next saccade start (or max_intersaccade_interval_for_classification)
-       - Position variance (post_saccade_position_variance) - measures stability until next saccade
-       - Position change (post_saccade_position_change) - total change in position until next saccade
-       - This captures whether eye settles (orienting) or continues changing (compensatory)
-
-Stage 3: Classification (ORIGINAL SIMPLE LOGIC - Conservative Starting Point)
-  Rule 1: If in a bout (bout_size >= 2)
-    - Automatically classify as compensatory
-    - Rationale: Compensatory saccades occur in rapid succession during head rotation
-  
-  Rule 2: If isolated (bout_size == 1)
-    - If pre_vel > pre_saccade_velocity_threshold OR pre_drift > pre_saccade_drift_threshold
-      → Compensatory (evidence of drift/compensation before saccade)
-    - Else if pre_vel ≤ pre_saccade_velocity_threshold AND post_var < post_saccade_variance_threshold
-      → Orienting (stable before and stable after saccade)
-    - Else
-      → Compensatory (conservative default - when uncertain)
-
-RATIONALE FOR ORDER:
-====================
-1. Temporal clustering first: Identifies which saccades are potentially related (bouts)
-2. Feature extraction: Measures key characteristics of each saccade
-3. Classification using simple rules:
-   - Bouts: Automatically compensatory (conservative - assumes bouts indicate compensatory behavior)
-   - Isolated: Feature-based classification (pre-saccade drift + post-saccade stability)
-
-KEY INSIGHT:
-============
-- Compensatory saccades: Show DRIFT before them (slow compensation for head rotation)
-- Orienting saccades: Show STABLE periods before them (eye at rest before quick shift)
-- The pre-saccade window captures the inter-saccade interval, which is the key discriminator
-
-NOTE ON CURRENT LOGIC:
-======================
-This is the original conservative starting point:
-- All saccades in bouts (>=2 saccades within bout_window) are classified as compensatory
-- Only isolated saccades are classified using features
-- This may over-classify compensatory (especially if two orienting saccades happen close together)
-- Adjust bout_window or add refinement logic if needed
-"""
-
 video2_eye = 'R' if video1_eye == 'L' else 'L' # Automatically assign eye for VideoData2
 eye_fullname = {'L': 'Left', 'R': 'Right'} # Map for full names (used in labels)
 # Update VIDEO_LABELS based on selection
@@ -312,41 +145,8 @@ save_path = data_path.parent / f"{data_path.name}_processedData"
 VideoData1, VideoData2, VideoData1_Has_Sleap, VideoData2_Has_Sleap = lp.load_videography_data(data_path, debug=debug)
 
 # Load manual blink data if available
-manual_blinks_v1 = None
-manual_blinks_v2 = None
-
-manual_blinks_v1_path = data_path / "Video1_manual_blinks.csv"
-manual_blinks_v2_path = data_path / "Video2_manual_blinks.csv"
-
-if manual_blinks_v1_path.exists():
-    try:
-        manual_blinks_df_v1 = pd.read_csv(manual_blinks_v1_path)
-        # Expected columns: blink_number, start_frame, end_frame
-        if all(col in manual_blinks_df_v1.columns for col in ['blink_number', 'start_frame', 'end_frame']):
-            manual_blinks_v1 = [
-                {'num': int(row['blink_number']), 'start': int(row['start_frame']), 'end': int(row['end_frame'])}
-                for _, row in manual_blinks_df_v1.iterrows()
-            ]
-            print(f"✅ Loaded {len(manual_blinks_v1)} manual blinks for VideoData1 from {manual_blinks_v1_path.name}")
-        else:
-            print(f"⚠️ WARNING: {manual_blinks_v1_path.name} exists but doesn't have expected columns (blink_number, start_frame, end_frame)")
-    except Exception as e:
-        print(f"⚠️ WARNING: Failed to load {manual_blinks_v1_path.name}: {e}")
-
-if manual_blinks_v2_path.exists():
-    try:
-        manual_blinks_df_v2 = pd.read_csv(manual_blinks_v2_path)
-        # Expected columns: blink_number, start_frame, end_frame
-        if all(col in manual_blinks_df_v2.columns for col in ['blink_number', 'start_frame', 'end_frame']):
-            manual_blinks_v2 = [
-                {'num': int(row['blink_number']), 'start': int(row['start_frame']), 'end': int(row['end_frame'])}
-                for _, row in manual_blinks_df_v2.iterrows()
-            ]
-            print(f"✅ Loaded {len(manual_blinks_v2)} manual blinks for VideoData2 from {manual_blinks_v2_path.name}")
-        else:
-            print(f"⚠️ WARNING: {manual_blinks_v2_path.name} exists but doesn't have expected columns (blink_number, start_frame, end_frame)")
-    except Exception as e:
-        print(f"⚠️ WARNING: Failed to load {manual_blinks_v2_path.name}: {e}")
+manual_blinks_v1 = pf.load_manual_blinks(data_path, video_number=1)
+manual_blinks_v2 = pf.load_manual_blinks(data_path, video_number=2)
 
 columns_of_interest = ['left.x','left.y','center.x','center.y','right.x','right.y','p1.x','p1.y','p2.x','p2.y','p3.x','p3.y','p4.x','p4.y','p5.x','p5.y','p6.x','p6.y','p7.x','p7.y','p8.x','p8.y']
 
@@ -570,97 +370,24 @@ score_columns = ['left.score','center.score','right.score','p1.score','p2.score'
 
 # VideoData1 confidence score analysis
 if debug and 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
-    total_points1 = len(VideoData1)
-    print(f'\nℹ️ VideoData1 - Top 3 columns with most frames below {score_cutoff} confidence score:')
-
-    video1_stats = []
-    for col in score_columns:
-        if col in VideoData1.columns:
-            count_below = (VideoData1[col] < score_cutoff).sum()
-            pct_below = (count_below / total_points1) * 100 if total_points1 > 0 else 0
-
-            below_mask = VideoData1[col] < score_cutoff
-            longest = 0
-            run = 0
-            for val in below_mask:
-                if val:
-                    run += 1
-                    if run > longest:
-                        longest = run
-                else:
-                    run = 0
-            video1_stats.append((col, count_below, pct_below, longest))
-
-    video1_stats.sort(key=lambda x: x[1], reverse=True)
-    for i, (col, count, pct, longest) in enumerate(video1_stats[:3]):
-        print(f"VideoData1 - #{i+1}: {col} | Values below {score_cutoff}: {count} ({pct:.2f}%) | Longest consecutive frame series: {longest}")
+    pf.analyze_confidence_scores(VideoData1, score_columns, score_cutoff, get_eye_label('VideoData1'), debug=debug)
 
 # VideoData2 confidence score analysis
 if debug and 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
-    total_points2 = len(VideoData2)
-    print(f'\nℹ️ VideoData2 - Top 3 columns with most frames below {score_cutoff} confidence score:')
+    pf.analyze_confidence_scores(VideoData2, score_columns, score_cutoff, get_eye_label('VideoData2'), debug=debug)
 
-    video2_stats = []
-    for col in score_columns:
-        if col in VideoData2.columns:
-            count_below = (VideoData2[col] < score_cutoff).sum()
-            pct_below = (count_below / total_points2) * 100 if total_points2 > 0 else 0
-
-            below_mask = VideoData2[col] < score_cutoff
-            longest = 0
-            run = 0
-            for val in below_mask:
-                if val:
-                    run += 1
-                    if run > longest:
-                        longest = run
-                else:
-                    run = 0
-            video2_stats.append((col, count_below, pct_below, longest))
-
-    video2_stats.sort(key=lambda x: x[1], reverse=True)
-    for i, (col, count, pct, longest) in enumerate(video2_stats[:3]):
-        print(f"VideoData2 - #{i+1}: {col} | Values below {score_cutoff}: {count} ({pct:.2f}%) | Longest consecutive frame series: {longest}")
-
-
-## Center coordinates to the median pupil centre
-columns_of_interest = ['left.x','left.y','center.x','center.y','right.x','right.y','p1.x','p1.y','p2.x','p2.y','p3.x','p3.y','p4.x','p4.y','p5.x','p5.y','p6.x','p6.y','p7.x','p7.y','p8.x','p8.y']
 
 print ()
 print("=== Centering coordinates to the median pupil centre ===")
+# Reset columns_of_interest to full coordinate column names (needed after QC plotting redefined it)
+columns_of_interest = ['left.x','left.y','center.x','center.y','right.x','right.y','p1.x','p1.y','p2.x','p2.y','p3.x','p3.y','p4.x','p4.y','p5.x','p5.y','p6.x','p6.y','p7.x','p7.y','p8.x','p8.y']
 # VideoData1 processing
 if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
-    # Calculate the mean of the center x and y points
-    mean_center_x1 = VideoData1['center.x'].median()
-    mean_center_y1 = VideoData1['center.y'].median()
-
-    print(f"{get_eye_label('VideoData1')} - Centering on median pupil centre: \nMean center.x: {mean_center_x1}, Mean center.y: {mean_center_y1}")
-
-    # Translate the coordinates
-    for col in columns_of_interest:
-        if '.x' in col:
-            VideoData1[col] = VideoData1[col] - mean_center_x1
-        elif '.y' in col:
-            VideoData1[col] = VideoData1[col] - mean_center_y1
-
-    VideoData1_centered = VideoData1.copy()
+    VideoData1_centered = pf.center_coordinates_to_median(VideoData1, columns_of_interest, get_eye_label('VideoData1'))
 
 # VideoData2 processing
 if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
-    # Calculate the mean of the center x and y points
-    mean_center_x2 = VideoData2['center.x'].median()
-    mean_center_y2 = VideoData2['center.y'].median()
-
-    print(f"{get_eye_label('VideoData2')} - Centering on median pupil centre: \nMean center.x: {mean_center_x2}, Mean center.y: {mean_center_y2}")
-
-    # Translate the coordinates
-    for col in columns_of_interest:
-        if '.x' in col:
-            VideoData2[col] = VideoData2[col] - mean_center_x2
-        elif '.y' in col:
-            VideoData2[col] = VideoData2[col] - mean_center_y2
-
-    VideoData2_centered = VideoData2.copy()
+    VideoData2_centered = pf.center_coordinates_to_median(VideoData2, columns_of_interest, get_eye_label('VideoData2'))
 
 ############################################################################################################
 # remove low confidence points (score < threshold)
@@ -674,55 +401,11 @@ if not NaNs_removed:
 
     # VideoData1 score-based filtering
     if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
-        total_low_score1 = 0
-        low_score_counts1 = {}
-        for point in point_names:
-            if f'{point}.score' in VideoData1.columns:
-                # Find indices where score is below threshold
-                low_score_mask = VideoData1[f'{point}.score'] < score_cutoff
-                low_score_count = low_score_mask.sum()
-                low_score_counts1[f'{point}.x'] = low_score_count
-                low_score_counts1[f'{point}.y'] = low_score_count
-                total_low_score1 += low_score_count * 2  # *2 because we're removing both x and y
-                
-                # Set x and y to NaN for low confidence points
-                VideoData1.loc[low_score_mask, f'{point}.x'] = np.nan
-                VideoData1.loc[low_score_mask, f'{point}.y'] = np.nan
-        
-        # Find the channel with the maximum number of low-score points
-        max_low_score_channel1 = max(low_score_counts1, key=low_score_counts1.get)
-        max_low_score_count1 = low_score_counts1[max_low_score_channel1]
-        
-        # Print the channel with the maximum number of low-score points
-        if debug:
-            print(f"{get_eye_label('VideoData1')} - Channel with the maximum number of low-confidence points: {max_low_score_channel1}, Number of low-confidence points: {max_low_score_count1}")
-            print(f"{get_eye_label('VideoData1')} - A total number of {total_low_score1} low-confidence coordinate values were replaced by interpolation")
+        pf.filter_low_confidence_points(VideoData1, point_names, score_cutoff, get_eye_label('VideoData1'), debug=debug)
 
     # VideoData2 score-based filtering
     if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
-        total_low_score2 = 0
-        low_score_counts2 = {}
-        for point in point_names:
-            if f'{point}.score' in VideoData2.columns:
-                # Find indices where score is below threshold
-                low_score_mask = VideoData2[f'{point}.score'] < score_cutoff
-                low_score_count = low_score_mask.sum()
-                low_score_counts2[f'{point}.x'] = low_score_count
-                low_score_counts2[f'{point}.y'] = low_score_count
-                total_low_score2 += low_score_count * 2  # *2 because we're removing both x and y
-                
-                # Set x and y to NaN for low confidence points
-                VideoData2.loc[low_score_mask, f'{point}.x'] = np.nan
-                VideoData2.loc[low_score_mask, f'{point}.y'] = np.nan
-        
-        # Find the channel with the maximum number of low-score points
-        max_low_score_channel2 = max(low_score_counts2, key=low_score_counts2.get)
-        max_low_score_count2 = low_score_counts2[max_low_score_channel2]
-        
-        # Print the channel with the maximum number of low-score points
-        if debug:
-            print(f"{get_eye_label('VideoData2')} - Channel with the maximum number of low-confidence points: {max_low_score_channel2}, Number of low-confidence points: {max_low_score_count2}")
-            print(f"{get_eye_label('VideoData2')} - A total number of {total_low_score2} low-confidence coordinate values were replaced by interpolation")
+        pf.filter_low_confidence_points(VideoData2, point_names, score_cutoff, get_eye_label('VideoData2'), debug=debug)
 
     ############################################################################################################
     # remove outliers (x times SD)
@@ -732,57 +415,24 @@ if not NaNs_removed:
     if debug:
         print("\n=== Outlier Analysis - outlier points are replaced by interpolation ===")
 
+    # Reset columns_of_interest to full coordinate column names (needed after QC plotting redefined it)
+    columns_of_interest = ['left.x','left.y','center.x','center.y','right.x','right.y','p1.x','p1.y','p2.x','p2.y','p3.x','p3.y','p4.x','p4.y','p5.x','p5.y','p6.x','p6.y','p7.x','p7.y','p8.x','p8.y']
+
     # VideoData1 outlier analysis and interpolation
     if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
-        # Calculate the standard deviation for each column of interest
-        std_devs1 = {col: VideoData1[col].std() for col in columns_of_interest}
-
-        # Calculate the number of outliers for each column
-        outliers1 = {col: ((VideoData1[col] - VideoData1[col].mean()).abs() > outlier_sd_threshold * std_devs1[col]).sum() for col in columns_of_interest}
-
-        # Find the channel with the maximum number of outliers
-        max_outliers_channel1 = max(outliers1, key=outliers1.get)
-        max_outliers_count1 = outliers1[max_outliers_channel1]
-        total_outliers1 = sum(outliers1.values())
-
-        # Print the channel with the maximum number of outliers and the number
-        if debug:
-            print(f"{get_eye_label('VideoData1')} - Channel with the maximum number of outliers: {max_outliers_channel1}, Number of outliers: {max_outliers_count1}")
-            print(f"{get_eye_label('VideoData1')} - A total number of {total_outliers1} outliers were replaced by interpolation")
-
-        # Replace outliers by interpolating between the previous and subsequent non-NaN value
-        for col in columns_of_interest:
-            outlier_indices = VideoData1[((VideoData1[col] - VideoData1[col].mean()).abs() > outlier_sd_threshold * std_devs1[col])].index
-            VideoData1.loc[outlier_indices, col] = np.nan
-
-        #VideoData1.interpolate(inplace=True)
-        VideoData1 = VideoData1.interpolate(method='linear', limit_direction='both')
+        outlier_results_v1 = pf.remove_outliers_and_interpolate(
+            VideoData1, columns_of_interest, outlier_sd_threshold, 
+            get_eye_label('VideoData1'), debug=debug
+        )
+        VideoData1 = outlier_results_v1['video_data_interpolated']
 
     # VideoData2 outlier analysis and interpolation
     if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
-        # Calculate the standard deviation for each column of interest
-        std_devs2 = {col: VideoData2[col].std() for col in columns_of_interest}
-
-        # Calculate the number of outliers for each column
-        outliers2 = {col: ((VideoData2[col] - VideoData2[col].mean()).abs() > outlier_sd_threshold * std_devs2[col]).sum() for col in columns_of_interest}
-
-        # Find the channel with the maximum number of outliers
-        max_outliers_channel2 = max(outliers2, key=outliers2.get)
-        max_outliers_count2 = outliers2[max_outliers_channel2]
-        total_outliers2 = sum(outliers2.values())
-
-        # Print the channel with the maximum number of outliers and the number
-        if debug:
-            print(f"{get_eye_label('VideoData2')} - Channel with the maximum number of outliers: {max_outliers_channel2}, Number of outliers: {max_outliers_count2}")
-            print(f"{get_eye_label('VideoData2')} - A total number of {total_outliers2} outliers were replaced by interpolation")
-
-        # Replace outliers by interpolating between the previous and subsequent non-NaN value
-        for col in columns_of_interest:
-            outlier_indices = VideoData2[((VideoData2[col] - VideoData2[col].mean()).abs() > outlier_sd_threshold * std_devs2[col])].index
-            VideoData2.loc[outlier_indices, col] = np.nan
-
-        #VideoData2.interpolate(inplace=True)
-        VideoData2 = VideoData2.interpolate(method='linear', limit_direction='both')
+        outlier_results_v2 = pf.remove_outliers_and_interpolate(
+            VideoData2, columns_of_interest, outlier_sd_threshold, 
+            get_eye_label('VideoData2'), debug=debug
+        )
+        VideoData2 = outlier_results_v2['video_data_interpolated']
 
     # Set flag after both VideoData1 and VideoData2 processing is complete
     NaNs_removed = True
@@ -813,143 +463,36 @@ has_v1 = "VideoData1_Has_Sleap" in globals() and VideoData1_Has_Sleap
 has_v2 = "VideoData2_Has_Sleap" in globals() and VideoData2_Has_Sleap
 
 # Get FPS for time calculations
+fps_1_for_threshold = None
+fps_2_for_threshold = None
 if has_v1:
-    if 'FPS_1' in globals():
-        fps_1_for_threshold = FPS_1
-    else:
-        fps_1_for_threshold = 1 / VideoData1["Seconds"].diff().mean()
-else:
-    fps_1_for_threshold = None
-
+    fps_1_for_threshold = FPS_1 if 'FPS_1' in globals() else (1 / VideoData1["Seconds"].diff().mean() if has_v1 else None)
 if has_v2:
-    if 'FPS_2' in globals():
-        fps_2_for_threshold = FPS_2
-    else:
-        fps_2_for_threshold = 1 / VideoData2["Seconds"].diff().mean()
-else:
-    fps_2_for_threshold = None
+    fps_2_for_threshold = FPS_2 if 'FPS_2' in globals() else (1 / VideoData2["Seconds"].diff().mean() if has_v2 else None)
 
-# Plot histograms with hard threshold marked
-fig = None
-if has_v1 or has_v2:
-    plt.figure(figsize=(12,5))
-    plot_index = 1
-
-if has_v1:
-    plt.subplot(1, 2 if has_v2 else 1, plot_index)
-    plt.hist(VideoData1['instance.score'].dropna(), bins=30, color='skyblue', edgecolor='black')
-    plt.axvline(blink_instance_score_threshold, color='red', linestyle='--', linewidth=2, 
-                label=f'Hard threshold = {blink_instance_score_threshold}')
-    plt.yscale('log')
-    plt.title("Distribution of instance.score (VideoData1)")
-    plt.xlabel("instance.score")
-    plt.ylabel("Frequency (log scale)")
-    plt.legend()
-    plot_index += 1
-
-if has_v2:
-    plt.subplot(1, 2 if has_v1 else 1, plot_index)
-    plt.hist(VideoData2['instance.score'].dropna(), bins=30, color='salmon', edgecolor='black')
-    plt.axvline(blink_instance_score_threshold, color='red', linestyle='--', linewidth=2,
-                label=f'Hard threshold = {blink_instance_score_threshold}')
-    plt.yscale('log')
-    plt.title("Distribution of instance.score (VideoData2)")
-    plt.xlabel("instance.score")
-    plt.ylabel("Frequency (log scale)")
-    plt.legend()
-    plot_index += 1
-
-if has_v1 or has_v2:
-    plt.tight_layout()
-    plt.show()
+# Plot combined histograms
+if debug and (has_v1 or has_v2):
+    pf.plot_instance_score_distributions_combined(
+        VideoData1 if has_v1 else None,
+        VideoData2 if has_v2 else None,
+        blink_instance_score_threshold,
+        has_v1=has_v1,
+        has_v2=has_v2
+    )
 
 # Report the statistics for available VideoData
 # Always show key stats: number/percentile below threshold and longest consecutive segment
 if has_v1:
-    print(f"\nVideoData1 - Instance Score Threshold Analysis:")
-    print(f"  Hard threshold: {blink_instance_score_threshold}")
-    
-    # Calculate percentile for reference
-    v1_percentile = (VideoData1['instance.score'] < blink_instance_score_threshold).sum() / len(VideoData1) * 100
-    v1_num_low = (VideoData1['instance.score'] < blink_instance_score_threshold).sum()
-    v1_total = len(VideoData1)
-    v1_pct_low = (v1_num_low / v1_total) * 100
-    
-    # Find longest consecutive segments
-    low_sections_v1 = pf.find_longest_lowscore_sections(VideoData1['instance.score'], blink_instance_score_threshold, top_n=1)
-    longest_consecutive_v1 = low_sections_v1[0]['length'] if low_sections_v1 else 0
-    longest_consecutive_v1_ms = (longest_consecutive_v1 / fps_1_for_threshold) * 1000 if fps_1_for_threshold and longest_consecutive_v1 > 0 else None
-    
-    # Always print key stats
-    print(f"  Frames below threshold: {v1_num_low} / {v1_total} ({v1_pct_low:.2f}%)")
-    print(f"  Longest consecutive segment: {longest_consecutive_v1} frames", end="")
-    if longest_consecutive_v1_ms:
-        print(f" ({longest_consecutive_v1_ms:.1f}ms)")
-    else:
-        print()
-    
-    # Detailed stats only in debug mode
-    if debug:
-        print(f"\n  Detailed statistics:")
-        print(f"  Percentile: {v1_percentile:.2f}% (i.e., {v1_percentile:.2f}% of frames have instance.score < {blink_instance_score_threshold})")
-        
-        # Report the top 5 longest consecutive sections
-        low_sections_v1 = pf.find_longest_lowscore_sections(VideoData1['instance.score'], blink_instance_score_threshold, top_n=5)
-        if len(low_sections_v1) > 0:
-            print(f"\n  Top 5 longest consecutive sections where instance.score < threshold:")
-            for i, sec in enumerate(low_sections_v1, 1):
-                start_idx = sec['start_idx']
-                end_idx = sec['end_idx']
-                start_time = VideoData1.index[start_idx] if isinstance(VideoData1.index, pd.DatetimeIndex) else start_idx
-                end_time = VideoData1.index[end_idx] if isinstance(VideoData1.index, pd.DatetimeIndex) else end_idx
-                sec_duration_ms = (sec['length'] / fps_1_for_threshold) * 1000 if fps_1_for_threshold else None
-                if sec_duration_ms:
-                    print(f"    Section {i}: index {start_idx}-{end_idx} (length {sec['length']} frames, {sec_duration_ms:.1f}ms)")
-                else:
-                    print(f"    Section {i}: index {start_idx}-{end_idx} (length {sec['length']} frames)")
+    pf.analyze_instance_score_distribution(
+        VideoData1, blink_instance_score_threshold, fps_1_for_threshold,
+        get_eye_label('VideoData1'), debug=debug, plot=False  # Already plotted above
+    )
 
 if has_v2:
-    print(f"\nVideoData2 - Instance Score Threshold Analysis:")
-    print(f"  Hard threshold: {blink_instance_score_threshold}")
-    
-    # Calculate percentile for reference
-    v2_percentile = (VideoData2['instance.score'] < blink_instance_score_threshold).sum() / len(VideoData2) * 100
-    v2_num_low = (VideoData2['instance.score'] < blink_instance_score_threshold).sum()
-    v2_total = len(VideoData2)
-    v2_pct_low = (v2_num_low / v2_total) * 100
-    
-    # Find longest consecutive segments
-    low_sections_v2 = pf.find_longest_lowscore_sections(VideoData2['instance.score'], blink_instance_score_threshold, top_n=1)
-    longest_consecutive_v2 = low_sections_v2[0]['length'] if low_sections_v2 else 0
-    longest_consecutive_v2_ms = (longest_consecutive_v2 / fps_2_for_threshold) * 1000 if fps_2_for_threshold and longest_consecutive_v2 > 0 else None
-    
-    # Always print key stats
-    print(f"  Frames below threshold: {v2_num_low} / {v2_total} ({v2_pct_low:.2f}%)")
-    print(f"  Longest consecutive segment: {longest_consecutive_v2} frames", end="")
-    if longest_consecutive_v2_ms:
-        print(f" ({longest_consecutive_v2_ms:.1f}ms)")
-    else:
-        print()
-    
-    # Detailed stats only in debug mode
-    if debug:
-        print(f"\n  Detailed statistics:")
-        print(f"  Percentile: {v2_percentile:.2f}% (i.e., {v2_percentile:.2f}% of frames have instance.score < {blink_instance_score_threshold})")
-        
-        # Report the top 5 longest consecutive sections
-        low_sections_v2 = pf.find_longest_lowscore_sections(VideoData2['instance.score'], blink_instance_score_threshold, top_n=5)
-        if len(low_sections_v2) > 0:
-            print(f"\n  Top 5 longest consecutive sections where instance.score < threshold:")
-            for i, sec in enumerate(low_sections_v2, 1):
-                start_idx = sec['start_idx']
-                end_idx = sec['end_idx']
-                start_time = VideoData2.index[start_idx] if isinstance(VideoData2.index, pd.DatetimeIndex) else start_idx
-                end_time = VideoData2.index[end_idx] if isinstance(VideoData2.index, pd.DatetimeIndex) else end_idx
-                sec_duration_ms = (sec['length'] / fps_2_for_threshold) * 1000 if fps_2_for_threshold else None
-                if sec_duration_ms:
-                    print(f"    Section {i}: index {start_idx}-{end_idx} (length {sec['length']} frames, {sec_duration_ms:.1f}ms)")
-                else:
-                    print(f"    Section {i}: index {start_idx}-{end_idx} (length {sec['length']} frames)")
+    pf.analyze_instance_score_distribution(
+        VideoData2, blink_instance_score_threshold, fps_2_for_threshold,
+        get_eye_label('VideoData2'), debug=debug, plot=False  # Already plotted above
+    )
 
 if debug:
     print(f"\n{'='*80}")

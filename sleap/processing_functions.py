@@ -583,3 +583,383 @@ def detect_blinks_for_video(video_data, columns_of_interest, blink_instance_scor
         'blink_bout_rate': blink_bout_rate
     }
 
+
+def load_manual_blinks(data_path, video_number):
+    """
+    Load manual blink annotations from CSV file.
+    
+    Parameters:
+    -----------
+    data_path : Path
+        Path to directory containing the CSV file
+    video_number : int
+        Video number (1 or 2) to determine filename (Video1_manual_blinks.csv or Video2_manual_blinks.csv)
+        
+    Returns:
+    --------
+    list of dict or None : List of blink dicts with keys 'num', 'start', 'end', or None if file doesn't exist or has errors
+    """
+    manual_blinks_path = data_path / f"Video{video_number}_manual_blinks.csv"
+    
+    if not manual_blinks_path.exists():
+        return None
+    
+    try:
+        manual_blinks_df = pd.read_csv(manual_blinks_path)
+        # Expected columns: blink_number, start_frame, end_frame
+        if all(col in manual_blinks_df.columns for col in ['blink_number', 'start_frame', 'end_frame']):
+            manual_blinks = [
+                {'num': int(row['blink_number']), 'start': int(row['start_frame']), 'end': int(row['end_frame'])}
+                for _, row in manual_blinks_df.iterrows()
+            ]
+            print(f"✅ Loaded {len(manual_blinks)} manual blinks for VideoData{video_number} from {manual_blinks_path.name}")
+            return manual_blinks
+        else:
+            print(f"⚠️ WARNING: {manual_blinks_path.name} exists but doesn't have expected columns (blink_number, start_frame, end_frame)")
+            return None
+    except Exception as e:
+        print(f"⚠️ WARNING: Failed to load {manual_blinks_path.name}: {e}")
+        return None
+
+
+def analyze_confidence_scores(video_data, score_columns, score_cutoff, video_label="", debug=False):
+    """
+    Analyze confidence scores and report top 3 columns with most low-confidence frames.
+    
+    Parameters:
+    -----------
+    video_data : pd.DataFrame
+        Video data with score columns
+    score_columns : list of str
+        List of score column names to analyze
+    score_cutoff : float
+        Threshold below which scores are considered low
+    video_label : str
+        Label for the video (for printing)
+    debug : bool
+        Whether to print analysis (only runs if debug=True)
+        
+    Returns:
+    --------
+    list : List of tuples (col, count, pct, longest) sorted by count
+    """
+    if not debug:
+        return []
+    
+    total_points = len(video_data)
+    print(f'\nℹ️ {video_label} - Top 3 columns with most frames below {score_cutoff} confidence score:')
+    
+    stats = []
+    for col in score_columns:
+        if col in video_data.columns:
+            count_below = (video_data[col] < score_cutoff).sum()
+            pct_below = (count_below / total_points) * 100 if total_points > 0 else 0
+            
+            below_mask = video_data[col] < score_cutoff
+            longest = 0
+            run = 0
+            for val in below_mask:
+                if val:
+                    run += 1
+                    if run > longest:
+                        longest = run
+                else:
+                    run = 0
+            stats.append((col, count_below, pct_below, longest))
+    
+    stats.sort(key=lambda x: x[1], reverse=True)
+    for i, (col, count, pct, longest) in enumerate(stats[:3]):
+        print(f"{video_label} - #{i+1}: {col} | Values below {score_cutoff}: {count} ({pct:.2f}%) | Longest consecutive frame series: {longest}")
+    
+    return stats
+
+
+def center_coordinates_to_median(video_data, columns_of_interest, video_label=""):
+    """
+    Center coordinates to the median pupil centre.
+    
+    Modifies video_data in place by subtracting median center.x and center.y from all coordinates.
+    
+    Parameters:
+    -----------
+    video_data : pd.DataFrame
+        Video data with coordinate columns
+    columns_of_interest : list of str
+        List of coordinate column names to center
+    video_label : str
+        Label for the video (for printing)
+        
+    Returns:
+    --------
+    pd.DataFrame : Copy of video_data after centering
+    """
+    # Calculate the median of the center x and y points
+    mean_center_x = video_data['center.x'].median()
+    mean_center_y = video_data['center.y'].median()
+    
+    print(f"{video_label} - Centering on median pupil centre: \nMean center.x: {mean_center_x}, Mean center.y: {mean_center_y}")
+    
+    # Translate the coordinates
+    for col in columns_of_interest:
+        if '.x' in col:
+            video_data[col] = video_data[col] - mean_center_x
+        elif '.y' in col:
+            video_data[col] = video_data[col] - mean_center_y
+    
+    return video_data.copy()
+
+
+def filter_low_confidence_points(video_data, point_names, score_cutoff, video_label="", debug=False):
+    """
+    Filter out low-confidence points and replace with NaN.
+    
+    Modifies video_data in place by setting x and y coordinates to NaN where score < threshold.
+    
+    Parameters:
+    -----------
+    video_data : pd.DataFrame
+        Video data with score and coordinate columns
+    point_names : list of str
+        List of point names (without .x, .y, .score suffix)
+    score_cutoff : float
+        Score threshold below which points are replaced with NaN
+    video_label : str
+        Label for the video (for printing)
+    debug : bool
+        Whether to print statistics
+        
+    Returns:
+    --------
+    dict : Dictionary with 'total_low_score', 'max_low_score_channel', 'max_low_score_count'
+    """
+    total_low_score = 0
+    low_score_counts = {}
+    
+    for point in point_names:
+        if f'{point}.score' in video_data.columns:
+            # Find indices where score is below threshold
+            low_score_mask = video_data[f'{point}.score'] < score_cutoff
+            low_score_count = low_score_mask.sum()
+            low_score_counts[f'{point}.x'] = low_score_count
+            low_score_counts[f'{point}.y'] = low_score_count
+            total_low_score += low_score_count * 2  # *2 because we're removing both x and y
+            
+            # Set x and y to NaN for low confidence points
+            video_data.loc[low_score_mask, f'{point}.x'] = np.nan
+            video_data.loc[low_score_mask, f'{point}.y'] = np.nan
+    
+    # Find the channel with the maximum number of low-score points
+    max_low_score_channel = max(low_score_counts, key=low_score_counts.get) if low_score_counts else None
+    max_low_score_count = low_score_counts[max_low_score_channel] if max_low_score_channel else 0
+    
+    # Print the channel with the maximum number of low-score points
+    if debug:
+        if max_low_score_channel:
+            print(f"{video_label} - Channel with the maximum number of low-confidence points: {max_low_score_channel}, Number of low-confidence points: {max_low_score_count}")
+        print(f"{video_label} - A total number of {total_low_score} low-confidence coordinate values were replaced by interpolation")
+    
+    return {
+        'total_low_score': total_low_score,
+        'max_low_score_channel': max_low_score_channel,
+        'max_low_score_count': max_low_score_count
+    }
+
+
+def remove_outliers_and_interpolate(video_data, columns_of_interest, outlier_sd_threshold, video_label="", debug=False):
+    """
+    Remove outliers and interpolate NaN values.
+    
+    Outliers are defined as values more than outlier_sd_threshold standard deviations from the mean.
+    Modifies video_data in place.
+    
+    Parameters:
+    -----------
+    video_data : pd.DataFrame
+        Video data with coordinate columns
+    columns_of_interest : list of str
+        List of coordinate column names to process
+    outlier_sd_threshold : float
+        Number of standard deviations for outlier detection
+    video_label : str
+        Label for the video (for printing)
+    debug : bool
+        Whether to print statistics
+        
+    Returns:
+    --------
+    dict : Dictionary with 'total_outliers', 'max_outliers_channel', 'max_outliers_count'
+    """
+    # Calculate the standard deviation for each column of interest
+    std_devs = {col: video_data[col].std() for col in columns_of_interest}
+    
+    # Calculate the number of outliers for each column
+    outliers = {col: ((video_data[col] - video_data[col].mean()).abs() > outlier_sd_threshold * std_devs[col]).sum() 
+                for col in columns_of_interest}
+    
+    # Find the channel with the maximum number of outliers
+    max_outliers_channel = max(outliers, key=outliers.get) if outliers else None
+    max_outliers_count = outliers[max_outliers_channel] if max_outliers_channel else 0
+    total_outliers = sum(outliers.values())
+    
+    # Print the channel with the maximum number of outliers and the number
+    if debug:
+        if max_outliers_channel:
+            print(f"{video_label} - Channel with the maximum number of outliers: {max_outliers_channel}, Number of outliers: {max_outliers_count}")
+        print(f"{video_label} - A total number of {total_outliers} outliers were replaced by interpolation")
+    
+    # Replace outliers by interpolating between the previous and subsequent non-NaN value
+    for col in columns_of_interest:
+        outlier_indices = video_data[((video_data[col] - video_data[col].mean()).abs() > outlier_sd_threshold * std_devs[col])].index
+        video_data.loc[outlier_indices, col] = np.nan
+    
+    # Interpolate all NaN values (returns new DataFrame, so caller needs to reassign)
+    video_data_interpolated = video_data.interpolate(method='linear', limit_direction='both')
+    
+    return {
+        'total_outliers': total_outliers,
+        'max_outliers_channel': max_outliers_channel,
+        'max_outliers_count': max_outliers_count,
+        'video_data_interpolated': video_data_interpolated  # Return interpolated dataframe
+    }
+
+
+def analyze_instance_score_distribution(video_data, blink_instance_score_threshold, fps, video_label="", debug=False, plot=True):
+    """
+    Analyze instance score distribution and plot histogram.
+    
+    Parameters:
+    -----------
+    video_data : pd.DataFrame
+        Video data with 'instance.score' column
+    blink_instance_score_threshold : float
+        Hard threshold for blink detection
+    fps : float
+        Frames per second (for time calculations)
+    video_label : str
+        Label for the video (for printing)
+    debug : bool
+        Whether to print detailed statistics
+    plot : bool
+        Whether to create histogram plot
+        
+    Returns:
+    --------
+    dict : Dictionary with statistics including 'percentile', 'num_low', 'pct_low', 'longest_consecutive', 'low_sections'
+    """
+    if not debug:
+        return {}
+    
+    # Plot histogram
+    if plot:
+        plt.figure(figsize=(6, 5))
+        plt.hist(video_data['instance.score'].dropna(), bins=30, color='skyblue', edgecolor='black')
+        plt.axvline(blink_instance_score_threshold, color='red', linestyle='--', linewidth=2, 
+                    label=f'Hard threshold = {blink_instance_score_threshold}')
+        plt.yscale('log')
+        plt.title(f"Distribution of instance.score ({video_label})")
+        plt.xlabel("instance.score")
+        plt.ylabel("Frequency (log scale)")
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+    
+    # Calculate statistics
+    percentile = (video_data['instance.score'] < blink_instance_score_threshold).sum() / len(video_data) * 100
+    num_low = (video_data['instance.score'] < blink_instance_score_threshold).sum()
+    total = len(video_data)
+    pct_low = (num_low / total) * 100
+    
+    # Find longest consecutive segments
+    low_sections = find_longest_lowscore_sections(video_data['instance.score'], blink_instance_score_threshold, top_n=1)
+    longest_consecutive = low_sections[0]['length'] if low_sections else 0
+    longest_consecutive_ms = (longest_consecutive / fps) * 1000 if fps and longest_consecutive > 0 else None
+    
+    # Always print key stats
+    print(f"\n{video_label} - Instance Score Threshold Analysis:")
+    print(f"  Hard threshold: {blink_instance_score_threshold}")
+    print(f"  Frames below threshold: {num_low} / {total} ({pct_low:.2f}%)")
+    print(f"  Longest consecutive segment: {longest_consecutive} frames", end="")
+    if longest_consecutive_ms:
+        print(f" ({longest_consecutive_ms:.1f}ms)")
+    else:
+        print()
+    
+    # Detailed stats only in debug mode
+    if debug:
+        print(f"\n  Detailed statistics:")
+        print(f"  Percentile: {percentile:.2f}% (i.e., {percentile:.2f}% of frames have instance.score < {blink_instance_score_threshold})")
+        
+        # Report the top 5 longest consecutive sections
+        low_sections_detailed = find_longest_lowscore_sections(video_data['instance.score'], blink_instance_score_threshold, top_n=5)
+        if len(low_sections_detailed) > 0:
+            print(f"\n  Top 5 longest consecutive sections where instance.score < threshold:")
+            for i, sec in enumerate(low_sections_detailed, 1):
+                start_idx = sec['start_idx']
+                end_idx = sec['end_idx']
+                sec_duration_ms = (sec['length'] / fps) * 1000 if fps else None
+                if sec_duration_ms:
+                    print(f"    Section {i}: index {start_idx}-{end_idx} (length {sec['length']} frames, {sec_duration_ms:.1f}ms)")
+                else:
+                    print(f"    Section {i}: index {start_idx}-{end_idx} (length {sec['length']} frames)")
+    
+    return {
+        'percentile': percentile,
+        'num_low': num_low,
+        'pct_low': pct_low,
+        'longest_consecutive': longest_consecutive,
+        'longest_consecutive_ms': longest_consecutive_ms,
+        'low_sections': low_sections
+    }
+
+
+def plot_instance_score_distributions_combined(video_data1, video_data2, blink_instance_score_threshold, 
+                                               has_v1=False, has_v2=False):
+    """
+    Plot combined histograms for instance.score distributions (both videos in one figure).
+    
+    Parameters:
+    -----------
+    video_data1 : pd.DataFrame or None
+        Video data 1 with 'instance.score' column
+    video_data2 : pd.DataFrame or None
+        Video data 2 with 'instance.score' column
+    blink_instance_score_threshold : float
+        Hard threshold for blink detection
+    has_v1 : bool
+        Whether video_data1 exists and should be plotted
+    has_v2 : bool
+        Whether video_data2 exists and should be plotted
+    """
+    if not (has_v1 or has_v2):
+        return
+    
+    plt.figure(figsize=(12, 5))
+    plot_index = 1
+    
+    if has_v1:
+        plt.subplot(1, 2 if has_v2 else 1, plot_index)
+        plt.hist(video_data1['instance.score'].dropna(), bins=30, color='skyblue', edgecolor='black')
+        plt.axvline(blink_instance_score_threshold, color='red', linestyle='--', linewidth=2, 
+                    label=f'Hard threshold = {blink_instance_score_threshold}')
+        plt.yscale('log')
+        plt.title("Distribution of instance.score (VideoData1)")
+        plt.xlabel("instance.score")
+        plt.ylabel("Frequency (log scale)")
+        plt.legend()
+        plot_index += 1
+    
+    if has_v2:
+        plt.subplot(1, 2 if has_v1 else 1, plot_index)
+        plt.hist(video_data2['instance.score'].dropna(), bins=30, color='salmon', edgecolor='black')
+        plt.axvline(blink_instance_score_threshold, color='red', linestyle='--', linewidth=2,
+                    label=f'Hard threshold = {blink_instance_score_threshold}')
+        plt.yscale('log')
+        plt.title("Distribution of instance.score (VideoData2)")
+        plt.xlabel("instance.score")
+        plt.ylabel("Frequency (log scale)")
+        plt.legend()
+        plot_index += 1
+    
+    plt.tight_layout()
+    plt.show()
+
