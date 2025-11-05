@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.16.7
+#       jupytext_version: 1.18.1
 #   kernelspec:
 #     display_name: aeon
 #     language: python
@@ -151,14 +151,18 @@ manual_blinks_v2 = pf.load_manual_blinks(data_path, video_number=2)
 columns_of_interest = ['left.x','left.y','center.x','center.y','right.x','right.y','p1.x','p1.y','p2.x','p2.y','p3.x','p3.y','p4.x','p4.y','p5.x','p5.y','p6.x','p6.y','p7.x','p7.y','p8.x','p8.y']
 
 if VideoData1_Has_Sleap:
-    VideoData1 = VideoData1.drop(columns=['track']) # drop the track column as it is empty
+    # Drop the track column only if it exists
+    if 'track' in VideoData1.columns:
+        VideoData1 = VideoData1.drop(columns=['track']) # drop the track column as it is empty
     coordinates_dict1_raw=lp.get_coordinates_dict(VideoData1, columns_of_interest)
     FPS_1 = 1 / VideoData1["Seconds"].diff().mean()  # frame rate for VideoData1 TODO where to save it, is it useful?
     print ()
     print(f"{get_eye_label('VideoData1')}: FPS = {FPS_1}")
 
 if VideoData2_Has_Sleap:
-    VideoData2 = VideoData2.drop(columns=['track']) # drop the track column as it is empty
+    # Drop the track column only if it exists
+    if 'track' in VideoData2.columns:
+        VideoData2 = VideoData2.drop(columns=['track']) # drop the track column as it is empty
     coordinates_dict2_raw=lp.get_coordinates_dict(VideoData2, columns_of_interest)
     FPS_2 = 1 / VideoData2["Seconds"].diff().mean()  # frame rate for VideoData2
     print(f"{get_eye_label('VideoData2')}: FPS = {FPS_2}")
