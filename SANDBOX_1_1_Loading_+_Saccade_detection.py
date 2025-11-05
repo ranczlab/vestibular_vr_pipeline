@@ -992,477 +992,65 @@ if debug:
 
 # VideoData1 blink detection
 if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
-    if debug:
-        print(f"\n{get_eye_label('VideoData1')} - Blink Detection")
+    # Get FPS if available, otherwise will be calculated in function
+    fps_1 = FPS_1 if 'FPS_1' in globals() else None
     
-    # Calculate frame-based durations (using FPS_1 if available, otherwise estimate)
-    if 'FPS_1' in globals():
-        fps_1 = FPS_1
-    else:
-        fps_1 = 1 / VideoData1["Seconds"].diff().mean()
+    # Get manual blinks if available
+    manual_blinks_for_v1 = manual_blinks_v1 if 'manual_blinks_v1' in globals() and manual_blinks_v1 is not None else None
     
-    long_blink_warning_frames = int(long_blink_warning_ms / 1000 * fps_1)
-    
-    if debug:
-        print(f"  FPS: {fps_1:.2f}")
-        print(f"  Long blink warning threshold: {long_blink_warning_frames} frames ({long_blink_warning_ms}ms)")
-    
-    # Use hard threshold from user parameters
-    blink_threshold_v1 = blink_instance_score_threshold
-    if debug:
-        print(f"  Using hard threshold: {blink_threshold_v1:.4f}")
-    
-    # Find all blink segments - use very lenient min_frames (1) to capture all segments
-    # No filtering by frame count - short blinks are OK to interpolate
-    # No merging - we want to preserve good data between separate blinks
-    all_blink_segments_v1 = pf.find_blink_segments(
-        VideoData1['instance.score'], 
-        blink_threshold_v1, 
-        min_frames=1,  # Very lenient to capture all segments
-        max_frames=999999  # Very high limit - essentially no maximum
+    # Run blink detection
+    blink_results_v1 = pf.detect_blinks_for_video(
+        video_data=VideoData1,
+        columns_of_interest=columns_of_interest,
+        blink_instance_score_threshold=blink_instance_score_threshold,
+        long_blink_warning_ms=long_blink_warning_ms,
+        min_frames_threshold=4,
+        merge_window_frames=10,
+        fps=fps_1,
+        video_label=get_eye_label('VideoData1'),
+        manual_blinks=manual_blinks_for_v1,
+        debug=debug
     )
     
-    # Always print key blink detection stats
-    print(f"{get_eye_label('VideoData1')} - Found {len(all_blink_segments_v1)} blink segments")
-    
-    # Filter out blinks shorter than 4 frames
-    min_frames_threshold = 4
-    blink_segments_v1 = [blink for blink in all_blink_segments_v1 if blink['length'] >= min_frames_threshold]
-    short_blink_segments_v1 = [blink for blink in all_blink_segments_v1 if blink['length'] < min_frames_threshold]
-    
-    # Always print filtering stats
-    print(f"  After filtering <{min_frames_threshold} frames: {len(blink_segments_v1)} blink segment(s), {len(short_blink_segments_v1)} short segment(s) will be interpolated")
-    
-    # Merge blinks within 10 frames into blink bouts
-    merge_window_frames = 10
-    blink_bouts_v1 = pf.merge_nearby_blinks(blink_segments_v1, merge_window_frames)
-    
-    # Always print bout count
-    print(f"  After merging blinks within {merge_window_frames} frames: {len(blink_bouts_v1)} blink bout(s)")
-    
-    # Check for long blinks and warn if needed
-    long_blinks_warnings_v1 = []
-    for i, blink in enumerate(blink_segments_v1, 1):
-        start_idx = blink['start_idx']
-        end_idx = blink['end_idx']
-        start_time = VideoData1['Seconds'].iloc[start_idx]
-        end_time = VideoData1['Seconds'].iloc[end_idx]
-        duration_ms = (end_time - start_time) * 1000
-        
-        # Warn about very long blinks (may need manual verification)
-        if duration_ms > long_blink_warning_ms:
-            frame_start = int(VideoData1['frame_idx'].iloc[start_idx])
-            frame_end = int(VideoData1['frame_idx'].iloc[end_idx])
-            long_blinks_warnings_v1.append({
-                'blink_num': i,
-                'frames': f"{frame_start}-{frame_end}",
-                'duration_ms': duration_ms
-            })
-    
-    # Print warnings for long blinks
-    if len(long_blinks_warnings_v1) > 0:
-        print(f"\n   ⚠️ WARNING: Found {len(long_blinks_warnings_v1)} blink(s) longer than {long_blink_warning_ms}ms:")
-        for warn in long_blinks_warnings_v1:
-            print(f"      Blink {warn['blink_num']}: frames {warn['frames']}, duration {warn['duration_ms']:.1f}ms - Please verify this is a real blink in the video")
-    
-    if debug:
-        print(f"\n  Detailed blink detection information:")
-        print(f"  FPS: {fps_1:.2f}")
-        print(f"  Long blink warning threshold: {long_blink_warning_frames} frames ({long_blink_warning_ms}ms)")
-        print(f"  Using hard threshold: {blink_threshold_v1:.4f}")
-        print(f"  Detected {len(blink_segments_v1)} blink segment(s)\n")
-    
-    # Print all detected blinks once (detailed)
-    if debug and len(blink_segments_v1) > 0:
-        print(f"  Detected blinks:")
-        for i, blink in enumerate(blink_segments_v1, 1):
-            start_idx = blink['start_idx']
-            end_idx = blink['end_idx']
-            
-            # Calculate time range
-            start_time = VideoData1['Seconds'].iloc[start_idx]
-            end_time = VideoData1['Seconds'].iloc[end_idx]
-            duration_ms = (end_time - start_time) * 1000
-            
-            # Get actual frame numbers from frame_idx column
-            if 'frame_idx' in VideoData1.columns:
-                actual_start_frame = int(VideoData1['frame_idx'].iloc[start_idx])
-                actual_end_frame = int(VideoData1['frame_idx'].iloc[end_idx])
-                frame_info = f"frames {actual_start_frame}-{actual_end_frame}"
-            else:
-                actual_start_frame = start_idx
-                actual_end_frame = end_idx
-                frame_info = f"frames {actual_start_frame}-{actual_end_frame}"
-            
-            print(f"    Blink {i}: {frame_info}, {blink['length']} frames, {duration_ms:.1f}ms, mean score: {blink['mean_score']:.4f}")
-        
-        # DIAGNOSTIC: Direct comparison of manual vs auto-detected blinks (detailed)
-        if debug and ('manual_blinks_v1' in globals() and manual_blinks_v1 is not None):
-            # Get auto-detected blink frame ranges
-            auto_blinks_v1 = []
-            for i, blink in enumerate(blink_segments_v1, 1):
-                start_idx = blink['start_idx']
-                end_idx = blink['end_idx']
-                frame_start = int(VideoData1['frame_idx'].iloc[start_idx])
-                frame_end = int(VideoData1['frame_idx'].iloc[end_idx])
-                auto_blinks_v1.append({'num': i, 'start': frame_start, 'end': frame_end, 'start_idx': start_idx, 'end_idx': end_idx, 'length': blink['length']})
-            
-            print(f"\n   🔍 MANUAL vs AUTO-DETECTED BLINK COMPARISON:")
-            print(f"      Manual blinks: {len(manual_blinks_v1)}")
-            print(f"      Auto-detected blinks: {len(auto_blinks_v1)}")
-            
-            # Match manual blinks to auto-detected ones (find overlapping frames)
-            # Allow matching with multiple auto-detected blinks if manual blink is over-merged
-            print(f"\n   Manual → Auto matching (overlap analysis):")
-            for manual in manual_blinks_v1:
-                manual_length = manual['end'] - manual['start'] + 1
-                total_overlap = 0
-                matching_auto_blinks = []
-                
-                # Find all auto-detected blinks that overlap with this manual blink
-                for auto in auto_blinks_v1:
-                    overlap_start = max(manual['start'], auto['start'])
-                    overlap_end = min(manual['end'], auto['end'])
-                    if overlap_start <= overlap_end:
-                        overlap_frames = overlap_end - overlap_start + 1
-                        total_overlap += overlap_frames
-                        matching_auto_blinks.append({
-                            'auto': auto,
-                            'overlap': overlap_frames
-                        })
-                
-                # Calculate total overlap percentage
-                total_overlap_pct = (total_overlap / manual_length) * 100 if manual_length > 0 else 0
-                
-                # Match if total overlap is >= 40% (less stringent to handle over-merged manual blinks)
-                if total_overlap >= manual_length * 0.40:  # At least 40% overlap
-                    if len(matching_auto_blinks) == 1:
-                        # Single match
-                        match_info = matching_auto_blinks[0]
-                        best_match = match_info['auto']
-                        overlap = match_info['overlap']
-                        start_diff = best_match['start'] - manual['start']
-                        end_diff = best_match['end'] - manual['end']
-                        match_str = f"✅ MATCH: Auto blink {best_match['num']} (frames {best_match['start']}-{best_match['end']})"
-                        match_str += f", {overlap} frames overlap ({total_overlap_pct:.1f}%)"
-                        if start_diff != 0 or end_diff != 0:
-                            match_str += f", offset: start={start_diff:+d}, end={end_diff:+d}"
-                        print(f"      Manual {manual['num']}: {manual['start']}-{manual['end']} → {match_str}")
-                    else:
-                        # Multiple matches (manual blink is over-merged)
-                        auto_nums = [m['auto']['num'] for m in matching_auto_blinks]
-                        auto_ranges = [f"{m['auto']['start']}-{m['auto']['end']}" for m in matching_auto_blinks]
-                        match_str = f"✅ MATCH: Auto blinks {auto_nums} (frames: {', '.join(auto_ranges)})"
-                        match_str += f", total {total_overlap} frames overlap ({total_overlap_pct:.1f}%)"
-                        print(f"      Manual {manual['num']}: {manual['start']}-{manual['end']} → {match_str}")
-                else:
-                    print(f"      Manual {manual['num']}: {manual['start']}-{manual['end']} → ❌ NO MATCH FOUND")
-            
-            # Also check which auto-detected blinks don't have manual matches
-            print(f"\n   Auto-detected blinks without manual matches:")
-            unmatched_auto = []
-            for auto in auto_blinks_v1:
-                has_match = False
-                for manual in manual_blinks_v1:
-                    overlap_start = max(manual['start'], auto['start'])
-                    overlap_end = min(manual['end'], auto['end'])
-                    if overlap_start <= overlap_end:
-                        overlap_frames = overlap_end - overlap_start + 1
-                        manual_length = manual['end'] - manual['start'] + 1
-                        # Use same threshold as matching logic (40% of manual blink)
-                        if overlap_frames >= manual_length * 0.40:
-                            has_match = True
-                            break
-                if not has_match:
-                    unmatched_auto.append(auto)
-            
-            if len(unmatched_auto) > 0:
-                for auto in unmatched_auto:
-                    print(f"      Auto {auto['num']}: frames {auto['start']}-{auto['end']}, length={auto['length']} frames")
-            else:
-                print(f"      (all auto-detected blinks have manual matches)")
-        elif debug:
-            print(f"\n   ⚠️ WARNING: Manual blink comparison skipped - Video1_manual_blinks.csv not found in data_path")
-        
-        # Interpolate over short blinks (keep long blinks as NaN)
-        if debug:
-            print(f"\n  Interpolating short blinks (< {min_frames_threshold} frames):")
-        short_blink_frames_v1 = 0
-        if len(short_blink_segments_v1) > 0:
-            # Mark short blinks as NaN
-            for blink in short_blink_segments_v1:
-                start_idx = blink['start_idx']
-                end_idx = blink['end_idx']
-                VideoData1.loc[VideoData1.index[start_idx:end_idx+1], columns_of_interest] = np.nan
-                short_blink_frames_v1 += blink['length']
-            
-            # Interpolate all NaNs (this fills short blinks)
-            VideoData1[columns_of_interest] = VideoData1[columns_of_interest].interpolate(method='linear', limit_direction='both')
-            
-            if debug:
-                print(f"    Interpolated {short_blink_frames_v1} frames from {len(short_blink_segments_v1)} short blink segment(s)")
-        else:
-            if debug:
-                print(f"    No short blinks to interpolate")
-        
-        # Mark long blinks by setting coordinates to NaN (these remain as NaN, not interpolated)
-        recording_start_time = VideoData1['Seconds'].iloc[0]
-        total_blink_frames_v1 = 0
-        for blink in blink_segments_v1:
-            start_idx = blink['start_idx']
-            end_idx = blink['end_idx']
-            VideoData1.loc[VideoData1.index[start_idx:end_idx+1], columns_of_interest] = np.nan
-            total_blink_frames_v1 += blink['length']
-        
-        if debug:
-            print(f"  Total long blink frames marked (kept as NaN): {total_blink_frames_v1} frames "
-                  f"({total_blink_frames_v1/fps_1*1000:.1f}ms)")
-        
-        # Calculate blink bout rate
-        recording_duration_min = (VideoData1['Seconds'].iloc[-1] - VideoData1['Seconds'].iloc[0]) / 60
-        blink_bout_rate = len(blink_bouts_v1) / recording_duration_min if recording_duration_min > 0 else 0
-        if debug:
-            print(f"  Blink bout rate: {blink_bout_rate:.2f} blink bouts/minute")
-    else:
-        if debug:
-            print("  No blinks detected")
+    # Extract results to maintain compatibility with existing variable names
+    blink_segments_v1 = blink_results_v1['blink_segments']
+    short_blink_segments_v1 = blink_results_v1['short_blink_segments']
+    blink_bouts_v1 = blink_results_v1['blink_bouts']
+    all_blink_segments_v1 = blink_results_v1['all_blink_segments']
+    fps_1 = blink_results_v1['fps']  # Update fps_1 with calculated value
+    FPS_1 = fps_1  # Also update global FPS_1 for use elsewhere
+    long_blinks_warnings_v1 = blink_results_v1['long_blinks_warnings']
 
 # VideoData2 blink detection
 if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
-    if debug:
-        print(f"\n{get_eye_label('VideoData2')} - Blink Detection")
+    # Get FPS if available, otherwise will be calculated in function
+    fps_2 = FPS_2 if 'FPS_2' in globals() else None
     
-    # Calculate frame-based durations (using FPS_2 if available, otherwise estimate)
-    if 'FPS_2' in globals():
-        fps_2 = FPS_2
-    else:
-        fps_2 = 1 / VideoData2["Seconds"].diff().mean()
+    # Get manual blinks if available
+    manual_blinks_for_v2 = manual_blinks_v2 if 'manual_blinks_v2' in globals() and manual_blinks_v2 is not None else None
     
-    long_blink_warning_frames = int(long_blink_warning_ms / 1000 * fps_2)
-    
-    if debug:
-        print(f"  FPS: {fps_2:.2f}")
-        print(f"  Long blink warning threshold: {long_blink_warning_frames} frames ({long_blink_warning_ms}ms)")
-    
-    # Use hard threshold from user parameters
-    blink_threshold_v2 = blink_instance_score_threshold
-    if debug:
-        print(f"  Using hard threshold: {blink_threshold_v2:.4f}")
-    
-    # Find all blink segments - use very lenient min_frames (1) to capture all segments
-    # No filtering by frame count - short blinks are OK to interpolate
-    # No merging - we want to preserve good data between separate blinks
-    all_blink_segments_v2 = pf.find_blink_segments(
-        VideoData2['instance.score'], 
-        blink_threshold_v2, 
-        min_frames=1,  # Very lenient to capture all segments
-        max_frames=999999  # Very high limit - essentially no maximum
+    # Run blink detection
+    blink_results_v2 = pf.detect_blinks_for_video(
+        video_data=VideoData2,
+        columns_of_interest=columns_of_interest,
+        blink_instance_score_threshold=blink_instance_score_threshold,
+        long_blink_warning_ms=long_blink_warning_ms,
+        min_frames_threshold=4,
+        merge_window_frames=10,
+        fps=fps_2,
+        video_label=get_eye_label('VideoData2'),
+        manual_blinks=manual_blinks_for_v2,
+        debug=debug
     )
     
-    # Always print key blink detection stats
-    print(f"{get_eye_label('VideoData2')} - Found {len(all_blink_segments_v2)} blink segments")
-    
-    # Filter out blinks shorter than 4 frames
-    min_frames_threshold = 4
-    blink_segments_v2 = [blink for blink in all_blink_segments_v2 if blink['length'] >= min_frames_threshold]
-    short_blink_segments_v2 = [blink for blink in all_blink_segments_v2 if blink['length'] < min_frames_threshold]
-    
-    # Always print filtering stats
-    print(f"  After filtering <{min_frames_threshold} frames: {len(blink_segments_v2)} blink segment(s), {len(short_blink_segments_v2)} short segment(s) will be interpolated")
-    
-    # Merge blinks within 10 frames into blink bouts
-    merge_window_frames = 10
-    blink_bouts_v2 = pf.merge_nearby_blinks(blink_segments_v2, merge_window_frames)
-    
-    # Always print bout count
-    print(f"  After merging blinks within {merge_window_frames} frames: {len(blink_bouts_v2)} blink bout(s)")
-    
-    # Check for long blinks and warn if needed
-    long_blinks_warnings_v2 = []
-    for i, blink in enumerate(blink_segments_v2, 1):
-        start_idx = blink['start_idx']
-        end_idx = blink['end_idx']
-        start_time = VideoData2['Seconds'].iloc[start_idx]
-        end_time = VideoData2['Seconds'].iloc[end_idx]
-        duration_ms = (end_time - start_time) * 1000
-        
-        # Warn about very long blinks (may need manual verification)
-        if duration_ms > long_blink_warning_ms:
-            frame_start = int(VideoData2['frame_idx'].iloc[start_idx])
-            frame_end = int(VideoData2['frame_idx'].iloc[end_idx])
-            long_blinks_warnings_v2.append({
-                'blink_num': i,
-                'frames': f"{frame_start}-{frame_end}",
-                'duration_ms': duration_ms
-            })
-    
-    # Print warnings for long blinks
-    if len(long_blinks_warnings_v2) > 0:
-        print(f"\n   ⚠️ WARNING: Found {len(long_blinks_warnings_v2)} blink(s) longer than {long_blink_warning_ms}ms:")
-        for warn in long_blinks_warnings_v2:
-            print(f"      Blink {warn['blink_num']}: frames {warn['frames']}, duration {warn['duration_ms']:.1f}ms - Please verify this is a real blink in the video")
-    
-    if debug:
-        print(f"\n  Detailed blink detection information:")
-        print(f"  FPS: {fps_2:.2f}")
-        print(f"  Long blink warning threshold: {long_blink_warning_frames} frames ({long_blink_warning_ms}ms)")
-        print(f"  Using hard threshold: {blink_threshold_v2:.4f}")
-        print(f"  Detected {len(blink_segments_v2)} blink segment(s)\n")
-    
-    # Print all detected blinks once (detailed)
-    if debug and len(blink_segments_v2) > 0:
-        print(f"  Detected blinks:")
-        for i, blink in enumerate(blink_segments_v2, 1):
-            start_idx = blink['start_idx']
-            end_idx = blink['end_idx']
-            
-            # Calculate time range
-            start_time = VideoData2['Seconds'].iloc[start_idx]
-            end_time = VideoData2['Seconds'].iloc[end_idx]
-            duration_ms = (end_time - start_time) * 1000
-            
-            # Get actual frame numbers from frame_idx column
-            if 'frame_idx' in VideoData2.columns:
-                actual_start_frame = int(VideoData2['frame_idx'].iloc[start_idx])
-                actual_end_frame = int(VideoData2['frame_idx'].iloc[end_idx])
-                frame_info = f"frames {actual_start_frame}-{actual_end_frame}"
-            else:
-                actual_start_frame = start_idx
-                actual_end_frame = end_idx
-                frame_info = f"frames {actual_start_frame}-{actual_end_frame}"
-            
-            print(f"    Blink {i}: {frame_info}, {blink['length']} frames, {duration_ms:.1f}ms, mean score: {blink['mean_score']:.4f}")
-        
-        # DIAGNOSTIC: Direct comparison of manual vs auto-detected blinks (detailed)
-        if debug and ('manual_blinks_v2' in globals() and manual_blinks_v2 is not None):
-            # Get auto-detected blink frame ranges
-            auto_blinks_v2 = []
-            for i, blink in enumerate(blink_segments_v2, 1):
-                start_idx = blink['start_idx']
-                end_idx = blink['end_idx']
-                frame_start = int(VideoData2['frame_idx'].iloc[start_idx])
-                frame_end = int(VideoData2['frame_idx'].iloc[end_idx])
-                auto_blinks_v2.append({'num': i, 'start': frame_start, 'end': frame_end, 'start_idx': start_idx, 'end_idx': end_idx, 'length': blink['length']})
-            
-            print(f"\n   🔍 MANUAL vs AUTO-DETECTED BLINK COMPARISON:")
-            print(f"      Manual blinks: {len(manual_blinks_v2)}")
-            print(f"      Auto-detected blinks: {len(auto_blinks_v2)}")
-            
-            # Match manual blinks to auto-detected ones (find overlapping frames)
-            # Allow matching with multiple auto-detected blinks if manual blink is over-merged
-            print(f"\n   Manual → Auto matching (overlap analysis):")
-            for manual in manual_blinks_v2:
-                manual_length = manual['end'] - manual['start'] + 1
-                total_overlap = 0
-                matching_auto_blinks = []
-                
-                # Find all auto-detected blinks that overlap with this manual blink
-                for auto in auto_blinks_v2:
-                    overlap_start = max(manual['start'], auto['start'])
-                    overlap_end = min(manual['end'], auto['end'])
-                    if overlap_start <= overlap_end:
-                        overlap_frames = overlap_end - overlap_start + 1
-                        total_overlap += overlap_frames
-                        matching_auto_blinks.append({
-                            'auto': auto,
-                            'overlap': overlap_frames
-                        })
-                
-                # Calculate total overlap percentage
-                total_overlap_pct = (total_overlap / manual_length) * 100 if manual_length > 0 else 0
-                
-                # Match if total overlap is >= 40% (less stringent to handle over-merged manual blinks)
-                if total_overlap >= manual_length * 0.40:  # At least 40% overlap
-                    if len(matching_auto_blinks) == 1:
-                        # Single match
-                        match_info = matching_auto_blinks[0]
-                        best_match = match_info['auto']
-                        overlap = match_info['overlap']
-                        start_diff = best_match['start'] - manual['start']
-                        end_diff = best_match['end'] - manual['end']
-                        match_str = f"✅ MATCH: Auto blink {best_match['num']} (frames {best_match['start']}-{best_match['end']})"
-                        match_str += f", {overlap} frames overlap ({total_overlap_pct:.1f}%)"
-                        if start_diff != 0 or end_diff != 0:
-                            match_str += f", offset: start={start_diff:+d}, end={end_diff:+d}"
-                        print(f"      Manual {manual['num']}: {manual['start']}-{manual['end']} → {match_str}")
-                    else:
-                        # Multiple matches (manual blink is over-merged)
-                        auto_nums = [m['auto']['num'] for m in matching_auto_blinks]
-                        auto_ranges = [f"{m['auto']['start']}-{m['auto']['end']}" for m in matching_auto_blinks]
-                        match_str = f"✅ MATCH: Auto blinks {auto_nums} (frames: {', '.join(auto_ranges)})"
-                        match_str += f", total {total_overlap} frames overlap ({total_overlap_pct:.1f}%)"
-                        print(f"      Manual {manual['num']}: {manual['start']}-{manual['end']} → {match_str}")
-                else:
-                    print(f"      Manual {manual['num']}: {manual['start']}-{manual['end']} → ❌ NO MATCH FOUND")
-            
-            # Also check which auto-detected blinks don't have manual matches
-            print(f"\n   Auto-detected blinks without manual matches:")
-            unmatched_auto = []
-            for auto in auto_blinks_v2:
-                has_match = False
-                for manual in manual_blinks_v2:
-                    overlap_start = max(manual['start'], auto['start'])
-                    overlap_end = min(manual['end'], auto['end'])
-                    if overlap_start <= overlap_end:
-                        overlap_frames = overlap_end - overlap_start + 1
-                        manual_length = manual['end'] - manual['start'] + 1
-                        # Use same threshold as matching logic (40% of manual blink)
-                        if overlap_frames >= manual_length * 0.40:
-                            has_match = True
-                            break
-                if not has_match:
-                    unmatched_auto.append(auto)
-            
-            if len(unmatched_auto) > 0:
-                for auto in unmatched_auto:
-                    print(f"      Auto {auto['num']}: frames {auto['start']}-{auto['end']}, length={auto['length']} frames")
-            else:
-                print(f"      (all auto-detected blinks have manual matches)")
-        elif debug:
-            print(f"\n   ⚠️ WARNING: Manual blink comparison skipped - Video2_manual_blinks.csv not found in data_path")
-        
-        # Interpolate over short blinks (keep long blinks as NaN)
-        if debug:
-            print(f"\n  Interpolating short blinks (< {min_frames_threshold} frames):")
-        short_blink_frames_v2 = 0
-        if len(short_blink_segments_v2) > 0:
-            # Mark short blinks as NaN
-            for blink in short_blink_segments_v2:
-                start_idx = blink['start_idx']
-                end_idx = blink['end_idx']
-                VideoData2.loc[VideoData2.index[start_idx:end_idx+1], columns_of_interest] = np.nan
-                short_blink_frames_v2 += blink['length']
-            
-            # Interpolate all NaNs (this fills short blinks)
-            VideoData2[columns_of_interest] = VideoData2[columns_of_interest].interpolate(method='linear', limit_direction='both')
-            
-            if debug:
-                print(f"    Interpolated {short_blink_frames_v2} frames from {len(short_blink_segments_v2)} short blink segment(s)")
-        else:
-            if debug:
-                print(f"    No short blinks to interpolate")
-        
-        # Mark long blinks by setting coordinates to NaN (these remain as NaN, not interpolated)
-        recording_start_time = VideoData2['Seconds'].iloc[0]
-        total_blink_frames_v2 = 0
-        for blink in blink_segments_v2:
-            start_idx = blink['start_idx']
-            end_idx = blink['end_idx']
-            VideoData2.loc[VideoData2.index[start_idx:end_idx+1], columns_of_interest] = np.nan
-            total_blink_frames_v2 += blink['length']
-        
-        if debug:
-            print(f"  Total long blink frames marked (kept as NaN): {total_blink_frames_v2} frames "
-                  f"({total_blink_frames_v2/fps_2*1000:.1f}ms)")
-        
-        # Calculate blink bout rate
-        recording_duration_min = (VideoData2['Seconds'].iloc[-1] - VideoData2['Seconds'].iloc[0]) / 60
-        blink_bout_rate = len(blink_bouts_v2) / recording_duration_min if recording_duration_min > 0 else 0
-        if debug:
-            print(f"  Blink bout rate: {blink_bout_rate:.2f} blink bouts/minute")
-    else:
-        if debug:
-            print("  No blinks detected")
+    # Extract results to maintain compatibility with existing variable names
+    blink_segments_v2 = blink_results_v2['blink_segments']
+    short_blink_segments_v2 = blink_results_v2['short_blink_segments']
+    blink_bouts_v2 = blink_results_v2['blink_bouts']
+    all_blink_segments_v2 = blink_results_v2['all_blink_segments']
+    fps_2 = blink_results_v2['fps']  # Update fps_2 with calculated value
+    FPS_2 = fps_2  # Also update global FPS_2 for use elsewhere
+    long_blinks_warnings_v2 = blink_results_v2['long_blinks_warnings']
 
 print("\n✅ Blink detection complete. Blink periods remain as NaN (not interpolated).")
 
@@ -1637,22 +1225,6 @@ if ('VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap and
 # Save blink detection results to CSV files
 if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
     if len(blink_segments_v1) > 0:
-        # Helper function to check if an auto-detected blink matches any manual blink
-        def check_manual_match(auto_start, auto_end, manual_blinks_list):
-            """Check if auto-detected blink matches any manual blink (>=40% overlap to handle over-merged manual blinks)"""
-            if manual_blinks_list is None:
-                return 0
-            for manual in manual_blinks_list:
-                overlap_start = max(manual['start'], auto_start)
-                overlap_end = min(manual['end'], auto_end)
-                if overlap_start <= overlap_end:
-                    overlap_frames = overlap_end - overlap_start + 1
-                    manual_length = manual['end'] - manual['start'] + 1
-                    # Use 40% threshold to match the diagnostic comparison logic
-                    if overlap_frames >= manual_length * 0.40:
-                        return 1
-            return 0
-        
         # Collect blink information
         blink_data_v1 = []
         manual_blinks_for_csv = None
@@ -1671,8 +1243,8 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
                 first_frame = start_idx
                 last_frame = end_idx
             
-            # Check if this blink matches a manual one
-            matches_manual = check_manual_match(first_frame, last_frame, manual_blinks_for_csv)
+            # Check if this blink matches a manual one (using function from processing_functions)
+            matches_manual = pf.check_manual_match(first_frame, last_frame, manual_blinks_for_csv)
             
             blink_data_v1.append({
                 'blink_number': i,
@@ -1690,22 +1262,6 @@ if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
 
 if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
     if len(blink_segments_v2) > 0:
-        # Helper function to check if an auto-detected blink matches any manual blink
-        def check_manual_match(auto_start, auto_end, manual_blinks_list):
-            """Check if auto-detected blink matches any manual blink (>=40% overlap to handle over-merged manual blinks)"""
-            if manual_blinks_list is None:
-                return 0
-            for manual in manual_blinks_list:
-                overlap_start = max(manual['start'], auto_start)
-                overlap_end = min(manual['end'], auto_end)
-                if overlap_start <= overlap_end:
-                    overlap_frames = overlap_end - overlap_start + 1
-                    manual_length = manual['end'] - manual['start'] + 1
-                    # Use 40% threshold to match the diagnostic comparison logic
-                    if overlap_frames >= manual_length * 0.40:
-                        return 1
-            return 0
-        
         # Collect blink information
         blink_data_v2 = []
         manual_blinks_for_csv = None
@@ -1724,8 +1280,8 @@ if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
                 first_frame = start_idx
                 last_frame = end_idx
             
-            # Check if this blink matches a manual one
-            matches_manual = check_manual_match(first_frame, last_frame, manual_blinks_for_csv)
+            # Check if this blink matches a manual one (using function from processing_functions)
+            matches_manual = pf.check_manual_match(first_frame, last_frame, manual_blinks_for_csv)
             
             blink_data_v2.append({
                 'blink_number': i,

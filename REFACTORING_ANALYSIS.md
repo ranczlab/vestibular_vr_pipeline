@@ -3,6 +3,73 @@
 ## Summary
 The notebook `SANDBOX_1_1_Loading_+_Saccade_detection.py` is 4429 lines long and contains several functions and repeated code patterns that should be moved to modules.
 
+## Why Code is Duplicated
+
+**Root Cause**: The notebook processes two separate video datasets (`VideoData1` and `VideoData2`) that may or may not exist independently. Each video is processed with identical logic, but using different variable names:
+
+- `VideoData1` vs `VideoData2`
+- `FPS_1` vs `FPS_2`
+- `blink_segments_v1` vs `blink_segments_v2`
+- `VideoData1_Has_Sleap` vs `VideoData2_Has_Sleap`
+
+**Pattern**: Each duplicated block follows this structure:
+```python
+if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
+    # Process VideoData1
+    ...
+
+if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
+    # Process VideoData2 (identical logic, different variable names)
+    ...
+```
+
+**Refactoring Strategy**: Extract each duplicated block into a single function that accepts the video data and related parameters as arguments. Then call it twice in the notebook - once for VideoData1 (if it exists) and once for VideoData2 (if it exists).
+
+**Example Refactoring**:
+```python
+# BEFORE (in notebook):
+if VideoData1_Has_Sleap:
+    mean_center_x1 = VideoData1['center.x'].median()
+    mean_center_y1 = VideoData1['center.y'].median()
+    for col in columns_of_interest:
+        if '.x' in col:
+            VideoData1[col] = VideoData1[col] - mean_center_x1
+        elif '.y' in col:
+            VideoData1[col] = VideoData1[col] - mean_center_y1
+
+if VideoData2_Has_Sleap:
+    mean_center_x2 = VideoData2['center.x'].median()
+    mean_center_y2 = VideoData2['center.y'].median()
+    for col in columns_of_interest:
+        if '.x' in col:
+            VideoData2[col] = VideoData2[col] - mean_center_x2
+        elif '.y' in col:
+            VideoData2[col] = VideoData2[col] - mean_center_y2
+
+# AFTER (function in module):
+def center_coordinates_to_median(video_data, columns_of_interest, video_label=""):
+    mean_center_x = video_data['center.x'].median()
+    mean_center_y = video_data['center.y'].median()
+    print(f"{video_label} - Centering on median pupil centre: {mean_center_x}, {mean_center_y}")
+    for col in columns_of_interest:
+        if '.x' in col:
+            video_data[col] = video_data[col] - mean_center_x
+        elif '.y' in col:
+            video_data[col] = video_data[col] - mean_center_y
+    return video_data.copy()
+
+# AFTER (in notebook):
+if VideoData1_Has_Sleap:
+    VideoData1_centered = center_coordinates_to_median(
+        VideoData1, columns_of_interest, get_eye_label('VideoData1')
+    )
+
+if VideoData2_Has_Sleap:
+    VideoData2_centered = center_coordinates_to_median(
+        VideoData2, columns_of_interest, get_eye_label('VideoData2')
+    )
+```
+
 ## Functions Currently Defined in Notebook
 
 ### 1. `get_eye_label(key)` - Line 67-69
@@ -151,13 +218,15 @@ sleap/
 ## Priority Order for Refactoring
 
 ### High Priority (Most Duplicated Code)
-1. **Blink Detection** (#12) - ~240 lines duplicated
-2. **Manual Blink Loading** (#6) - Simple but duplicated
-3. **Confidence Score Analysis** (#7) - Duplicated
-4. **Score-Based Filtering** (#9) - Duplicated
-5. **Outlier Analysis** (#10) - Duplicated
-6. **Instance Score Analysis** (#11) - Duplicated
-7. **Save Blink Results** (#14) - Duplicated
+**Note**: All of these are duplicated because they handle VideoData1 and VideoData2 separately. Each can be refactored into a single function that processes one video, then called twice.
+
+1. **Blink Detection** (#12) - ~240 lines duplicated (VideoData1 vs VideoData2)
+2. **Manual Blink Loading** (#6) - Simple but duplicated (VideoData1 vs VideoData2)
+3. **Confidence Score Analysis** (#7) - Duplicated (VideoData1 vs VideoData2)
+4. **Score-Based Filtering** (#9) - Duplicated (VideoData1 vs VideoData2)
+5. **Outlier Analysis** (#10) - Duplicated (VideoData1 vs VideoData2)
+6. **Instance Score Analysis** (#11) - Duplicated (VideoData1 vs VideoData2)
+7. **Save Blink Results** (#14) - Duplicated (VideoData1 vs VideoData2)
 
 ### Medium Priority (Long Functions)
 8. **QC Figure Creation** (#16) - ~250 lines
