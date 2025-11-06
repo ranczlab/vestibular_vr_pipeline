@@ -99,8 +99,8 @@ blink_instance_score_threshold = 3.8  # hard threshold for blink detection - fra
 # for saccades
 refractory_period = 0.1  # sec
 ## Separate adaptive saccade threshold (k) for each video:
-k1 = 5  # for VideoData1 (L) - 3-6 works well
-k2 = 5  # for VideoData2 (R) - 3-6 works well 
+k1 = 4.5  # for VideoData1 (L) - 3-6 works well
+k2 = 4.5  # for VideoData2 (R) - 3-6 works well 
 
 # for adaptive saccade threshold - Number of standard deviations (adjustable: 2-4 range works well) 
 onset_offset_fraction = 0.2  # to determine saccade onset and offset, i.e. o.2 is 20% of the peak velocity
@@ -1978,8 +1978,8 @@ if VideoData2_Has_Sleap:
 # for saccades
 refractory_period = 0.1  # sec
 # Separate adaptive saccade threshold (k) for each video:
-k1 = 6  # for VideoData1 (L) - 5-8 works well
-k2 = 6  # for VideoData2 (R) - 5-8 works well 
+k1 = 4.5  # for VideoData1 (L) - 5-8 works well
+k2 = 4.5  # for VideoData2 (R) - 5-8 works well 
 
 # for adaptive saccade threshold - Number of standard deviations (adjustable: 2-4 range works well) 
 onset_offset_fraction = 0.2  # to determine saccade onset and offset, i.e. o.2 is 20% of the peak velocity
