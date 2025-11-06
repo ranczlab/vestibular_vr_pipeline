@@ -917,10 +917,16 @@ def classify_saccades_orienting_vs_compensatory(
             print(f"  Post-saccade variance threshold: {post_saccade_variance_threshold:.2f} px²")
     
     # Stage 3: Classification logic
-    # Original simple logic (conservative approach):
+    # COMMENTED OUT: Bout-based classification removed per user request
+    # Orienting saccades can also occur in quick bouts (especially pairs), so bout detection
+    # alone is not sufficient for classification. Bout detection is kept for analysis purposes
+    # but classification now uses only feature-based logic for all saccades.
+    # Original logic (now commented):
     # - If in a bout (bout_size >= 2) → automatically compensatory
     # - If isolated → use feature-based classification
-    # This is the starting point - can be refined later if needed
+    
+    # Initialize confidence column
+    all_saccades_df['classification_confidence'] = np.nan
     
     for idx, saccade in all_saccades_df.iterrows():
         bout_size = saccade['bout_size']
@@ -930,36 +936,172 @@ def classify_saccades_orienting_vs_compensatory(
         post_change = saccade['post_saccade_position_change']
         amplitude = saccade['amplitude']
         
-        # Classification rules:
-        # 1. If in a bout (bout_size >= 2), classify as compensatory
-        # 2. If isolated, use features:
-        #    - Pre-saccade velocity > threshold OR pre-saccade drift significant → compensatory
-        #    - Post-saccade position change > amplitude * threshold_percent → compensatory (eye continues moving)
-        #    - Pre-saccade velocity low AND post-saccade stable (variance AND position change) → orienting
+        # Classification rules (now applies to ALL saccades, regardless of bout_size):
+        # COMMENTED OUT: Bout-based classification
+        # if bout_size >= 2:
+        #     # Multiple saccades in bout → compensatory
+        #     all_saccades_df.loc[idx, 'saccade_type'] = 'compensatory'
+        # else:
+        #     # Isolated saccade - use feature-based classification
         
-        if bout_size >= 2:
-            # Multiple saccades in bout → compensatory
+        # Feature-based classification (applies to all saccades):
+        # - Pre-saccade velocity > threshold OR pre-saccade drift significant → compensatory
+        # - Post-saccade position change > amplitude * threshold_percent → compensatory (eye continues moving)
+        # - Pre-saccade velocity low AND post-saccade stable (variance AND position change) → orienting
+        
+        # Calculate position change threshold relative to amplitude
+        position_change_threshold = amplitude * (post_saccade_position_change_threshold_percent / 100.0)
+        
+        # Check for compensatory indicators
+        has_pre_saccade_drift = (pre_vel > pre_saccade_velocity_threshold or pre_drift > pre_saccade_drift_threshold)
+        has_post_saccade_movement = (post_change > position_change_threshold)
+        
+        # Calculate confidence score based on feature agreement and strength
+        # Confidence ranges from 0.0 (uncertain) to 1.0 (very confident)
+        confidence = 0.5  # Start with medium confidence
+        
+        if has_pre_saccade_drift or has_post_saccade_movement:
+            # Evidence of drift/compensation → compensatory
             all_saccades_df.loc[idx, 'saccade_type'] = 'compensatory'
-        else:
-            # Isolated saccade - use feature-based classification
-            # Calculate position change threshold relative to amplitude
-            position_change_threshold = amplitude * (post_saccade_position_change_threshold_percent / 100.0)
             
-            # Check for compensatory indicators
-            has_pre_saccade_drift = (pre_vel > pre_saccade_velocity_threshold or pre_drift > pre_saccade_drift_threshold)
-            has_post_saccade_movement = (post_change > position_change_threshold)
+            # Calculate confidence for compensatory classification
+            compensatory_indicators = 0
+            strength_scores = []
             
-            if has_pre_saccade_drift or has_post_saccade_movement:
-                # Evidence of drift/compensation → compensatory
-                all_saccades_df.loc[idx, 'saccade_type'] = 'compensatory'
-            elif (pre_vel <= pre_saccade_velocity_threshold and 
-                  post_var < post_saccade_variance_threshold and
-                  post_change <= position_change_threshold):
-                # Stable before and after → orienting
-                all_saccades_df.loc[idx, 'saccade_type'] = 'orienting'
+            # Check pre-saccade velocity indicator
+            if pre_vel > pre_saccade_velocity_threshold:
+                compensatory_indicators += 1
+                # Normalized distance: how far above threshold (clamped to reasonable range)
+                if pre_saccade_velocity_threshold > 0:
+                    normalized_dist = min((pre_vel - pre_saccade_velocity_threshold) / pre_saccade_velocity_threshold, 2.0)
+                    strength_scores.append(normalized_dist)
+            
+            # Check pre-saccade drift indicator
+            if pre_drift > pre_saccade_drift_threshold:
+                compensatory_indicators += 1
+                # Normalized distance: how far above threshold
+                if pre_saccade_drift_threshold > 0:
+                    normalized_dist = min((pre_drift - pre_saccade_drift_threshold) / pre_saccade_drift_threshold, 2.0)
+                    strength_scores.append(normalized_dist)
+            
+            # Check post-saccade movement indicator
+            if post_change > position_change_threshold:
+                compensatory_indicators += 1
+                # Normalized distance: how far above threshold
+                if position_change_threshold > 0:
+                    normalized_dist = min((post_change - position_change_threshold) / position_change_threshold, 2.0)
+                    strength_scores.append(normalized_dist)
+            
+            # Count orienting indicators (disagree with compensatory)
+            orienting_indicators = 0
+            if pre_vel <= pre_saccade_velocity_threshold and pre_drift <= pre_saccade_drift_threshold:
+                orienting_indicators += 1
+            if post_var < post_saccade_variance_threshold:
+                orienting_indicators += 1
+            if post_change <= position_change_threshold:
+                orienting_indicators += 1
+            
+            # Base confidence from feature agreement
+            # More compensatory indicators = higher confidence
+            # More orienting indicators = lower confidence
+            total_indicators = compensatory_indicators + orienting_indicators
+            if total_indicators > 0:
+                agreement_ratio = compensatory_indicators / total_indicators
+                # Map agreement ratio to confidence: 0.5 (balanced) to 0.9 (strong agreement)
+                base_confidence = 0.5 + (agreement_ratio - 0.5) * 0.8
+            
+            # Strength modifier: how strongly features agree
+            if len(strength_scores) > 0:
+                avg_strength = np.mean(strength_scores)
+                # Map strength to modifier: ±0.1 based on average strength
+                # Use tanh to cap the modifier
+                strength_modifier = np.tanh(avg_strength) * 0.1
+                confidence = np.clip(base_confidence + strength_modifier, 0.0, 1.0)
             else:
-                # Default: if uncertain, classify as compensatory (conservative)
-                all_saccades_df.loc[idx, 'saccade_type'] = 'compensatory'
+                confidence = base_confidence
+            
+            # Rule-based boost: multiple strong indicators
+            if compensatory_indicators >= 2 and len(strength_scores) > 0 and np.mean(strength_scores) > 0.5:
+                confidence = min(confidence + 0.1, 1.0)
+            
+        elif (pre_vel <= pre_saccade_velocity_threshold and 
+              post_var < post_saccade_variance_threshold and
+              post_change <= position_change_threshold):
+            # Stable before and after → orienting
+            all_saccades_df.loc[idx, 'saccade_type'] = 'orienting'
+            
+            # Calculate confidence for orienting classification
+            orienting_indicators = 0
+            strength_scores = []
+            
+            # Check pre-saccade velocity (should be low)
+            if pre_vel <= pre_saccade_velocity_threshold:
+                orienting_indicators += 1
+                # Normalized distance: how far below threshold
+                if pre_saccade_velocity_threshold > 0:
+                    normalized_dist = min((pre_saccade_velocity_threshold - pre_vel) / pre_saccade_velocity_threshold, 2.0)
+                    strength_scores.append(normalized_dist)
+            
+            # Check pre-saccade drift (should be low)
+            if pre_drift <= pre_saccade_drift_threshold:
+                orienting_indicators += 1
+                # Normalized distance: how far below threshold
+                if pre_saccade_drift_threshold > 0:
+                    normalized_dist = min((pre_saccade_drift_threshold - pre_drift) / pre_saccade_drift_threshold, 2.0)
+                    strength_scores.append(normalized_dist)
+            
+            # Check post-saccade variance (should be low)
+            if post_var < post_saccade_variance_threshold:
+                orienting_indicators += 1
+                # Normalized distance: how far below threshold
+                if post_saccade_variance_threshold > 0:
+                    normalized_dist = min((post_saccade_variance_threshold - post_var) / post_saccade_variance_threshold, 2.0)
+                    strength_scores.append(normalized_dist)
+            
+            # Check post-saccade position change (should be low relative to amplitude)
+            if post_change <= position_change_threshold:
+                orienting_indicators += 1
+                # Normalized distance: how far below threshold
+                if position_change_threshold > 0:
+                    normalized_dist = min((position_change_threshold - post_change) / position_change_threshold, 2.0)
+                    strength_scores.append(normalized_dist)
+            
+            # Count compensatory indicators (disagree with orienting)
+            compensatory_indicators = 0
+            if pre_vel > pre_saccade_velocity_threshold or pre_drift > pre_saccade_drift_threshold:
+                compensatory_indicators += 1
+            if post_change > position_change_threshold:
+                compensatory_indicators += 1
+            
+            # Base confidence from feature agreement
+            total_indicators = orienting_indicators + compensatory_indicators
+            if total_indicators > 0:
+                agreement_ratio = orienting_indicators / total_indicators
+                # Map agreement ratio to confidence: 0.5 (balanced) to 0.9 (strong agreement)
+                base_confidence = 0.5 + (agreement_ratio - 0.5) * 0.8
+            
+            # Strength modifier: how strongly features agree
+            if len(strength_scores) > 0:
+                avg_strength = np.mean(strength_scores)
+                # Map strength to modifier: ±0.1 based on average strength
+                strength_modifier = np.tanh(avg_strength) * 0.1
+                confidence = np.clip(base_confidence + strength_modifier, 0.0, 1.0)
+            else:
+                confidence = base_confidence
+            
+            # Rule-based boost: all conditions met strongly
+            if orienting_indicators >= 3 and len(strength_scores) > 0 and np.mean(strength_scores) > 0.5:
+                confidence = min(confidence + 0.1, 1.0)
+            
+        else:
+            # Default: if uncertain, classify as compensatory (conservative)
+            all_saccades_df.loc[idx, 'saccade_type'] = 'compensatory'
+            
+            # Low confidence for default classification (conflicting or weak indicators)
+            confidence = 0.3
+        
+        # Store confidence score
+        all_saccades_df.loc[idx, 'classification_confidence'] = confidence
     
     # Print statistics
     if verbose:
@@ -974,6 +1116,33 @@ def classify_saccades_orienting_vs_compensatory(
         print(f"  Compensatory saccades: {n_compensatory} ({n_compensatory/len(all_saccades_df)*100:.1f}%)")
         print(f"  Detected bouts: {n_bouts}")
         print(f"  Isolated saccades: {n_isolated}")
+        
+        # Confidence statistics
+        if 'classification_confidence' in all_saccades_df.columns:
+            conf_mean = all_saccades_df['classification_confidence'].mean()
+            conf_std = all_saccades_df['classification_confidence'].std()
+            conf_min = all_saccades_df['classification_confidence'].min()
+            conf_max = all_saccades_df['classification_confidence'].max()
+            print(f"\n  Classification Confidence:")
+            print(f"    Mean: {conf_mean:.3f} ± {conf_std:.3f}")
+            print(f"    Range: [{conf_min:.3f}, {conf_max:.3f}]")
+            
+            # Confidence by type
+            if n_orienting > 0:
+                orienting_conf = all_saccades_df[all_saccades_df['saccade_type'] == 'orienting']['classification_confidence']
+                print(f"    Orienting: {orienting_conf.mean():.3f} ± {orienting_conf.std():.3f}")
+            if n_compensatory > 0:
+                compensatory_conf = all_saccades_df[all_saccades_df['saccade_type'] == 'compensatory']['classification_confidence']
+                print(f"    Compensatory: {compensatory_conf.mean():.3f} ± {compensatory_conf.std():.3f}")
+            
+            # Count by confidence levels
+            high_conf = (all_saccades_df['classification_confidence'] >= 0.7).sum()
+            med_conf = ((all_saccades_df['classification_confidence'] >= 0.4) & 
+                       (all_saccades_df['classification_confidence'] < 0.7)).sum()
+            low_conf = (all_saccades_df['classification_confidence'] < 0.4).sum()
+            print(f"    High confidence (≥0.7): {high_conf} ({high_conf/len(all_saccades_df)*100:.1f}%)")
+            print(f"    Medium confidence (0.4-0.7): {med_conf} ({med_conf/len(all_saccades_df)*100:.1f}%)")
+            print(f"    Low confidence (<0.4): {low_conf} ({low_conf/len(all_saccades_df)*100:.1f}%)")
         
         if n_orienting > 0:
             orienting_df = all_saccades_df[all_saccades_df['saccade_type'] == 'orienting']

@@ -99,7 +99,7 @@ blink_instance_score_threshold = 3.8  # hard threshold for blink detection - fra
 # for saccades
 refractory_period = 0.1  # sec
 ## Separate adaptive saccade threshold (k) for each video:
-k1 = 4.5  # for VideoData1 (L) - 3-6 works well
+k1 = 4.2  # for VideoData1 (L) - 3-6 works well
 k2 = 4.5  # for VideoData2 (R) - 3-6 works well 
 
 # for adaptive saccade threshold - Number of standard deviations (adjustable: 2-4 range works well) 
@@ -1978,7 +1978,7 @@ if VideoData2_Has_Sleap:
 # for saccades
 refractory_period = 0.1  # sec
 # Separate adaptive saccade threshold (k) for each video:
-k1 = 4.5  # for VideoData1 (L) - 5-8 works well
+k1 = 4.2  # for VideoData1 (L) - 5-8 works well
 k2 = 4.5  # for VideoData2 (R) - 5-8 works well 
 
 # for adaptive saccade threshold - Number of standard deviations (adjustable: 2-4 range works well) 
@@ -3920,6 +3920,16 @@ for video_key, res in saccade_results.items():
             print(f"    Mean: {bout_sizes.mean():.2f} ± {bout_sizes.std():.2f} saccades")
             print(f"    Range: {bout_sizes.min():.0f} - {bout_sizes.max():.0f} saccades")
             print(f"    Median: {np.median(bout_sizes):.0f} saccades")
+        
+        # Classification confidence comparison
+        if 'classification_confidence' in all_saccades_df.columns:
+            orienting_conf = orienting_saccades['classification_confidence'].values
+            compensatory_conf = compensatory_saccades['classification_confidence'].values
+            conf_stat, conf_p = stats.mannwhitneyu(orienting_conf, compensatory_conf, alternative='two-sided')
+            print(f"\n  Classification Confidence:")
+            print(f"    Orienting: {orienting_conf.mean():.3f} ± {orienting_conf.std():.3f} (median: {np.median(orienting_conf):.3f})")
+            print(f"    Compensatory: {compensatory_conf.mean():.3f} ± {compensatory_conf.std():.3f} (median: {np.median(compensatory_conf):.3f})")
+            print(f"    Mann-Whitney U test: U={conf_stat:.1f}, p={conf_p:.4f}")
     else:
         print(f"  ⚠️ Cannot perform statistical comparisons - need both types present")
     
@@ -4121,6 +4131,80 @@ for video_key, res in saccade_results.items():
     fig_class.update_yaxes(title_text="Probability", row=2, col=3)
     
     fig_class.show()
+    
+    # Confidence distribution visualization
+    if 'classification_confidence' in all_saccades_df.columns:
+        fig_conf = make_subplots(
+            rows=1, cols=2,
+            subplot_titles=(
+                'Classification Confidence Distribution',
+                'Confidence by Saccade Type'
+            ),
+            horizontal_spacing=0.15
+        )
+        
+        # Overall confidence distribution
+        fig_conf.add_trace(
+            go.Histogram(
+                x=all_saccades_df['classification_confidence'],
+                nbinsx=30,
+                name='All Saccades',
+                marker_color='gray',
+                opacity=0.7,
+                histnorm='probability'
+            ),
+            row=1, col=1
+        )
+        
+        # Add vertical lines for confidence thresholds
+        fig_conf.add_vline(
+            x=0.7, line_dash="dash", line_color="green", 
+            annotation_text="High (≥0.7)", row=1, col=1
+        )
+        fig_conf.add_vline(
+            x=0.4, line_dash="dash", line_color="orange", 
+            annotation_text="Medium (0.4-0.7)", row=1, col=1
+        )
+        
+        # Confidence by type
+        if len(orienting_saccades) > 0:
+            fig_conf.add_trace(
+                go.Histogram(
+                    x=orienting_saccades['classification_confidence'],
+                    nbinsx=30,
+                    name='Orienting',
+                    marker_color='blue',
+                    opacity=0.6,
+                    histnorm='probability'
+                ),
+                row=1, col=2
+            )
+        if len(compensatory_saccades) > 0:
+            fig_conf.add_trace(
+                go.Histogram(
+                    x=compensatory_saccades['classification_confidence'],
+                    nbinsx=30,
+                    name='Compensatory',
+                    marker_color='orange',
+                    opacity=0.6,
+                    histnorm='probability'
+                ),
+                row=1, col=2
+            )
+        
+        fig_conf.update_layout(
+            title_text=f'Classification Confidence Analysis ({get_eye_label(video_key)})',
+            height=400,
+            showlegend=True,
+            legend=dict(x=0.02, y=0.98)
+        )
+        
+        fig_conf.update_xaxes(title_text="Confidence Score", row=1, col=1)
+        fig_conf.update_xaxes(title_text="Confidence Score", row=1, col=2)
+        fig_conf.update_yaxes(title_text="Probability", row=1, col=1)
+        fig_conf.update_yaxes(title_text="Probability", row=1, col=2)
+        
+        fig_conf.show()
     
     # Time series visualization with classification
     fig_ts = make_subplots(
