@@ -2,10 +2,11 @@
 
 ## Overview
 
-This document outlines a high-level strategy for implementing ML-based saccade classification with a GUI for manual annotation and filtering. The system will classify saccades into three categories:
+This document outlines a high-level strategy for implementing ML-based saccade classification with a GUI for manual annotation and filtering. The system will classify saccades into **four distinct categories**:
 1. **Compensatory**: Saccades in bouts with slow eye movements between them
 2. **Purely Orienting**: Freestanding saccades with stable gaze before/after
 3. **Saccade-and-Fixate**: First saccades of compensatory bouts (transitional type)
+4. **Non-Saccade**: False positives that should be excluded from analysis
 
 ---
 
@@ -115,22 +116,36 @@ From existing `classify_saccades_orienting_vs_compensatory`:
 - More hyperparameter tuning needed
 - Less interpretable than RF
 
-#### Option C: Neural Network (Future Enhancement)
+#### Option C: Neural Network (SELECTED)
 **Pros:**
 - Can learn complex patterns
 - Can incorporate time series directly
+- Works well with M2 Mac (Metal acceleration) and Ubuntu (CUDA/CPU)
+- Can handle non-linear feature interactions
 
 **Cons:**
 - Requires more data
 - Less interpretable
 - More complex to implement
 
+**Implementation:**
+- Use TensorFlow/Keras or PyTorch (TensorFlow recommended for M2 Mac compatibility)
+- Multi-layer perceptron (MLP) for tabular features
+- Optional: LSTM/GRU layer for time series segments
+- Use Metal Performance Shaders (MPS) backend on M2 Mac
+- Use CPU or CUDA on Ubuntu
+- Start with 2-3 hidden layers, 64-128 units per layer
+- Dropout for regularization (0.2-0.3)
+- Batch normalization
+- Class weights for imbalanced data
+
 ### Classification Strategy
 
-#### Three-Class Problem
+#### Four-Class Problem
 1. **Compensatory**: In bouts, with drift/movement between saccades
 2. **Purely Orienting**: Isolated, stable before/after
 3. **Saccade-and-Fixate**: First saccade of compensatory bout (or isolated with fixate pattern)
+4. **Non-Saccade**: False positive detections (blinks, artifacts, noise)
 
 #### Hierarchical Approach (Alternative)
 1. **First level**: Compensatory vs Non-Compensatory (binary)
@@ -205,12 +220,12 @@ From existing `classify_saccades_orienting_vs_compensatory`:
 
 #### 4. Classification Controls
 - **Class Buttons**: 
-  - [Compensatory] [Purely Orienting] [Saccade-and-Fixate] [Unclassified]
-- **Exclude Button**: Mark saccade as "exclude" (not a real saccade)
+  - [Compensatory] [Purely Orienting] [Saccade-and-Fixate] [Non-Saccade] [Unclassified]
+- **Note**: "Non-Saccade" replaces the separate "Exclude" button - it's now a classification class
 - **Confidence Slider**: Manual confidence adjustment (optional)
 - **Keyboard Shortcuts**: 
-  - `1` = Compensatory, `2` = Orienting, `3` = Saccade-and-Fixate
-  - `E` = Exclude, `N` = Next, `P` = Previous
+  - `1` = Compensatory, `2` = Orienting, `3` = Saccade-and-Fixate, `4` = Non-Saccade
+  - `N` = Next, `P` = Previous, `S` = Save
 
 #### 5. Feature Display Panel
 - **Show**: All extracted features for selected saccade
@@ -262,16 +277,29 @@ From existing `classify_saccades_orienting_vs_compensatory`:
 
 #### Annotation File Format (CSV)
 ```csv
-saccade_id,time,amplitude,duration,user_label,user_confidence,excluded,notes
-1,12.345,45.2,0.125,compensatory,0.9,False,"First in bout"
-2,12.567,38.1,0.098,compensatory,0.85,False,""
-3,15.234,52.3,0.142,orienting,0.95,False,"Isolated"
+experiment_id,saccade_id,time,amplitude,duration,user_label,user_confidence,notes,annotation_date
+exp_001,1,12.345,45.2,0.125,compensatory,0.9,"First in bout",2024-01-15
+exp_001,2,12.567,38.1,0.098,compensatory,0.85,"",2024-01-15
+exp_002,1,15.234,52.3,0.142,orienting,0.95,"Isolated",2024-01-16
+exp_002,5,18.456,12.3,0.045,non_saccade,0.8,"Artifact",2024-01-16
 ```
 
+**Key Points:**
+- `experiment_id`: Identifies which notebook run/experiment this saccade came from
+- `user_label`: One of: `compensatory`, `orienting`, `saccade_and_fixate`, `non_saccade`
+- All annotations are stored in a single master file for incremental training
+
 #### Model File Format
-- **Model**: `joblib` or `pickle` for sklearn models
-- **Metadata**: JSON file with feature list, model version, training date
-- **Feature scaler**: Save separately if using scaling
+- **Model**: TensorFlow SavedModel or HDF5 format (`.h5`)
+- **Metadata**: JSON file with:
+  - Feature list and order
+  - Model architecture (layers, units, activation functions)
+  - Training date and version
+  - Training statistics (accuracy, loss, per-class metrics)
+  - Number of training samples per class
+  - Feature scaler parameters (StandardScaler/MinMaxScaler)
+- **Feature scaler**: Saved as part of model or separate pickle file
+- **Versioning**: Models saved as `saccade_classifier_v1.h5`, `saccade_classifier_v2.h5`, etc.
 
 ---
 
@@ -291,12 +319,20 @@ enhanced_features = extract_ml_features(
     fps
 )
 
-# 3. Load or train ML model
+# 3. Run rule-based classification first (for initial labels)
+saccade_results = classify_with_rule_based(saccade_results, ...)  # Existing function
+
+# 4. Load or train ML model
 if model_exists:
-    model = load_ml_model('saccade_classifier.pkl')
+    model = load_ml_model('saccade_classifier_v1.h5')
     predictions = model.predict(enhanced_features)
+    # Use rule-based predictions as fallback for low-confidence ML predictions
+    low_conf_mask = model.predict_proba(enhanced_features).max(axis=1) < 0.5
+    predictions[low_conf_mask] = saccade_results['rule_based_class'][low_conf_mask]
 else:
-    print("No model found. Use GUI to annotate data first.")
+    print("No ML model found. Using rule-based classification.")
+    print("Use GUI to annotate data and train ML model.")
+    predictions = saccade_results['rule_based_class']  # Use rule-based as initial labels
 
 # 4. Add predictions to dataframe
 all_saccades_df['ml_class'] = predictions
@@ -314,21 +350,36 @@ if review_in_gui:
 - Return DataFrame with one row per saccade
 - Handle edge cases (first/last saccades)
 
-#### `train_ml_classifier(annotations_df, features_df)`
-- Load annotations from GUI
-- Train model on labeled data
-- Evaluate and save model
+#### `train_ml_classifier(annotations_file_path, features_df, model_version=None)`
+- Load ALL annotations from master annotations file (across all experiments)
+- Merge with features from current experiment
+- Handle incremental training: append new annotations to existing dataset
+- Train neural network model on combined dataset
+- Evaluate with cross-validation
+- Save model with version number
+- Return training statistics
+
+**Incremental Training Strategy:**
+1. Load master annotations file (contains all labeled saccades from all experiments)
+2. Load features for all experiments (or extract on-the-fly)
+3. Combine all labeled data
+4. Retrain model from scratch on full dataset (better than fine-tuning for this use case)
+5. Save new model version
+6. Keep old model versions for comparison
 
 #### `classify_with_ml(features_df, model)`
 - Load model
 - Predict classes and confidence
 - Return predictions
 
-#### `launch_annotation_gui(saccade_results, features_df, model=None)`
+#### `launch_annotation_gui(saccade_results, features_df, experiment_id, model=None, annotations_file=None)`
 - Initialize GUI
-- Load saccade data
+- Load saccade data for current experiment
+- Pre-populate with rule-based classifications (if no ML model) or ML predictions
 - Display plots and controls
-- Save annotations
+- Allow user to review and correct classifications
+- Save annotations to master annotations file (append mode)
+- Track `experiment_id` to identify source of each annotation
 
 ---
 
@@ -342,13 +393,16 @@ if review_in_gui:
 - [ ] Test feature extraction on sample data
 - [ ] Document feature definitions
 
-### Step 2: Basic ML Pipeline (Week 2)
-- [ ] Implement `train_ml_classifier()` function
-- [ ] Start with Random Forest
+### Step 2: Neural Network ML Pipeline (Week 2)
+- [ ] Implement `train_ml_classifier()` function with TensorFlow/Keras
+- [ ] Design MLP architecture (2-3 hidden layers, dropout, batch norm)
+- [ ] Implement feature scaling (StandardScaler)
 - [ ] Implement train/test split and cross-validation
-- [ ] Add model evaluation metrics
-- [ ] Save/load model functionality
+- [ ] Add model evaluation metrics (confusion matrix, per-class F1)
+- [ ] Save/load model functionality (HDF5 format)
+- [ ] Implement incremental training (load all annotations, retrain)
 - [ ] Test on synthetic or small real dataset
+- [ ] Ensure M2 Mac (MPS) and Ubuntu (CPU) compatibility
 
 ### Step 3: GUI Development (Weeks 3-4)
 - [ ] Design GUI layout (mockup)
@@ -405,12 +459,14 @@ if review_in_gui:
 
 ### 5. GUI Annotation Workflow
 **Decision**: 
-- Start with ML predictions pre-loaded
+- Start with rule-based predictions pre-loaded (from existing classification)
 - User reviews and corrects
-- Save corrections for retraining
+- Save all annotations to master file (with experiment_id)
 - Show confidence to prioritize review
+- After sufficient annotations, train ML model
+- Future runs: Start with ML predictions, fallback to rule-based for low confidence
 
-**Rationale**: Speeds up annotation by starting with reasonable predictions.
+**Rationale**: Rule-based provides good starting point. ML improves as more data is annotated.
 
 ---
 
@@ -418,8 +474,9 @@ if review_in_gui:
 
 ### Model Performance
 - **Accuracy**: >85% on test set
-- **Per-class F1**: >0.8 for each class
+- **Per-class F1**: >0.8 for each class (including Non-Saccade)
 - **Confusion matrix**: Low confusion between classes
+- **Non-Saccade recall**: >0.9 (important to catch false positives)
 
 ### Annotation Efficiency
 - **Time per saccade**: <30 seconds average
@@ -459,4 +516,6 @@ if review_in_gui:
 6. **Data Requirements**: How many annotated saccades do we need for reliable training? (Estimate: 100-200 per class minimum)
 
 7. **Integration Point**: Should ML classification replace rule-based, or run in parallel for comparison?
+
+**RESOLVED**: Start with rule-based for initial annotation. ML replaces rule-based once trained, but rule-based used as fallback for low-confidence ML predictions.
 
