@@ -10,7 +10,7 @@ import matplotlib.cm as cm
 
 def detect_saccades_adaptive(df, position_col='X_smooth', velocity_col='vel_x_smooth', 
                              time_col='Seconds', fps=None, k=5, refractory_period=0.1,
-                             onset_offset_fraction=0.2, peak_width=1, verbose=True, upward_label=None, downward_label=None):
+                             onset_offset_fraction=0.2, peak_width=None, peak_width_time=None, verbose=True, upward_label=None, downward_label=None):
     """
     Detect saccades using adaptive statistical threshold method.
     
@@ -19,7 +19,7 @@ def detect_saccades_adaptive(df, position_col='X_smooth', velocity_col='vel_x_sm
     df : pd.DataFrame
         DataFrame containing position and velocity data
     position_col : str
-        Column name for smoothed position data (default: 'X_smooth')
+        Column name for position data (should be raw position for accurate amplitude, default: 'X_smooth')
     velocity_col : str
         Column name for velocity data (default: 'vel_x_smooth')
     time_col : str
@@ -32,8 +32,11 @@ def detect_saccades_adaptive(df, position_col='X_smooth', velocity_col='vel_x_sm
         Minimum time (in seconds) between saccades (default: 0.1)
     onset_offset_fraction : float
         Fraction of peak velocity threshold for onset/offset detection (default: 0.2)
-    peak_width : int
-        Minimum peak width in samples for find_peaks (default: 1)
+    peak_width : int, optional
+        Minimum peak width in samples for find_peaks (deprecated, use peak_width_time instead)
+    peak_width_time : float, optional
+        Minimum peak width in seconds for find_peaks (default: 0.01 = 10ms if peak_width not provided)
+        Note: Typical saccades have peak widths of 5-20ms. Very short values (<5ms) may filter valid saccades.
     verbose : bool
         Whether to print detection statistics (default: True)
         
@@ -44,6 +47,22 @@ def detect_saccades_adaptive(df, position_col='X_smooth', velocity_col='vel_x_sm
     # Calculate FPS if not provided
     if fps is None:
         fps = 1 / df[time_col].diff().mean()
+    
+    # Convert peak_width_time to points if provided, otherwise use peak_width
+    if peak_width_time is not None:
+        peak_width = max(1, int(round(peak_width_time * fps)))
+    elif peak_width is None:
+        # Default: 10ms peak width
+        peak_width = max(1, int(round(0.01 * fps)))
+    
+    # Warn if peak width is very restrictive (less than 5ms equivalent)
+    if peak_width_time is not None and peak_width_time < 0.005:
+        import warnings
+        warnings.warn(
+            f"peak_width_time={peak_width_time*1000:.1f}ms may be too restrictive. "
+            f"Typical saccade peaks are 5-20ms wide. Consider using 0.01 (10ms) or higher.",
+            UserWarning
+        )
     
     # 1. Calculate adaptive thresholds using statistical methods
     abs_vel = df[velocity_col].abs().dropna()
@@ -766,11 +785,17 @@ def analyze_eye_video_saccades(
     k=5,
     refractory_period=0.1,
     onset_offset_fraction=0.2,
-    n_before=10,
-    n_after=30,
-    baseline_n_points=5,
-    saccade_smoothing_window=5,
-    saccade_peak_width=1,
+    pre_saccade_window_time=None,  # Time (seconds) before threshold crossing to extract
+    post_saccade_window_time=None,  # Time (seconds) after threshold crossing to extract
+    baseline_window_time=None,  # Time (seconds) before threshold crossing for baseline
+    smoothing_window_time=None,  # Time (seconds) for smoothing window
+    peak_width_time=None,  # Minimum peak width (seconds) - typically 5-20ms for saccades
+    # Backward compatibility: old point-based parameters (deprecated)
+    n_before=None,
+    n_after=None,
+    baseline_n_points=None,
+    saccade_smoothing_window=None,
+    saccade_peak_width=None,
     upward_label=None,
     downward_label=None,
     classify_orienting_compensatory=True,
@@ -790,59 +815,189 @@ def analyze_eye_video_saccades(
     Analyze saccades for a given eye video dataframe.
     Performs smoothing, velocity computation, adaptive saccade detection, peri-event extraction, baselining, outlier filtering.
     Optionally classifies saccades as orienting vs compensatory.
+    
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        DataFrame with 'Ellipse.Center.X' and 'Seconds' columns
+    fps : float
+        Frames per second (used to convert time-based parameters to points)
+    video_label : str
+        Label for this video (for logging)
+    k : float
+        Threshold multiplier for adaptive detection (default: 5)
+    refractory_period : float
+        Minimum time between saccades in seconds (default: 0.1)
+    onset_offset_fraction : float
+        Fraction of peak velocity threshold for onset detection (default: 0.2)
+    pre_saccade_window_time : float
+        Time (seconds) before threshold crossing to extract (default: 0.15)
+    post_saccade_window_time : float
+        Time (seconds) after threshold crossing to extract (default: 0.5)
+    baseline_window_time : float
+        Time (seconds) before threshold crossing for baseline calculation (default: 0.08)
+    smoothing_window_time : float
+        Time (seconds) for smoothing window (default: 0.08)
+    peak_width_time : float
+        Minimum peak width in seconds for find_peaks (default: 0.01 = 10ms)
+        Note: Typical saccades have peak widths of 5-20ms. Very short values (<5ms) may filter valid saccades.
+    ...
     Returns dict of results including all relevant outputs for stats/plots.
     """
     import numpy as np
     import pandas as pd
     # sp is this module (sleap.saccade_processing): use local functions
+    
+    # Backward compatibility: Convert old point-based parameters to time-based if provided
+    if n_before is not None:
+        import warnings
+        warnings.warn(
+            "Parameter 'n_before' is deprecated. Use 'pre_saccade_window_time' instead. "
+            f"Converting {n_before} points to time using fps={fps:.1f}.",
+            DeprecationWarning
+        )
+        if pre_saccade_window_time is None:
+            pre_saccade_window_time = n_before / fps
+    
+    if n_after is not None:
+        import warnings
+        warnings.warn(
+            "Parameter 'n_after' is deprecated. Use 'post_saccade_window_time' instead. "
+            f"Converting {n_after} points to time using fps={fps:.1f}.",
+            DeprecationWarning
+        )
+        if post_saccade_window_time is None:
+            post_saccade_window_time = n_after / fps
+    
+    if baseline_n_points is not None:
+        import warnings
+        warnings.warn(
+            "Parameter 'baseline_n_points' is deprecated. Use 'baseline_window_time' instead. "
+            f"Converting {baseline_n_points} points to time using fps={fps:.1f}.",
+            DeprecationWarning
+        )
+        if baseline_window_time is None:
+            baseline_window_time = baseline_n_points / fps
+    
+    if saccade_smoothing_window is not None:
+        import warnings
+        warnings.warn(
+            "Parameter 'saccade_smoothing_window' is deprecated. Use 'smoothing_window_time' instead. "
+            f"Converting {saccade_smoothing_window} points to time using fps={fps:.1f}.",
+            DeprecationWarning
+        )
+        if smoothing_window_time is None:
+            smoothing_window_time = saccade_smoothing_window / fps
+    
+    if saccade_peak_width is not None:
+        import warnings
+        warnings.warn(
+            "Parameter 'saccade_peak_width' is deprecated. Use 'peak_width_time' instead. "
+            f"Converting {saccade_peak_width} points to time using fps={fps:.1f}.",
+            DeprecationWarning
+        )
+        if peak_width_time is None:
+            peak_width_time = saccade_peak_width / fps
+    
+    # Set defaults for time-based parameters if not provided
+    if pre_saccade_window_time is None:
+        pre_saccade_window_time = 0.15  # 150ms default
+    if post_saccade_window_time is None:
+        post_saccade_window_time = 0.5  # 500ms default
+    if baseline_window_time is None:
+        baseline_window_time = 0.08  # 80ms default
+    if smoothing_window_time is None:
+        smoothing_window_time = 0.08  # 80ms default
+    if peak_width_time is None:
+        peak_width_time = 0.01  # 10ms default (was 1 frame, which could be 8-16ms depending on FPS)
+    
+    # Convert time-based parameters to points using FPS
+    # Round to nearest integer, minimum 1 point
+    n_before = max(1, int(round(pre_saccade_window_time * fps)))
+    n_after = max(1, int(round(post_saccade_window_time * fps)))
+    baseline_n_points = max(1, int(round(baseline_window_time * fps)))
+    saccade_smoothing_window = max(1, int(round(smoothing_window_time * fps)))
+    saccade_peak_width = max(1, int(round(peak_width_time * fps)))
+    
+    # Warn if peak_width_time is very restrictive
+    if peak_width_time < 0.005:  # Less than 5ms
+        import warnings
+        warnings.warn(
+            f"peak_width_time={peak_width_time*1000:.1f}ms may be too restrictive. "
+            f"Typical saccade peaks are 5-20ms wide. Consider using 0.01 (10ms) or higher.",
+            UserWarning
+        )
 
-    # Smoothing
+    # Preprocessing: Smooth position first (reduces noise before differentiation), then compute velocity
+    # Use raw position for accurate amplitude calculations
     df = df.copy()
     # Ensure a clean positional index to avoid label/position confusion downstream
     df = df.reset_index(drop=True)
+    
+    # Keep raw position for accurate amplitude calculations
+    df['X_raw'] = df['Ellipse.Center.X']
+    
+    # Smooth position FIRST (before differentiation) - this reduces noise more effectively
+    # Differentiation amplifies high-frequency noise, so smoothing before differentiation is crucial
     df['X_smooth'] = (
-        df['Ellipse.Center.X']
+        df['X_raw']
         .rolling(window=saccade_smoothing_window, center=True)
         .median()
         .bfill()
         .ffill()
     )
 
-    # Compute instantaneous velocity
+    # Compute instantaneous velocity from SMOOTHED position (not raw)
+    # This gives smooth velocity because we smoothed before differentiating
     df['dt'] = df['Seconds'].diff()
-    df['vel_x_original'] = df['Ellipse.Center.X'].diff() / df['dt']
     df['vel_x_smooth'] = df['X_smooth'].diff() / df['dt']
+    
+    # Also compute velocity from raw position for reference (noisy, not used for detection)
+    df['vel_x_raw'] = df['X_raw'].diff() / df['dt']
+    df['vel_x_original'] = df['vel_x_raw']  # Keep for reference
 
     # Saccade detection
+    # Use raw position for accurate amplitude calculations, smooth velocity for detection
     upward_saccades_df, downward_saccades_df, vel_thresh = detect_saccades_adaptive(
         df,
-        position_col='X_smooth',
-        velocity_col='vel_x_smooth',
+        position_col='X_raw',  # Use raw position for accurate amplitude
+        velocity_col='vel_x_smooth',  # Use smoothed velocity for robust detection
         time_col='Seconds',
         fps=fps,
         k=k,
         refractory_period=refractory_period,
         onset_offset_fraction=onset_offset_fraction,
-        peak_width=saccade_peak_width,
+        peak_width_time=peak_width_time,  # Pass time-based parameter
         verbose=True,
         upward_label=upward_label,
         downward_label=downward_label
     )
 
     # Peri-saccade segment extraction
+    # Use raw position for accurate segment data and amplitude preservation
     peri_saccades = []
     all_excluded = []
     if len(upward_saccades_df) > 0:
-        upward_segments, upward_excluded = extract_saccade_segment(df, upward_saccades_df, n_before, n_after, direction='upward')
+        upward_segments, upward_excluded = extract_saccade_segment(
+            df, upward_saccades_df, n_before, n_after, 
+            direction='upward', position_col='X_raw'
+        )
         peri_saccades.extend(upward_segments)
         all_excluded.extend(upward_excluded)
     if len(downward_saccades_df) > 0:
-        downward_segments, downward_excluded = extract_saccade_segment(df, downward_saccades_df, n_before, n_after, direction='downward')
+        downward_segments, downward_excluded = extract_saccade_segment(
+            df, downward_saccades_df, n_before, n_after, 
+            direction='downward', position_col='X_raw'
+        )
         peri_saccades.extend(downward_segments)
         all_excluded.extend(downward_excluded)
 
     # Baselining
-    peri_saccades = baseline_saccade_segments(peri_saccades, n_before, baseline_n_points=baseline_n_points)
+    # Use raw position for accurate baselining (preserves amplitude accuracy)
+    # Column name 'X_smooth_baselined' kept for backward compatibility
+    peri_saccades = baseline_saccade_segments(
+        peri_saccades, n_before, baseline_n_points=baseline_n_points, position_col='X_raw'
+    )
 
     # Filter outliers
     upward_segments_all = [seg for seg in peri_saccades if seg['saccade_direction'].iloc[0] == 'upward']
@@ -892,6 +1047,8 @@ def analyze_eye_video_saccades(
                 adaptive_percentile_pre_velocity=adaptive_percentile_pre_velocity,
                 adaptive_percentile_pre_drift=adaptive_percentile_pre_drift,
                 adaptive_percentile_post_variance=adaptive_percentile_post_variance,
+                position_col='X_raw',  # Use raw position for accurate drift/variance calculations
+                velocity_col='vel_x_smooth',  # Use smoothed velocity for classification
                 verbose=True
             )
             # Verify all saccades are classified (all branches in classification logic assign a type)
