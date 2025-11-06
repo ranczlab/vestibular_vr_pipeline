@@ -215,7 +215,7 @@ class BehavioralAnalyzer:
             return
         
         # Get the timestamp of the last occurrence
-        end_time = block_elapsed_events.index[-1]
+        end_time = block_elapsed_events.index[0]
         
         # Slice the data
         self.sliced_data = self.photometry_tracking_encoder_data[
