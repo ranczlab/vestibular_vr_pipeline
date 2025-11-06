@@ -99,18 +99,28 @@ blink_instance_score_threshold = 3.8  # hard threshold for blink detection - fra
 # for saccades
 refractory_period = 0.1  # sec
 ## Separate adaptive saccade threshold (k) for each video:
-k1 = 4  # for VideoData1 (L)
-k2 = 5  # for VideoData2 (R)
+k1 = 4.2  # for VideoData1 (L) - 3-6 works well
+k2 = 4.5  # for VideoData2 (R) - 3-6 works well 
 
 # for adaptive saccade threshold - Number of standard deviations (adjustable: 2-4 range works well) 
 onset_offset_fraction = 0.2  # to determine saccade onset and offset, i.e. o.2 is 20% of the peak velocity
-n_before = 10  # Number of points before detection peak to extract for peri-saccade-segments, points, so independent of FPS 
-n_after = 30   # Number of points after detection peak to extract
 
-# Additional saccade detection parameters
-baseline_n_points = 5  # Number of points before threshold crossing to use for baseline calculation
-saccade_smoothing_window = 5  # Rolling median window size for position smoothing (frames)
-saccade_peak_width = 1  # Minimum peak width in samples for find_peaks (frames)
+# Saccade detection parameters (time-based for FPS independence)
+pre_saccade_window_time = 0.15  # Time (seconds) before threshold crossing to extract
+post_saccade_window_time = 0.5  # Time (seconds) after threshold crossing to extract
+baseline_window_start_time = -0.06  # Start time (seconds) relative to threshold crossing for baseline window (e.g., -0.1 = 100ms before)
+baseline_window_end_time = -0.02  # End time (seconds) relative to threshold crossing for baseline window (e.g., -0.02 = 20ms before)
+smoothing_window_time = 0.08  # Time (seconds) for position smoothing window (rolling median)
+peak_width_time = 0.005  # Minimum peak width (seconds) for find_peaks - typically 5-20ms for saccades
+min_saccade_duration = 0.2  # Minimum saccade segment duration (seconds) - segments shorter than this are excluded (typically truncated at recording edges)
+
+# Backward compatibility: old point-based parameters (deprecated, will be converted automatically)
+n_before = None  # Deprecated: use pre_saccade_window_time instead
+n_after = None  # Deprecated: use post_saccade_window_time instead
+baseline_n_points = None  # Deprecated: use baseline_window_start_time and baseline_window_end_time instead
+baseline_window_time = None  # Deprecated: use baseline_window_start_time and baseline_window_end_time instead
+saccade_smoothing_window = None  # Deprecated: use smoothing_window_time instead
+saccade_peak_width = None  # Deprecated: use peak_width_time instead
 
 plot_saccade_detection_QC = True
 
@@ -1963,6 +1973,51 @@ if VideoData2_Has_Sleap:
 # %% [markdown]
 # # Saccade detection
 #
+# %%
+# TEMPORARY FOR DEBUGGING
+# for saccades
+refractory_period = 0.1  # sec
+# Separate adaptive saccade threshold (k) for each video:
+k1 = 4.2  # for VideoData1 (L) - 5-8 works well
+k2 = 4.5  # for VideoData2 (R) - 5-8 works well 
+
+# for adaptive saccade threshold - Number of standard deviations (adjustable: 2-4 range works well) 
+onset_offset_fraction = 0.2  # to determine saccade onset and offset, i.e. o.2 is 20% of the peak velocity
+
+# Saccade detection parameters (time-based for FPS independence)
+pre_saccade_window_time = 0.15  # Time (seconds) before threshold crossing to extract
+post_saccade_window_time = 0.5  # Time (seconds) after threshold crossing to extract
+baseline_window_start_time = -0.06  # Start time (seconds) relative to threshold crossing for baseline window (e.g., -0.1 = 100ms before)
+baseline_window_end_time = -0.02  # End time (seconds) relative to threshold crossing for baseline window (e.g., -0.02 = 20ms before)
+smoothing_window_time = 0.08  # Time (seconds) for position smoothing window (rolling median)
+peak_width_time = 0.005  # Minimum peak width (seconds) for find_peaks - typically 5-20ms for saccades
+min_saccade_duration = 0.2  # Minimum saccade segment duration (seconds) - segments shorter than this are excluded (typically truncated at recording edges)
+
+# Backward compatibility: old point-based parameters (deprecated, will be converted automatically)
+n_before = None  # Deprecated: use pre_saccade_window_time instead
+n_after = None  # Deprecated: use post_saccade_window_time instead
+baseline_n_points = None  # Deprecated: use baseline_window_start_time and baseline_window_end_time instead
+baseline_window_time = None  # Deprecated: use baseline_window_start_time and baseline_window_end_time instead
+saccade_smoothing_window = None  # Deprecated: use smoothing_window_time instead
+saccade_peak_width = None  # Deprecated: use peak_width_time instead
+
+plot_saccade_detection_QC = True
+
+# Parameters for orienting vs compensatory saccade classification
+classify_orienting_compensatory = True  # Set to True to classify saccades as orienting vs compensatory
+bout_window = 1.5  # Time window (seconds) for grouping saccades into bouts
+pre_saccade_window = 0.3  # Time window (seconds) before saccade onset to analyze
+max_intersaccade_interval_for_classification = 5.0  # Maximum time (seconds) to extend post-saccade window until next saccade for classification
+pre_saccade_velocity_threshold = 50.0  # Velocity threshold (px/s) for detecting pre-saccade drift
+pre_saccade_drift_threshold = 10.0  # Position drift threshold (px) before saccade for compensatory classification
+post_saccade_variance_threshold = 100.0  # Position variance threshold (px²) after saccade for orienting classification
+post_saccade_position_change_threshold_percent = 50.0  # Position change threshold (% of saccade amplitude) - if post-saccade change > amplitude * this%, classify as compensatory
+
+# Adaptive threshold parameters (percentile-based)
+use_adaptive_thresholds = True  # Set to True to use adaptive thresholds based on feature distributions, False to use fixed thresholds
+adaptive_percentile_pre_velocity = 75  # Percentile for pre-saccade velocity threshold (upper percentile for compensatory detection)
+adaptive_percentile_pre_drift = 75  # Percentile for pre-saccade drift threshold (upper percentile for compensatory detection)
+adaptive_percentile_post_variance = 25  # Percentile for post-saccade variance threshold (lower percentile for orienting detection - low variance = stable)
 
 
 # %%
@@ -1985,9 +2040,13 @@ if VideoData1_Has_Sleap:
         df1, FPS_1, get_eye_label('VideoData1'),
         k=k1, refractory_period=refractory_period,
         onset_offset_fraction=onset_offset_fraction,
-        n_before=n_before, n_after=n_after, baseline_n_points=baseline_n_points,
-        saccade_smoothing_window=saccade_smoothing_window,
-        saccade_peak_width=saccade_peak_width,
+        pre_saccade_window_time=pre_saccade_window_time,
+        post_saccade_window_time=post_saccade_window_time,
+        baseline_window_start_time=baseline_window_start_time,
+        baseline_window_end_time=baseline_window_end_time,
+        smoothing_window_time=smoothing_window_time,
+        peak_width_time=peak_width_time,
+        min_saccade_duration=min_saccade_duration,
         upward_label=dir_map_v1['upward'],
         downward_label=dir_map_v1['downward'],
         classify_orienting_compensatory=classify_orienting_compensatory,
@@ -2013,9 +2072,13 @@ if VideoData2_Has_Sleap:
         df2, FPS_2, get_eye_label('VideoData2'),
         k=k2, refractory_period=refractory_period,
         onset_offset_fraction=onset_offset_fraction,
-        n_before=n_before, n_after=n_after, baseline_n_points=baseline_n_points,
-        saccade_smoothing_window=saccade_smoothing_window,
-        saccade_peak_width=saccade_peak_width,
+        pre_saccade_window_time=pre_saccade_window_time,
+        post_saccade_window_time=post_saccade_window_time,
+        baseline_window_start_time=baseline_window_start_time,
+        baseline_window_end_time=baseline_window_end_time,
+        smoothing_window_time=smoothing_window_time,
+        peak_width_time=peak_width_time,
+        min_saccade_duration=min_saccade_duration,
         upward_label=dir_map_v2['upward'],
         downward_label=dir_map_v2['downward'],
         classify_orienting_compensatory=classify_orienting_compensatory,
@@ -2033,160 +2096,20 @@ if VideoData2_Has_Sleap:
     )
 
 # %%
-# ADAPTIVE THRESHOLD DIAGNOSTIC PLOTS (only if debug=True)
-#-------------------------------------------------------------------------------
-# Plot distributions of classification features to help determine meaningful adaptive thresholds
-if debug and len(saccade_results) > 0:
-    print("\n📊 Generating adaptive threshold diagnostic plots...")
-    
-    for video_key, res in saccade_results.items():
-        all_saccades_df = res.get('all_saccades_df', pd.DataFrame())
-        
-        if len(all_saccades_df) == 0:
-            print(f"⚠️  No saccades found for {get_eye_label(video_key)}, skipping diagnostic plots")
-            continue
-        
-        # Filter out NaN values for plotting
-        pre_vel = all_saccades_df['pre_saccade_mean_velocity'].dropna()
-        pre_drift = all_saccades_df['pre_saccade_position_drift'].dropna()
-        post_var = all_saccades_df['post_saccade_position_variance'].dropna()
-        post_change = all_saccades_df['post_saccade_position_change'].dropna()
-        amplitude = all_saccades_df['amplitude'].dropna()
-        
-        # Calculate post_change / amplitude ratio (for percentage threshold visualization)
-        # Align by index to ensure matching
-        aligned_indices = post_change.index.intersection(amplitude.index)
-        post_change_aligned = post_change.loc[aligned_indices]
-        amplitude_aligned = amplitude.loc[aligned_indices]
-        post_change_ratio = (post_change_aligned / amplitude_aligned) * 100  # Convert to percentage
-        
-        # Calculate current thresholds for visualization
-        if use_adaptive_thresholds:
-            # Calculate adaptive thresholds from current data
-            if len(pre_vel) >= 3:
-                current_pre_vel_threshold = np.percentile(pre_vel, adaptive_percentile_pre_velocity)
-            else:
-                current_pre_vel_threshold = pre_saccade_velocity_threshold
-            
-            if len(pre_drift) >= 3:
-                current_pre_drift_threshold = np.percentile(pre_drift, adaptive_percentile_pre_drift)
-            else:
-                current_pre_drift_threshold = pre_saccade_drift_threshold
-            
-            if len(post_var) >= 3:
-                current_post_var_threshold = np.percentile(post_var, adaptive_percentile_post_variance)
-            else:
-                current_post_var_threshold = post_saccade_variance_threshold
-        else:
-            # Use fixed thresholds
-            current_pre_vel_threshold = pre_saccade_velocity_threshold
-            current_pre_drift_threshold = pre_saccade_drift_threshold
-            current_post_var_threshold = post_saccade_variance_threshold
-        
-        # Create figure with 2x2 subplots
-        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-        fig.suptitle(f'Adaptive Threshold Diagnostic Plots: {get_eye_label(video_key)}\n'
-                    f'(n={len(all_saccades_df)} saccades)', fontsize=14, fontweight='bold')
-        
-        # Plot 1: Pre-saccade mean velocity
-        ax = axes[0, 0]
-        if len(pre_vel) > 0:
-            ax.hist(pre_vel, bins=50, alpha=0.7, color='skyblue', edgecolor='black')
-            ax.axvline(current_pre_vel_threshold, color='red', linestyle='--', linewidth=2, 
-                      label=f'Threshold: {current_pre_vel_threshold:.2f} px/s')
-            if use_adaptive_thresholds:
-                ax.axvline(np.percentile(pre_vel, 50), color='gray', linestyle=':', linewidth=1, 
-                          label=f'Median: {np.percentile(pre_vel, 50):.2f} px/s')
-                ax.axvline(np.percentile(pre_vel, 75), color='orange', linestyle=':', linewidth=1, 
-                          label=f'75th: {np.percentile(pre_vel, 75):.2f} px/s')
-            ax.set_xlabel('Pre-saccade Mean Velocity (px/s)')
-            ax.set_ylabel('Count')
-            ax.set_title(f'Pre-saccade Velocity Distribution\n'
-                        f'{"Adaptive" if use_adaptive_thresholds else "Fixed"} threshold at '
-                        f'{adaptive_percentile_pre_velocity if use_adaptive_thresholds else "fixed"}th percentile')
-            ax.legend()
-            ax.grid(True, alpha=0.3)
-        
-        # Plot 2: Pre-saccade position drift
-        ax = axes[0, 1]
-        if len(pre_drift) > 0:
-            ax.hist(pre_drift, bins=50, alpha=0.7, color='lightgreen', edgecolor='black')
-            ax.axvline(current_pre_drift_threshold, color='red', linestyle='--', linewidth=2,
-                      label=f'Threshold: {current_pre_drift_threshold:.2f} px')
-            if use_adaptive_thresholds:
-                ax.axvline(np.percentile(pre_drift, 50), color='gray', linestyle=':', linewidth=1,
-                          label=f'Median: {np.percentile(pre_drift, 50):.2f} px')
-                ax.axvline(np.percentile(pre_drift, 75), color='orange', linestyle=':', linewidth=1,
-                          label=f'75th: {np.percentile(pre_drift, 75):.2f} px')
-            ax.set_xlabel('Pre-saccade Position Drift (px)')
-            ax.set_ylabel('Count')
-            ax.set_title(f'Pre-saccade Drift Distribution\n'
-                        f'{"Adaptive" if use_adaptive_thresholds else "Fixed"} threshold at '
-                        f'{adaptive_percentile_pre_drift if use_adaptive_thresholds else "fixed"}th percentile')
-            ax.legend()
-            ax.grid(True, alpha=0.3)
-        
-        # Plot 3: Post-saccade position variance
-        ax = axes[1, 0]
-        if len(post_var) > 0:
-            ax.hist(post_var, bins=50, alpha=0.7, color='plum', edgecolor='black')
-            ax.axvline(current_post_var_threshold, color='red', linestyle='--', linewidth=2,
-                      label=f'Threshold: {current_post_var_threshold:.2f} px²')
-            if use_adaptive_thresholds:
-                ax.axvline(np.percentile(post_var, 25), color='orange', linestyle=':', linewidth=1,
-                          label=f'25th: {np.percentile(post_var, 25):.2f} px²')
-                ax.axvline(np.percentile(post_var, 50), color='gray', linestyle=':', linewidth=1,
-                          label=f'Median: {np.percentile(post_var, 50):.2f} px²')
-            ax.set_xlabel('Post-saccade Position Variance (px²)')
-            ax.set_ylabel('Count')
-            ax.set_title(f'Post-saccade Variance Distribution\n'
-                        f'{"Adaptive" if use_adaptive_thresholds else "Fixed"} threshold at '
-                        f'{adaptive_percentile_post_variance if use_adaptive_thresholds else "fixed"}th percentile')
-            ax.legend()
-            ax.grid(True, alpha=0.3)
-        
-        # Plot 4: Post-saccade position change (as percentage of amplitude)
-        ax = axes[1, 1]
-        if len(post_change_ratio) > 0:
-            ax.hist(post_change_ratio, bins=50, alpha=0.7, color='salmon', edgecolor='black')
-            ax.axvline(post_saccade_position_change_threshold_percent, color='red', linestyle='--', 
-                      linewidth=2, label=f'Threshold: {post_saccade_position_change_threshold_percent:.1f}%')
-            ax.axvline(np.percentile(post_change_ratio, 50), color='gray', linestyle=':', linewidth=1,
-                      label=f'Median: {np.percentile(post_change_ratio, 50):.1f}%')
-            ax.axvline(np.percentile(post_change_ratio, 75), color='orange', linestyle=':', linewidth=1,
-                      label=f'75th: {np.percentile(post_change_ratio, 75):.1f}%')
-            ax.set_xlabel('Post-saccade Position Change / Amplitude (%)')
-            ax.set_ylabel('Count')
-            ax.set_title(f'Post-saccade Position Change Ratio\n'
-                        f'Fixed threshold: {post_saccade_position_change_threshold_percent:.1f}% of amplitude')
-            ax.legend()
-            ax.grid(True, alpha=0.3)
-        
-        plt.tight_layout()
-        plt.show()
-        
-        # Print summary statistics
-        print(f"\n📈 Summary Statistics for {get_eye_label(video_key)}:")
-        if len(pre_vel) > 0:
-            print(f"  Pre-saccade velocity: mean={pre_vel.mean():.2f}, median={pre_vel.median():.2f}, "
-                  f"std={pre_vel.std():.2f} px/s")
-        if len(pre_drift) > 0:
-            print(f"  Pre-saccade drift: mean={pre_drift.mean():.2f}, median={pre_drift.median():.2f}, "
-                  f"std={pre_drift.std():.2f} px")
-        if len(post_var) > 0:
-            print(f"  Post-saccade variance: mean={post_var.mean():.2f}, median={post_var.median():.2f}, "
-                  f"std={post_var.std():.2f} px²")
-        if len(post_change_ratio) > 0:
-            print(f"  Post-saccade change ratio: mean={post_change_ratio.mean():.1f}%, "
-                  f"median={post_change_ratio.median():.1f}%, std={post_change_ratio.std():.1f}%")
-        print()
-
-# %%
 # VISUALIZE ALL SACCADES - SIDE BY SIDE
 #-------------------------------------------------------------------------------
 # Plot all upward and downward saccades aligned by time with position and velocity traces
 
 # Create figure with 4 columns in a single row: up pos, up vel, down pos, down vel
+
+# Calculate point-based values from time-based parameters for visualization
+# (These are calculated from the first video's FPS - should be similar for both videos)
+for video_key, res in saccade_results.items():
+    # Get FPS from the results (stored in df)
+    fps_for_viz = 1 / res['df']['Seconds'].diff().mean()
+    n_before = max(1, int(round(pre_saccade_window_time * fps_for_viz)))
+    n_after = max(1, int(round(post_saccade_window_time * fps_for_viz)))
+    break  # Only need to calculate once, FPS should be similar for both videos
 
 for video_key, res in saccade_results.items():
     dir_map = get_direction_map_for_video(video_key)
@@ -2217,27 +2140,38 @@ for video_key, res in saccade_results.items():
     downward_segments_all = [seg for seg in peri_saccades if seg['saccade_direction'].iloc[0] == 'downward']
 
     # Filter outliers
-    upward_segments, upward_outliers_meta, upward_outlier_segments = sp.filter_outlier_saccades(upward_segments_all, 'upward')
-    downward_segments, downward_outliers_meta, downward_outlier_segments = sp.filter_outlier_saccades(downward_segments_all, 'downward')
+    # COMMENTED OUT: Outlier filtering removed per user request
+    # upward_segments, upward_outliers_meta, upward_outlier_segments = sp.filter_outlier_saccades(upward_segments_all, 'upward')
+    # downward_segments, downward_outliers_meta, downward_outlier_segments = sp.filter_outlier_saccades(downward_segments_all, 'downward')
+    
+    # Use all segments without filtering
+    upward_segments = upward_segments_all
+    downward_segments = downward_segments_all
+    upward_outliers_meta = []
+    upward_outlier_segments = []
+    downward_outliers_meta = []
+    downward_outlier_segments = []
 
     if debug:
         print(f"Plotting {len(upward_segments)} {label_up} and {len(downward_segments)} {label_down} saccades...")
-        if len(upward_outliers_meta) > 0 or len(downward_outliers_meta) > 0:
-            print(f"   Excluded {len(upward_outliers_meta)} {label_up} outlier(s) and {len(downward_outliers_meta)} {label_down} outlier(s)")
+        # COMMENTED OUT: Outlier filtering removed per user request
+        # if len(upward_outliers_meta) > 0 or len(downward_outliers_meta) > 0:
+        #     print(f"   Excluded {len(upward_outliers_meta)} {label_up} outlier(s) and {len(downward_outliers_meta)} {label_down} outlier(s)")
 
-    if debug and len(upward_outliers_meta) > 0:
-        print(f"\n   {label_up} outliers (first 5):")
-        for i, out in enumerate(upward_outliers_meta[:5]):
-            pass
-        if len(upward_outliers_meta) > 5:
-            print(f"      ... and {len(upward_outliers_meta) - 5} more")
+    # COMMENTED OUT: Outlier filtering removed per user request
+    # if debug and len(upward_outliers_meta) > 0:
+    #     print(f"\n   {label_up} outliers (first 5):")
+    #     for i, out in enumerate(upward_outliers_meta[:5]):
+    #         pass
+    #     if len(upward_outliers_meta) > 5:
+    #         print(f"      ... and {len(upward_outliers_meta) - 5} more")
 
-    if debug and len(downward_outliers_meta) > 0:
-        print(f"\n   {label_down} outliers (first 5):")
-        for i, out in enumerate(downward_outliers_meta[:5]):
-            pass
-        if len(downward_outliers_meta) > 5:
-            print(f"      ... and {len(downward_outliers_meta) - 5} more")
+    # if debug and len(downward_outliers_meta) > 0:
+    #     print(f"\n   {label_down} outliers (first 5):")
+    #     for i, out in enumerate(downward_outliers_meta[:5]):
+    #         pass
+    #     if len(downward_outliers_meta) > 5:
+    #         print(f"      ... and {len(downward_outliers_meta) - 5} more")
 
     # Plot upward saccades
     for i, segment in enumerate(upward_segments):
@@ -2361,8 +2295,9 @@ for video_key, res in saccade_results.items():
         upward_times = aligned_times[0][:min_length]  # Use first segment's time values
         
         # Calculate mean across all segments (axis=0 means across segments, keeping time dimension)
-        upward_mean_pos = np.mean(upward_positions, axis=0)
-        upward_mean_vel = np.mean(upward_velocities, axis=0)
+        # Use nanmean to handle NaN values properly (for segments that finish early)
+        upward_mean_pos = np.nanmean(upward_positions, axis=0)
+        upward_mean_vel = np.nanmean(upward_velocities, axis=0)
         
         fig_all.add_trace(
             go.Scatter(
@@ -2402,8 +2337,9 @@ for video_key, res in saccade_results.items():
         downward_times = downward_segments[0]['Time_rel_threshold'].values[:min_length_down]  # Use first segment's time values
         
         # Calculate mean across all segments (axis=0 means across segments, keeping time dimension)
-        downward_mean_pos = np.mean(downward_positions, axis=0)
-        downward_mean_vel = np.mean(downward_velocities, axis=0)
+        # Use nanmean to handle NaN values properly (for segments that finish early)
+        downward_mean_pos = np.nanmean(downward_positions, axis=0)
+        downward_mean_vel = np.nanmean(downward_velocities, axis=0)
         
         fig_all.add_trace(
             go.Scatter(
@@ -2411,7 +2347,7 @@ for video_key, res in saccade_results.items():
                 y=downward_mean_pos,
                 mode='lines',
                 name=f'{label_down} Mean Position',
-                line=dict(color='purple', width=3)
+                line=dict(color='red', width=4)
             ),
             row=1, col=3
         )
@@ -2422,7 +2358,7 @@ for video_key, res in saccade_results.items():
                 y=downward_mean_vel,
                 mode='lines',
                 name=f'{label_down} Mean Velocity',
-                line=dict(color='purple', width=3)
+                line=dict(color='red', width=4)
             ),
             row=1, col=4
         )
@@ -2484,19 +2420,24 @@ for video_key, res in saccade_results.items():
     downward_vel_values = []
 
     for seg in upward_segments:
-        upward_pos_values.extend(seg['X_smooth_baselined'].values)
+        # Filter out NaN values when collecting position data
+        pos_values = seg['X_smooth_baselined'].values
+        upward_pos_values.extend(pos_values[~np.isnan(pos_values)])
         # Filter out NaN values when collecting velocity data
         vel_values = seg['vel_x_smooth'].values
         upward_vel_values.extend(vel_values[~np.isnan(vel_values)])
 
     for seg in downward_segments:
-        downward_pos_values.extend(seg['X_smooth_baselined'].values)
+        # Filter out NaN values when collecting position data
+        pos_values = seg['X_smooth_baselined'].values
+        downward_pos_values.extend(pos_values[~np.isnan(pos_values)])
         # Filter out NaN values when collecting velocity data
         vel_values = seg['vel_x_smooth'].values
         downward_vel_values.extend(vel_values[~np.isnan(vel_values)])
 
-    # Position: find min/max for upward and downward, use wider range for both panels in row 1
+    # Position: find min/max for upward and downward, use wider range for both panels
     if len(upward_pos_values) > 0 and len(downward_pos_values) > 0:
+        # Use actual min/max from all position values
         up_pos_min = np.min(upward_pos_values)
         up_pos_max = np.max(upward_pos_values)
         down_pos_min = np.min(downward_pos_values)
@@ -2512,6 +2453,17 @@ for video_key, res in saccade_results.items():
         pos_max = np.max(downward_pos_values)
     else:
         pos_min, pos_max = -50, 50
+    
+    # Add padding to position range (20% padding on each side) to prevent clipping
+    pos_range = pos_max - pos_min
+    if pos_range > 0:
+        padding = pos_range * 0.20  # 20% padding
+        pos_min = pos_min - padding
+        pos_max = pos_max + padding
+    else:
+        # If range is zero or very small, use default padding
+        pos_min = pos_min - 10.0
+        pos_max = pos_max + 10.0
 
     # Velocity: find min/max for upward and downward, use wider range for both panels in row 2
     # Get min and max directly from all velocity traces being plotted, with padding to prevent clipping
@@ -2861,6 +2813,657 @@ for video_key, res in saccade_results.items():
             print(f"  Amp range: {downward_saccades_df['amplitude'].min():.2f} - {downward_saccades_df['amplitude'].max():.2f} px")
 
 
+# %%
+# OUTLIER FILTERING QC: Compare Accepted vs Excluded Saccades
+#-------------------------------------------------------------------------------
+# COMMENTED OUT: Outlier filtering removed per user request
+# Visualize accepted (blue) and excluded (red) saccades for QC of outlier filtering
+# Rejected saccades are plotted on top for visibility
+
+# COMMENTED OUT: Outlier filtering removed per user request
+if False:  # Disabled: Outlier filtering QC plot
+    if debug:
+        for video_key, res in saccade_results.items():
+            dir_map = get_direction_map_for_video(video_key)
+            label_up = dir_map['upward']
+            label_down = dir_map['downward']
+            
+            upward_segments = res['upward_segments']  # Accepted
+            upward_outlier_segments = res['upward_outlier_segments']  # Excluded
+            downward_segments = res['downward_segments']  # Accepted
+            downward_outlier_segments = res['downward_outlier_segments']  # Excluded
+        
+        # Create figure with 2 rows x 1 col: upward and downward, with accepted/excluded overlaid
+        # Rejected saccades (red) plotted on top for visibility
+        fig_qc_outliers = make_subplots(
+            rows=2, cols=1,
+            shared_xaxes=True,
+            shared_yaxes=False,
+            subplot_titles=(
+                f'{label_up} Saccades - Accepted (Blue) & Excluded (Red)',
+                f'{label_down} Saccades - Accepted (Blue) & Excluded (Red)'
+            ),
+            vertical_spacing=0.15
+        )
+        
+        # Collect all time ranges for consistent x-axis scaling
+        all_times_up = []
+        all_times_down = []
+        all_positions_up = []
+        all_positions_down = []
+        
+        # Collect data from accepted upward segments
+        for seg in upward_segments:
+            times = seg['Time_rel_threshold'].values
+            positions = seg['X_smooth_baselined'].values
+            all_times_up.extend(times)
+            all_positions_up.extend(positions)
+        
+        # Collect data from excluded upward segments
+        for seg in upward_outlier_segments:
+            times = seg['Time_rel_threshold'].values
+            positions = seg['X_smooth_baselined'].values
+            all_times_up.extend(times)
+            all_positions_up.extend(positions)
+        
+        # Collect data from accepted downward segments
+        for seg in downward_segments:
+            times = seg['Time_rel_threshold'].values
+            positions = seg['X_smooth_baselined'].values
+            all_times_down.extend(times)
+            all_positions_down.extend(positions)
+        
+        # Collect data from excluded downward segments
+        for seg in downward_outlier_segments:
+            times = seg['Time_rel_threshold'].values
+            positions = seg['X_smooth_baselined'].values
+            all_times_down.extend(times)
+            all_positions_down.extend(positions)
+        
+        # Calculate x-axis ranges
+        if len(all_times_up) > 0:
+            up_x_min = min(all_times_up)
+            up_x_max = max(all_times_up)
+            up_x_range = up_x_max - up_x_min
+            up_x_padding = up_x_range * 0.05 if up_x_range > 0 else 0.01
+        else:
+            up_x_min, up_x_max = -0.2, 0.4
+            up_x_padding = 0.01
+        
+        if len(all_times_down) > 0:
+            down_x_min = min(all_times_down)
+            down_x_max = max(all_times_down)
+            down_x_range = down_x_max - down_x_min
+            down_x_padding = down_x_range * 0.05 if down_x_range > 0 else 0.01
+        else:
+            down_x_min, down_x_max = -0.2, 0.4
+            down_x_padding = 0.01
+        
+        # Calculate y-axis ranges
+        if len(all_positions_up) > 0:
+            up_y_min = min(all_positions_up)
+            up_y_max = max(all_positions_up)
+            up_y_range = up_y_max - up_y_min
+            up_y_padding = up_y_range * 0.1 if up_y_range > 0 else 10
+        else:
+            up_y_min, up_y_max = -50, 50
+            up_y_padding = 10
+        
+        if len(all_positions_down) > 0:
+            down_y_min = min(all_positions_down)
+            down_y_max = max(all_positions_down)
+            down_y_range = down_y_max - down_y_min
+            down_y_padding = down_y_range * 0.1 if down_y_range > 0 else 10
+        else:
+            down_y_min, down_y_max = -50, 50
+            down_y_padding = 10
+        
+        # Plot accepted upward saccades (BLUE) - Row 1, Col 1
+        # Plot these FIRST so excluded (red) appear on top
+        accepted_opacity = 0.3 if len(upward_segments) > 20 else 0.5
+        for i, seg in enumerate(upward_segments):
+            fig_qc_outliers.add_trace(
+                go.Scatter(
+                    x=seg['Time_rel_threshold'],
+                    y=seg['X_smooth_baselined'],
+                    mode='lines',
+                    name=f'Accepted {label_up}',
+                    line=dict(color='blue', width=1.5),
+                    showlegend=(i == 0),  # Only show legend for first trace
+                    legendgroup='accepted_up',
+                    legendgrouptitle_text='Accepted',
+                    opacity=accepted_opacity,
+                    hovertemplate=f'Amplitude: {seg["saccade_amplitude"].iloc[0]:.2f} px<br>' +
+                                'Time: %{x:.3f} s<br>' +
+                                'Position: %{y:.2f} px<extra></extra>'
+                ),
+                row=1, col=1
+            )
+        
+        # Plot excluded upward saccades (RED) - Row 1, Col 1 (plotted AFTER accepted so they appear on top)
+        excluded_opacity = 0.6 if len(upward_outlier_segments) > 20 else 0.8
+        for i, seg in enumerate(upward_outlier_segments):
+            fig_qc_outliers.add_trace(
+                go.Scatter(
+                    x=seg['Time_rel_threshold'],
+                    y=seg['X_smooth_baselined'],
+                    mode='lines',
+                    name=f'Excluded {label_up}',
+                    line=dict(color='red', width=2),
+                    showlegend=(i == 0),  # Only show legend for first trace
+                    legendgroup='excluded_up',
+                    legendgrouptitle_text='Excluded',
+                    opacity=excluded_opacity,
+                    hovertemplate=f'Amplitude: {seg["saccade_amplitude"].iloc[0]:.2f} px<br>' +
+                                'Time: %{x:.3f} s<br>' +
+                                'Position: %{y:.2f} px<extra></extra>'
+                ),
+                row=1, col=1
+            )
+        
+        # Plot accepted downward saccades (BLUE) - Row 2, Col 1
+        # Plot these FIRST so excluded (red) appear on top
+        for i, seg in enumerate(downward_segments):
+            fig_qc_outliers.add_trace(
+                go.Scatter(
+                    x=seg['Time_rel_threshold'],
+                    y=seg['X_smooth_baselined'],
+                    mode='lines',
+                    name=f'Accepted {label_down}',
+                    line=dict(color='blue', width=1.5),
+                    showlegend=(i == 0),
+                    legendgroup='accepted_down',
+                    legendgrouptitle_text='Accepted',
+                    opacity=accepted_opacity,
+                    hovertemplate=f'Amplitude: {seg["saccade_amplitude"].iloc[0]:.2f} px<br>' +
+                                'Time: %{x:.3f} s<br>' +
+                                'Position: %{y:.2f} px<extra></extra>'
+                ),
+                row=2, col=1
+            )
+        
+        # Plot excluded downward saccades (RED) - Row 2, Col 1 (plotted AFTER accepted so they appear on top)
+        for i, seg in enumerate(downward_outlier_segments):
+            fig_qc_outliers.add_trace(
+                go.Scatter(
+                    x=seg['Time_rel_threshold'],
+                    y=seg['X_smooth_baselined'],
+                    mode='lines',
+                    name=f'Excluded {label_down}',
+                    line=dict(color='red', width=2),
+                    showlegend=(i == 0),
+                    legendgroup='excluded_down',
+                    legendgrouptitle_text='Excluded',
+                    opacity=excluded_opacity,
+                    hovertemplate=f'Amplitude: {seg["saccade_amplitude"].iloc[0]:.2f} px<br>' +
+                                'Time: %{x:.3f} s<br>' +
+                                'Position: %{y:.2f} px<extra></extra>'
+                ),
+                row=2, col=1
+            )
+        
+        # Add vertical line at time=0 (threshold crossing) to all subplots
+        for row in [1, 2]:
+            fig_qc_outliers.add_shape(
+                type="line",
+                x0=0, x1=0,
+                y0=-999, y1=999,
+                line=dict(color='black', width=1, dash='dash'),
+                row=row, col=1
+            )
+        
+        # Update layout
+        fig_qc_outliers.update_layout(
+            title_text=f'Outlier Filtering QC: Accepted vs Excluded Saccades ({get_eye_label(video_key)})<br><sub>Blue: Accepted ({len(upward_segments)} {label_up}, {len(downward_segments)} {label_down}) | Red: Excluded ({len(upward_outlier_segments)} {label_up}, {len(downward_outlier_segments)} {label_down}) - Red plotted on top</sub>',
+            height=800,
+            width=1000,
+            showlegend=True,
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1
+            )
+        )
+        
+        # Update axes
+        # Upward panel (row 1)
+        fig_qc_outliers.update_xaxes(
+            title_text="Time relative to threshold crossing (s)",
+            range=[up_x_min - up_x_padding, up_x_max + up_x_padding],
+            row=1, col=1
+        )
+        fig_qc_outliers.update_yaxes(
+            title_text="Position (baselined, px)",
+            range=[up_y_min - up_y_padding, up_y_max + up_y_padding],
+            row=1, col=1
+        )
+        
+        # Downward panel (row 2)
+        fig_qc_outliers.update_xaxes(
+            title_text="Time relative to threshold crossing (s)",
+            range=[down_x_min - down_x_padding, down_x_max + down_x_padding],
+            row=2, col=1
+        )
+        fig_qc_outliers.update_yaxes(
+            title_text="Position (baselined, px)",
+            range=[down_y_min - down_y_padding, down_y_max + down_y_padding],
+            row=2, col=1
+        )
+        
+        fig_qc_outliers.show()
+        
+        # Print summary statistics
+        if debug:
+            print(f"\n{'='*80}")
+            print(f"OUTLIER FILTERING SUMMARY: {get_eye_label(video_key)}")
+            print(f"{'='*80}")
+            print(f"{label_up} saccades:")
+            print(f"  Accepted: {len(upward_segments)}")
+            print(f"  Excluded: {len(upward_outlier_segments)}")
+            if len(upward_segments) + len(upward_outlier_segments) > 0:
+                exclusion_rate_up = len(upward_outlier_segments) / (len(upward_segments) + len(upward_outlier_segments)) * 100
+                print(f"  Exclusion rate: {exclusion_rate_up:.1f}%")
+            
+            print(f"\n{label_down} saccades:")
+            print(f"  Accepted: {len(downward_segments)}")
+            print(f"  Excluded: {len(downward_outlier_segments)}")
+            if len(downward_segments) + len(downward_outlier_segments) > 0:
+                exclusion_rate_down = len(downward_outlier_segments) / (len(downward_segments) + len(downward_outlier_segments)) * 100
+                print(f"  Exclusion rate: {exclusion_rate_down:.1f}%")
+            
+            # Show outlier metadata if available
+            upward_outliers_meta = res.get('upward_outliers_meta', [])
+            downward_outliers_meta = res.get('downward_outliers_meta', [])
+            
+            if len(upward_outliers_meta) > 0:
+                print(f"\n{label_up} outlier reasons (first 5):")
+                for i, out in enumerate(upward_outliers_meta[:5]):
+                    print(f"  Saccade #{out.get('saccade_id', '?')}: "
+                        f"amplitude={out.get('amplitude', 0):.2f} px, "
+                        f"max_pos={out.get('max_abs_position', 0):.2f} px, "
+                        f"max_vel={out.get('max_abs_velocity', 0):.2f} px/s")
+                if len(upward_outliers_meta) > 5:
+                    print(f"  ... and {len(upward_outliers_meta) - 5} more")
+            
+            if len(downward_outliers_meta) > 0:
+                print(f"\n{label_down} outlier reasons (first 5):")
+                for i, out in enumerate(downward_outliers_meta[:5]):
+                    print(f"  Saccade #{out.get('saccade_id', '?')}: "
+                        f"amplitude={out.get('amplitude', 0):.2f} px, "
+                        f"max_pos={out.get('max_abs_position', 0):.2f} px, "
+                        f"max_vel={out.get('max_abs_velocity', 0):.2f} px/s")
+                if len(downward_outliers_meta) > 5:
+                    print(f"  ... and {len(downward_outliers_meta) - 5} more")
+
+# %%
+# DEBUG: BASELINING DIAGNOSTICS
+#-------------------------------------------------------------------------------
+# Plot distribution of baseline window values before and after baselining
+# This helps diagnose why some segments might not be baselined correctly
+
+if debug:
+    for video_key, res in saccade_results.items():
+        dir_map = get_direction_map_for_video(video_key)
+        label_up = dir_map['upward']
+        label_down = dir_map['downward']
+        
+        peri_saccades = res['peri_saccades']
+        
+        if len(peri_saccades) == 0:
+            print(f"\n⚠️  No saccades found for {get_eye_label(video_key)}, skipping baselining diagnostics")
+            continue
+        
+        # Extract baseline window statistics for each segment
+        baseline_values = []  # What was subtracted
+        baseline_window_means_before = []  # Mean position in baseline window BEFORE baselining
+        baseline_window_means_after = []  # Mean position in baseline window AFTER baselining
+        baseline_window_counts = []  # Number of points in baseline window
+        segment_directions = []
+        segment_ids = []
+        
+        # Get baseline window parameters from the function call (use defaults if not available)
+        baseline_window_start_time = -0.1 if 'baseline_window_start_time' not in globals() else baseline_window_start_time
+        baseline_window_end_time = -0.02 if 'baseline_window_end_time' not in globals() else baseline_window_end_time
+        
+        for seg in peri_saccades:
+            seg_id = seg['saccade_id'].iloc[0] if 'saccade_id' in seg.columns else len(baseline_values)
+            direction = seg['saccade_direction'].iloc[0] if 'saccade_direction' in seg.columns else 'unknown'
+            
+            # Get baseline value that was used
+            if 'baseline_value' in seg.columns:
+                baseline_val = seg['baseline_value'].iloc[0]
+            else:
+                baseline_val = np.nan
+            
+            # Find baseline window points (before threshold crossing)
+            baseline_mask = (
+                (seg['Time_rel_threshold'] >= baseline_window_start_time) & 
+                (seg['Time_rel_threshold'] <= baseline_window_end_time) &
+                (seg['Time_rel_threshold'] < 0)  # Pre-threshold only
+            )
+            
+            # Get original position values (reconstruct if needed)
+            if 'X_raw' in seg.columns:
+                original_pos_col = 'X_raw'
+            elif 'X_smooth' in seg.columns:
+                original_pos_col = 'X_smooth'
+            else:
+                original_pos_col = None
+            
+            # Calculate mean in baseline window BEFORE baselining
+            if original_pos_col is not None:
+                baseline_window_original = seg.loc[baseline_mask, original_pos_col].dropna()
+                if len(baseline_window_original) > 0:
+                    mean_before = baseline_window_original.mean()
+                else:
+                    mean_before = np.nan
+            else:
+                # Reconstruct: original = baselined + baseline_value
+                if 'X_smooth_baselined' in seg.columns and not pd.isna(baseline_val):
+                    baseline_window_baselined = seg.loc[baseline_mask, 'X_smooth_baselined'].dropna()
+                    if len(baseline_window_baselined) > 0:
+                        mean_before = baseline_window_baselined.mean() + baseline_val
+                    else:
+                        mean_before = np.nan
+                else:
+                    mean_before = np.nan
+            
+            # Calculate mean in baseline window AFTER baselining
+            if 'X_smooth_baselined' in seg.columns:
+                baseline_window_baselined = seg.loc[baseline_mask, 'X_smooth_baselined'].dropna()
+                if len(baseline_window_baselined) > 0:
+                    mean_after = baseline_window_baselined.mean()
+                    n_points = len(baseline_window_baselined)
+                else:
+                    mean_after = np.nan
+                    n_points = 0
+            else:
+                mean_after = np.nan
+                n_points = 0
+            
+            baseline_values.append(baseline_val)
+            baseline_window_means_before.append(mean_before)
+            baseline_window_means_after.append(mean_after)
+            baseline_window_counts.append(n_points)
+            segment_directions.append(direction)
+            segment_ids.append(seg_id)
+        
+        # Convert to arrays for easier manipulation
+        baseline_values = np.array(baseline_values)
+        baseline_window_means_before = np.array(baseline_window_means_before)
+        baseline_window_means_after = np.array(baseline_window_means_after)
+        baseline_window_counts = np.array(baseline_window_counts)
+        segment_directions = np.array(segment_directions)
+        
+        # Create diagnostic figure
+        fig_baseline = make_subplots(
+            rows=2, cols=2,
+            subplot_titles=(
+                'Baseline Values (What Was Subtracted)',
+                'Baseline Window Mean - BEFORE Baselining',
+                'Baseline Window Mean - AFTER Baselining',
+                'Baseline Window Point Counts'
+            ),
+            vertical_spacing=0.15,
+            horizontal_spacing=0.12
+        )
+        
+        # Plot 1: Baseline values distribution
+        for direction in ['upward', 'downward']:
+            mask = segment_directions == direction
+            if mask.sum() > 0:
+                label = label_up if direction == 'upward' else label_down
+                color = 'green' if direction == 'upward' else 'purple'
+                fig_baseline.add_trace(
+                    go.Histogram(
+                        x=baseline_values[mask],
+                        nbinsx=50,
+                        name=f'{label}',
+                        marker_color=color,
+                        opacity=0.6
+                    ),
+                    row=1, col=1
+                )
+        
+        # Plot 2: Baseline window mean BEFORE baselining
+        for direction in ['upward', 'downward']:
+            mask = segment_directions == direction
+            if mask.sum() > 0:
+                label = label_up if direction == 'upward' else label_down
+                color = 'green' if direction == 'upward' else 'purple'
+                valid_mask = mask & ~np.isnan(baseline_window_means_before)
+                if valid_mask.sum() > 0:
+                    fig_baseline.add_trace(
+                        go.Histogram(
+                            x=baseline_window_means_before[valid_mask],
+                            nbinsx=50,
+                            name=f'{label}',
+                            marker_color=color,
+                            opacity=0.6,
+                            showlegend=False
+                        ),
+                        row=1, col=2
+                    )
+        
+        # Plot 3: Baseline window mean AFTER baselining (should be ~0)
+        for direction in ['upward', 'downward']:
+            mask = segment_directions == direction
+            if mask.sum() > 0:
+                label = label_up if direction == 'upward' else label_down
+                color = 'green' if direction == 'upward' else 'purple'
+                valid_mask = mask & ~np.isnan(baseline_window_means_after)
+                if valid_mask.sum() > 0:
+                    fig_baseline.add_trace(
+                        go.Histogram(
+                            x=baseline_window_means_after[valid_mask],
+                            nbinsx=50,
+                            name=f'{label}',
+                            marker_color=color,
+                            opacity=0.6,
+                            showlegend=False
+                        ),
+                        row=2, col=1
+                    )
+        
+        # Plot 4: Baseline window point counts
+        for direction in ['upward', 'downward']:
+            mask = segment_directions == direction
+            if mask.sum() > 0:
+                label = label_up if direction == 'upward' else label_down
+                color = 'green' if direction == 'upward' else 'purple'
+                fig_baseline.add_trace(
+                    go.Histogram(
+                        x=baseline_window_counts[mask],
+                        nbinsx=20,
+                        name=f'{label}',
+                        marker_color=color,
+                        opacity=0.6,
+                        showlegend=False
+                    ),
+                    row=2, col=2
+                )
+        
+        # Add vertical line at 0 for "AFTER baselining" plot
+        fig_baseline.add_vline(
+            x=0,
+            line_dash="dash",
+            line_color="red",
+            line_width=2,
+            opacity=0.7,
+            annotation_text="Expected: 0",
+            row=2, col=1
+        )
+        
+        # Update layout
+        fig_baseline.update_layout(
+            title_text=f'Baselining Diagnostics: {get_eye_label(video_key)}<br><sub>After baselining, baseline window mean should be ~0</sub>',
+            height=800,
+            showlegend=True,
+            legend=dict(x=0.02, y=0.98)
+        )
+        
+        # Update axes labels
+        fig_baseline.update_xaxes(title_text="Baseline Value (px)", row=1, col=1)
+        fig_baseline.update_xaxes(title_text="Mean Position in Baseline Window (px)", row=1, col=2)
+        fig_baseline.update_xaxes(title_text="Mean Position in Baseline Window (px)", row=2, col=1)
+        fig_baseline.update_xaxes(title_text="Number of Points", row=2, col=2)
+        fig_baseline.update_yaxes(title_text="Count", row=1, col=1)
+        fig_baseline.update_yaxes(title_text="Count", row=1, col=2)
+        fig_baseline.update_yaxes(title_text="Count", row=2, col=1)
+        fig_baseline.update_yaxes(title_text="Count", row=2, col=2)
+        
+        fig_baseline.show()
+        
+        # Print statistics
+        print(f"\n{'='*80}")
+        print(f"BASELINING DIAGNOSTICS: {get_eye_label(video_key)}")
+        print(f"{'='*80}")
+        
+        for direction in ['upward', 'downward']:
+            mask = segment_directions == direction
+            label = label_up if direction == 'upward' else label_down
+            
+            if mask.sum() > 0:
+                print(f"\n{label} saccades (n={mask.sum()}):")
+                
+                # Baseline values
+                valid_baseline = baseline_values[mask & ~np.isnan(baseline_values)]
+                if len(valid_baseline) > 0:
+                    print(f"  Baseline values (subtracted):")
+                    print(f"    Mean: {valid_baseline.mean():.2f} px")
+                    print(f"    Std: {valid_baseline.std():.2f} px")
+                    print(f"    Range: [{valid_baseline.min():.2f}, {valid_baseline.max():.2f}] px")
+                    print(f"    NaN count: {np.isnan(baseline_values[mask]).sum()}")
+                
+                # Baseline window means BEFORE
+                valid_before = baseline_window_means_before[mask & ~np.isnan(baseline_window_means_before)]
+                if len(valid_before) > 0:
+                    print(f"\n  Baseline window mean BEFORE baselining:")
+                    print(f"    Mean: {valid_before.mean():.2f} px")
+                    print(f"    Std: {valid_before.std():.2f} px")
+                    print(f"    Range: [{valid_before.min():.2f}, {valid_before.max():.2f}] px")
+                    print(f"    NaN count: {np.isnan(baseline_window_means_before[mask]).sum()}")
+                
+                # Baseline window means AFTER (should be ~0)
+                valid_after = baseline_window_means_after[mask & ~np.isnan(baseline_window_means_after)]
+                if len(valid_after) > 0:
+                    print(f"\n  Baseline window mean AFTER baselining (should be ~0):")
+                    print(f"    Mean: {valid_after.mean():.2f} px")
+                    print(f"    Std: {valid_after.std():.2f} px")
+                    print(f"    Range: [{valid_after.min():.2f}, {valid_after.max():.2f}] px")
+                    print(f"    NaN count: {np.isnan(baseline_window_means_after[mask]).sum()}")
+                    
+                    # Count segments that are NOT properly baselined (mean > 1px away from 0)
+                    not_baselined = np.abs(valid_after) > 1.0
+                    if not_baselined.sum() > 0:
+                        print(f"\n  ⚠️  WARNING: {not_baselined.sum()} segments NOT properly baselined (|mean| > 1px)")
+                        print(f"    Mean values for non-baselined segments: {valid_after[not_baselined]}")
+                    
+                    # Show distribution of baseline window means (should all be ~0)
+                    print(f"\n  Distribution of baseline window means AFTER baselining:")
+                    print(f"    Segments with |mean| < 0.1 px: {(np.abs(valid_after) < 0.1).sum()}")
+                    print(f"    Segments with 0.1 <= |mean| < 0.5 px: {((np.abs(valid_after) >= 0.1) & (np.abs(valid_after) < 0.5)).sum()}")
+                    print(f"    Segments with 0.5 <= |mean| < 1.0 px: {((np.abs(valid_after) >= 0.5) & (np.abs(valid_after) < 1.0)).sum()}")
+                    print(f"    Segments with |mean| >= 1.0 px: {(np.abs(valid_after) >= 1.0).sum()}")
+                    
+                    # Show worst offenders
+                    worst_indices = np.argsort(np.abs(valid_after))[-10:]  # Top 10 worst
+                    if len(worst_indices) > 0:
+                        print(f"\n  Top 10 segments with largest |baseline window mean|:")
+                        for i, idx in enumerate(worst_indices[::-1]):  # Reverse to show worst first
+                            seg_idx = np.where(mask)[0][idx]
+                            seg_id = segment_ids[seg_idx]
+                            mean_val = valid_after[idx]
+                            baseline_val = baseline_values[mask][idx]
+                            print(f"    Segment {seg_id}: baseline_window_mean={mean_val:.3f} px, baseline_value={baseline_val:.3f} px")
+                    
+                    # CRITICAL CHECK: Verify that baseline_value actually equals baseline_window_mean_before
+                    # This checks if baselining logic is correct
+                    valid_before_check = baseline_window_means_before[mask & ~np.isnan(baseline_window_means_before)]
+                    if len(valid_before_check) > 0 and len(valid_baseline) > 0:
+                        # Check if baseline_value matches baseline_window_mean_before (should be identical)
+                        mismatches = np.abs(valid_baseline - valid_before_check) > 0.01  # Allow small floating point differences
+                        if mismatches.sum() > 0:
+                            print(f"\n  ⚠️  CRITICAL: {mismatches.sum()} segments where baseline_value != baseline_window_mean_before")
+                            print(f"    This indicates a bug in baselining logic!")
+                            for i in np.where(mismatches)[0][:5]:  # Show first 5
+                                print(f"      Segment {i}: baseline_value={valid_baseline[i]:.3f}, baseline_window_mean_before={valid_before_check[i]:.3f}")
+                        else:
+                            print(f"\n  ✅ Baselining logic check: baseline_value matches baseline_window_mean_before for all segments")
+                
+                # Baseline window point counts
+                valid_counts = baseline_window_counts[mask & (baseline_window_counts > 0)]
+                if len(valid_counts) > 0:
+                    print(f"\n  Baseline window point counts:")
+                    print(f"    Mean: {valid_counts.mean():.1f} points")
+                    print(f"    Range: [{valid_counts.min()}, {valid_counts.max()}] points")
+                    print(f"    Segments with 0 points in baseline window: {(baseline_window_counts[mask] == 0).sum()}")
+        
+        print(f"\n{'='*80}\n")
+        
+        # Additional diagnostic: Check if baselining is actually applied to segments
+        # Compare original vs baselined values at the start of segments (before threshold)
+        print(f"\n{'='*80}")
+        print(f"ADDITIONAL BASELINING CHECK: Comparing segment start positions")
+        print(f"{'='*80}")
+        
+        for direction in ['upward', 'downward']:
+            mask = segment_directions == direction
+            label = label_up if direction == 'upward' else label_down
+            
+            if mask.sum() > 0:
+                print(f"\n{label} saccades:")
+                
+                # Check first few points of each segment (should be ~0 after baselining)
+                segment_start_means_original = []
+                segment_start_means_baselined = []
+                
+                for i, seg in enumerate(peri_saccades):
+                    if segment_directions[i] != direction:
+                        continue
+                    
+                    # Get first 5 points before threshold (if available)
+                    pre_threshold_mask = seg['Time_rel_threshold'] < 0
+                    pre_threshold_seg = seg.loc[pre_threshold_mask].head(5)
+                    
+                    if len(pre_threshold_seg) > 0:
+                        # Get original position
+                        if 'X_raw' in seg.columns:
+                            orig_col = 'X_raw'
+                        elif 'X_smooth' in seg.columns:
+                            orig_col = 'X_smooth'
+                        else:
+                            orig_col = None
+                        
+                        if orig_col is not None:
+                            orig_mean = pre_threshold_seg[orig_col].mean()
+                            segment_start_means_original.append(orig_mean)
+                        
+                        # Get baselined position
+                        if 'X_smooth_baselined' in seg.columns:
+                            baselined_mean = pre_threshold_seg['X_smooth_baselined'].mean()
+                            segment_start_means_baselined.append(baselined_mean)
+                
+                if len(segment_start_means_baselined) > 0:
+                    segment_start_means_baselined = np.array(segment_start_means_baselined)
+                    print(f"  Mean position at segment start (first 5 pre-threshold points) AFTER baselining:")
+                    print(f"    Mean: {segment_start_means_baselined.mean():.3f} px")
+                    print(f"    Std: {segment_start_means_baselined.std():.3f} px")
+                    print(f"    Range: [{segment_start_means_baselined.min():.3f}, {segment_start_means_baselined.max():.3f}] px")
+                    print(f"    Segments with |mean| > 1 px: {(np.abs(segment_start_means_baselined) > 1.0).sum()}")
+                    print(f"    Segments with |mean| > 5 px: {(np.abs(segment_start_means_baselined) > 5.0).sum()}")
+                    
+                    # Show worst offenders
+                    worst_indices = np.argsort(np.abs(segment_start_means_baselined))[-10:]
+                    if len(worst_indices) > 0:
+                        print(f"\n  Top 10 segments with largest |start position mean| AFTER baselining:")
+                        for idx in worst_indices[::-1]:
+                            print(f"    Segment {idx}: start_mean={segment_start_means_baselined[idx]:.3f} px")
+        
+        print(f"\n{'='*80}\n")
+
 
 # %%
 # VISUALIZE DETECTED SACCADES (Adaptive Method)
@@ -2879,6 +3482,75 @@ if plot_saccade_detection_QC:
         downward_segments = res['downward_segments']
         # Any other variables you need...
 
+        # Optional: Find 5-minute window with highest saccade density
+        plot_5min_window = True  # Set to True to plot only highest density 5-minute window
+        window_duration = 300  # 5 minutes in seconds
+        
+        # Initialize variables for windowing
+        best_window_start = None
+        best_window_end = None
+        best_window_count = 0
+        
+        if plot_5min_window and (len(upward_saccades_df) > 0 or len(downward_saccades_df) > 0):
+            # Combine all saccades and find time window with highest density
+            all_saccade_times = []
+            if len(upward_saccades_df) > 0:
+                all_saccade_times.extend(upward_saccades_df['time'].values)
+            if len(downward_saccades_df) > 0:
+                all_saccade_times.extend(downward_saccades_df['time'].values)
+            
+            if len(all_saccade_times) > 0:
+                all_saccade_times = np.array(all_saccade_times)
+                time_min = all_saccade_times.min()
+                time_max = all_saccade_times.max()
+                
+                # Slide window and count saccades in each window
+                best_window_start = time_min
+                best_window_count = 0
+                step_size = 10  # Check every 10 seconds
+                
+                for window_start in np.arange(time_min, time_max - window_duration + step_size, step_size):
+                    window_end = window_start + window_duration
+                    count = np.sum((all_saccade_times >= window_start) & (all_saccade_times <= window_end))
+                    if count > best_window_count:
+                        best_window_count = count
+                        best_window_start = window_start
+                
+                best_window_end = best_window_start + window_duration
+                
+                # Filter data to this window
+                df_window = res['df'][(res['df']['Seconds'] >= best_window_start) & 
+                                     (res['df']['Seconds'] <= best_window_end)].copy()
+                upward_saccades_df_window = upward_saccades_df[
+                    (upward_saccades_df['time'] >= best_window_start) & 
+                    (upward_saccades_df['time'] <= best_window_end)
+                ].copy()
+                downward_saccades_df_window = downward_saccades_df[
+                    (downward_saccades_df['time'] >= best_window_start) & 
+                    (downward_saccades_df['time'] <= best_window_end)
+                ].copy()
+                
+                if debug:
+                    print(f"\n📊 Highest saccade density window: {best_window_start:.1f}s to {best_window_end:.1f}s")
+                    print(f"   ({best_window_count} saccades in {window_duration/60:.1f} minutes)")
+                    print(f"   Density: {best_window_count / (window_duration/60):.1f} saccades/min")
+            else:
+                plot_5min_window = False
+        else:
+            plot_5min_window = False
+        
+        # Use windowed data if requested, otherwise use full data
+        if plot_5min_window:
+            df_plot = df_window
+            upward_saccades_df_plot = upward_saccades_df_window
+            downward_saccades_df_plot = downward_saccades_df_window
+            time_range_text = f" (5-min window: {best_window_start:.1f}-{best_window_end:.1f}s, {best_window_count} saccades)"
+        else:
+            df_plot = res['df']
+            upward_saccades_df_plot = upward_saccades_df
+            downward_saccades_df_plot = downward_saccades_df
+            time_range_text = ""
+
         fig = make_subplots(
             rows=2, cols=1,
             shared_xaxes=True,
@@ -2889,8 +3561,8 @@ if plot_saccade_detection_QC:
         # Add smoothed X position to the first subplot
         fig.add_trace(
             go.Scatter(
-                x=res['df']['Seconds'],
-                y=res['df']['X_smooth'],
+                x=df_plot['Seconds'],
+                y=df_plot['X_smooth'],
                 mode='lines',
                 name='Smoothed X',
                 line=dict(color='blue', width=2)
@@ -2901,8 +3573,8 @@ if plot_saccade_detection_QC:
         # Add smoothed velocity to the second subplot
         fig.add_trace(
             go.Scatter(
-                x=res['df']['Seconds'],
-                y=res['df']['vel_x_smooth'],
+                x=df_plot['Seconds'],
+                y=df_plot['vel_x_smooth'],
                 mode='lines',
                 name='Smoothed Velocity',
                 line=dict(color='red', width=2)
@@ -2928,48 +3600,30 @@ if plot_saccade_detection_QC:
             row=2, col=1
         )
 
-        # Set offset for saccade indicator lines (above the trace for upward, below for downward)
-        vel_max = res['df']['vel_x_smooth'].max()
-        vel_min = res['df']['vel_x_smooth'].min()
-        vel_range = vel_max - vel_min
-        line_offset = vel_range * 0.15  # 15% of velocity range
+        # Calculate position y-axis range for vertical lines
+        pos_max = df_plot['X_smooth'].max()
+        pos_min = df_plot['X_smooth'].min()
+        pos_range = pos_max - pos_min
+        # Add small padding to ensure lines span full visible range
+        pos_padding = pos_range * 0.05
+        pos_y_min = pos_min - pos_padding
+        pos_y_max = pos_max + pos_padding
 
-        # Plot upward saccades with duration lines and peak arrows
-        if len(upward_saccades_df) > 0:
-            for idx, row in upward_saccades_df.iterrows():
+        # Plot upward saccades (TN) as vertical lines on position trace
+        if len(upward_saccades_df_plot) > 0:
+            for idx, row in upward_saccades_df_plot.iterrows():
                 start_time = row['start_time']
                 end_time = row['end_time']
-                peak_time = row['time']
-                peak_velocity = row['velocity']
                 
-                # Draw horizontal line spanning the saccade duration
-                # Line is positioned above the velocity trace
-                y_line_pos = vel_max + line_offset
-                
+                # Use rectangle with thin border to show duration span more efficiently
+                # Opacity must be set at shape level or via rgba color, not in line dict
                 fig.add_shape(
-                    type="line",
-                    x0=start_time, y0=y_line_pos,
-                    x1=end_time, y1=y_line_pos,
-                    line=dict(color='green', width=3),
-                    row=2, col=1
-                )
-                
-                # Add arrow annotation at the peak position pointing to the actual peak velocity
-                # Arrow points from the line to the peak velocity value on the velocity trace
-                y_arrow_start = y_line_pos
-                y_arrow_end = peak_velocity
-                
-                fig.add_annotation(
-                    x=peak_time,
-                    y=y_arrow_start,
-                    ax=0,
-                    ay=y_arrow_end - y_arrow_start,  # arrow points to peak velocity
-                    arrowhead=2,  # filled arrowhead
-                    arrowsize=2,
-                    arrowwidth=2,
-                    arrowcolor='green',
-                    row=2, col=1,
-                    showarrow=True
+                    type="rect",
+                    x0=start_time, y0=pos_y_min,
+                    x1=end_time, y1=pos_y_max,
+                    fillcolor='rgba(0,128,0,0.1)',  # Light green fill with opacity
+                    line=dict(color='rgba(0,128,0,0.3)', width=2),  # Green border with opacity via rgba
+                    row=1, col=1
                 )
             
             # Add legend entry for upward saccades
@@ -2977,49 +3631,28 @@ if plot_saccade_detection_QC:
                 go.Scatter(
                     x=[None],
                     y=[None],
-                    mode='markers',
-                    name=f'{label_up} Saccades (duration lines)',
-                    marker=dict(symbol='line-ns', size=15, color='green', line=dict(width=3))
+                    mode='lines',
+                    name=f'{label_up} Saccades',
+                    line=dict(color='rgba(0,128,0,0.3)', width=3)  # Green with opacity via rgba
                 ),
-                row=2, col=1
+                row=1, col=1
             )
 
-        # Plot downward saccades with duration lines and peak arrows
-        if len(downward_saccades_df) > 0:
-            for idx, row in downward_saccades_df.iterrows():
+        # Plot downward saccades (NT) as vertical lines on position trace
+        if len(downward_saccades_df_plot) > 0:
+            for idx, row in downward_saccades_df_plot.iterrows():
                 start_time = row['start_time']
                 end_time = row['end_time']
-                peak_time = row['time']
-                peak_velocity = row['velocity']
                 
-                # Draw horizontal line spanning the saccade duration
-                # Line is positioned below the velocity trace
-                y_line_pos = vel_min - line_offset
-                
+                # Use rectangle with thin border to show duration span more efficiently
+                # Opacity must be set at shape level or via rgba color, not in line dict
                 fig.add_shape(
-                    type="line",
-                    x0=start_time, y0=y_line_pos,
-                    x1=end_time, y1=y_line_pos,
-                    line=dict(color='purple', width=3),
-                    row=2, col=1
-                )
-                
-                # Add arrow annotation at the peak position pointing to the actual peak velocity
-                # Arrow points from the line to the peak velocity value on the velocity trace
-                y_arrow_start = y_line_pos
-                y_arrow_end = peak_velocity
-                
-                fig.add_annotation(
-                    x=peak_time,
-                    y=y_arrow_start,
-                    ax=0,
-                    ay=y_arrow_end - y_arrow_start,  # arrow points to peak velocity
-                    arrowhead=2,  # filled arrowhead
-                    arrowsize=2,
-                    arrowwidth=2,
-                    arrowcolor='purple',
-                    row=2, col=1,
-                    showarrow=True
+                    type="rect",
+                    x0=start_time, y0=pos_y_min,
+                    x1=end_time, y1=pos_y_max,
+                    fillcolor='rgba(128,0,128,0.1)',  # Light purple fill with opacity
+                    line=dict(color='rgba(128,0,128,0.3)', width=2),  # Purple border with opacity via rgba
+                    row=1, col=1
                 )
             
             # Add legend entry for downward saccades
@@ -3027,16 +3660,16 @@ if plot_saccade_detection_QC:
                 go.Scatter(
                     x=[None],
                     y=[None],
-                    mode='markers',
-                    name=f'{label_down} Saccades (duration lines)',
-                    marker=dict(symbol='line-ns', size=15, color='purple', line=dict(width=3))
+                    mode='lines',
+                    name=f'{label_down} Saccades',
+                    line=dict(color='rgba(128,0,128,0.3)', width=3)  # Purple with opacity via rgba
                 ),
-                row=2, col=1
+                row=1, col=1
             )
 
         # Update layout
         fig.update_layout(
-            title=f'Detected Saccades ({get_eye_label(video_key)}): Duration Lines + Peak Arrows (QC Visualization)',
+            title=f'Detected Saccades ({get_eye_label(video_key)}): Vertical Lines on Position Trace (QC Visualization){time_range_text}',
             height=600,
             showlegend=True,
             legend=dict(x=0.01, y=0.99)
@@ -3049,6 +3682,155 @@ if plot_saccade_detection_QC:
 
         fig.show()
 
+
+# %%
+# ADAPTIVE THRESHOLD DIAGNOSTIC PLOTS (only if debug=True)
+#-------------------------------------------------------------------------------
+# Plot distributions of classification features to help determine meaningful adaptive thresholds
+if debug and len(saccade_results) > 0:
+    print("\n📊 Generating adaptive threshold diagnostic plots...")
+    
+    for video_key, res in saccade_results.items():
+        all_saccades_df = res.get('all_saccades_df', pd.DataFrame())
+        
+        if len(all_saccades_df) == 0:
+            print(f"⚠️  No saccades found for {get_eye_label(video_key)}, skipping diagnostic plots")
+            continue
+        
+        # Filter out NaN values for plotting
+        pre_vel = all_saccades_df['pre_saccade_mean_velocity'].dropna()
+        pre_drift = all_saccades_df['pre_saccade_position_drift'].dropna()
+        post_var = all_saccades_df['post_saccade_position_variance'].dropna()
+        post_change = all_saccades_df['post_saccade_position_change'].dropna()
+        amplitude = all_saccades_df['amplitude'].dropna()
+        
+        # Calculate post_change / amplitude ratio (for percentage threshold visualization)
+        # Align by index to ensure matching
+        aligned_indices = post_change.index.intersection(amplitude.index)
+        post_change_aligned = post_change.loc[aligned_indices]
+        amplitude_aligned = amplitude.loc[aligned_indices]
+        post_change_ratio = (post_change_aligned / amplitude_aligned) * 100  # Convert to percentage
+        
+        # Calculate current thresholds for visualization
+        if use_adaptive_thresholds:
+            # Calculate adaptive thresholds from current data
+            if len(pre_vel) >= 3:
+                current_pre_vel_threshold = np.percentile(pre_vel, adaptive_percentile_pre_velocity)
+            else:
+                current_pre_vel_threshold = pre_saccade_velocity_threshold
+            
+            if len(pre_drift) >= 3:
+                current_pre_drift_threshold = np.percentile(pre_drift, adaptive_percentile_pre_drift)
+            else:
+                current_pre_drift_threshold = pre_saccade_drift_threshold
+            
+            if len(post_var) >= 3:
+                current_post_var_threshold = np.percentile(post_var, adaptive_percentile_post_variance)
+            else:
+                current_post_var_threshold = post_saccade_variance_threshold
+        else:
+            # Use fixed thresholds
+            current_pre_vel_threshold = pre_saccade_velocity_threshold
+            current_pre_drift_threshold = pre_saccade_drift_threshold
+            current_post_var_threshold = post_saccade_variance_threshold
+        
+        # Create figure with 2x2 subplots
+        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+        fig.suptitle(f'Adaptive Threshold Diagnostic Plots: {get_eye_label(video_key)}\n'
+                    f'(n={len(all_saccades_df)} saccades)', fontsize=14, fontweight='bold')
+        
+        # Plot 1: Pre-saccade mean velocity
+        ax = axes[0, 0]
+        if len(pre_vel) > 0:
+            ax.hist(pre_vel, bins=50, alpha=0.7, color='skyblue', edgecolor='black')
+            ax.axvline(current_pre_vel_threshold, color='red', linestyle='--', linewidth=2, 
+                      label=f'Threshold: {current_pre_vel_threshold:.2f} px/s')
+            if use_adaptive_thresholds:
+                ax.axvline(np.percentile(pre_vel, 50), color='gray', linestyle=':', linewidth=1, 
+                          label=f'Median: {np.percentile(pre_vel, 50):.2f} px/s')
+                ax.axvline(np.percentile(pre_vel, 75), color='orange', linestyle=':', linewidth=1, 
+                          label=f'75th: {np.percentile(pre_vel, 75):.2f} px/s')
+            ax.set_xlabel('Pre-saccade Mean Velocity (px/s)')
+            ax.set_ylabel('Count')
+            ax.set_title(f'Pre-saccade Velocity Distribution\n'
+                        f'{"Adaptive" if use_adaptive_thresholds else "Fixed"} threshold at '
+                        f'{adaptive_percentile_pre_velocity if use_adaptive_thresholds else "fixed"}th percentile')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+        
+        # Plot 2: Pre-saccade position drift
+        ax = axes[0, 1]
+        if len(pre_drift) > 0:
+            ax.hist(pre_drift, bins=50, alpha=0.7, color='lightgreen', edgecolor='black')
+            ax.axvline(current_pre_drift_threshold, color='red', linestyle='--', linewidth=2,
+                      label=f'Threshold: {current_pre_drift_threshold:.2f} px')
+            if use_adaptive_thresholds:
+                ax.axvline(np.percentile(pre_drift, 50), color='gray', linestyle=':', linewidth=1,
+                          label=f'Median: {np.percentile(pre_drift, 50):.2f} px')
+                ax.axvline(np.percentile(pre_drift, 75), color='orange', linestyle=':', linewidth=1,
+                          label=f'75th: {np.percentile(pre_drift, 75):.2f} px')
+            ax.set_xlabel('Pre-saccade Position Drift (px)')
+            ax.set_ylabel('Count')
+            ax.set_title(f'Pre-saccade Drift Distribution\n'
+                        f'{"Adaptive" if use_adaptive_thresholds else "Fixed"} threshold at '
+                        f'{adaptive_percentile_pre_drift if use_adaptive_thresholds else "fixed"}th percentile')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+        
+        # Plot 3: Post-saccade position variance
+        ax = axes[1, 0]
+        if len(post_var) > 0:
+            ax.hist(post_var, bins=50, alpha=0.7, color='plum', edgecolor='black')
+            ax.axvline(current_post_var_threshold, color='red', linestyle='--', linewidth=2,
+                      label=f'Threshold: {current_post_var_threshold:.2f} px²')
+            if use_adaptive_thresholds:
+                ax.axvline(np.percentile(post_var, 25), color='orange', linestyle=':', linewidth=1,
+                          label=f'25th: {np.percentile(post_var, 25):.2f} px²')
+                ax.axvline(np.percentile(post_var, 50), color='gray', linestyle=':', linewidth=1,
+                          label=f'Median: {np.percentile(post_var, 50):.2f} px²')
+            ax.set_xlabel('Post-saccade Position Variance (px²)')
+            ax.set_ylabel('Count')
+            ax.set_title(f'Post-saccade Variance Distribution\n'
+                        f'{"Adaptive" if use_adaptive_thresholds else "Fixed"} threshold at '
+                        f'{adaptive_percentile_post_variance if use_adaptive_thresholds else "fixed"}th percentile')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+        
+        # Plot 4: Post-saccade position change (as percentage of amplitude)
+        ax = axes[1, 1]
+        if len(post_change_ratio) > 0:
+            ax.hist(post_change_ratio, bins=50, alpha=0.7, color='salmon', edgecolor='black')
+            ax.axvline(post_saccade_position_change_threshold_percent, color='red', linestyle='--', 
+                      linewidth=2, label=f'Threshold: {post_saccade_position_change_threshold_percent:.1f}%')
+            ax.axvline(np.percentile(post_change_ratio, 50), color='gray', linestyle=':', linewidth=1,
+                      label=f'Median: {np.percentile(post_change_ratio, 50):.1f}%')
+            ax.axvline(np.percentile(post_change_ratio, 75), color='orange', linestyle=':', linewidth=1,
+                      label=f'75th: {np.percentile(post_change_ratio, 75):.1f}%')
+            ax.set_xlabel('Post-saccade Position Change / Amplitude (%)')
+            ax.set_ylabel('Count')
+            ax.set_title(f'Post-saccade Position Change Ratio\n'
+                        f'Fixed threshold: {post_saccade_position_change_threshold_percent:.1f}% of amplitude')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.show()
+        
+        # Print summary statistics
+        print(f"\n📈 Summary Statistics for {get_eye_label(video_key)}:")
+        if len(pre_vel) > 0:
+            print(f"  Pre-saccade velocity: mean={pre_vel.mean():.2f}, median={pre_vel.median():.2f}, "
+                  f"std={pre_vel.std():.2f} px/s")
+        if len(pre_drift) > 0:
+            print(f"  Pre-saccade drift: mean={pre_drift.mean():.2f}, median={pre_drift.median():.2f}, "
+                  f"std={pre_drift.std():.2f} px")
+        if len(post_var) > 0:
+            print(f"  Post-saccade variance: mean={post_var.mean():.2f}, median={post_var.median():.2f}, "
+                  f"std={post_var.std():.2f} px²")
+        if len(post_change_ratio) > 0:
+            print(f"  Post-saccade change ratio: mean={post_change_ratio.mean():.1f}%, "
+                  f"median={post_change_ratio.median():.1f}%, std={post_change_ratio.std():.1f}%")
+        print()
 
 # %%
 # VISUALIZE AND ANALYZE SACCADE CLASSIFICATION (Orienting vs Compensatory)
@@ -3138,6 +3920,16 @@ for video_key, res in saccade_results.items():
             print(f"    Mean: {bout_sizes.mean():.2f} ± {bout_sizes.std():.2f} saccades")
             print(f"    Range: {bout_sizes.min():.0f} - {bout_sizes.max():.0f} saccades")
             print(f"    Median: {np.median(bout_sizes):.0f} saccades")
+        
+        # Classification confidence comparison
+        if 'classification_confidence' in all_saccades_df.columns:
+            orienting_conf = orienting_saccades['classification_confidence'].values
+            compensatory_conf = compensatory_saccades['classification_confidence'].values
+            conf_stat, conf_p = stats.mannwhitneyu(orienting_conf, compensatory_conf, alternative='two-sided')
+            print(f"\n  Classification Confidence:")
+            print(f"    Orienting: {orienting_conf.mean():.3f} ± {orienting_conf.std():.3f} (median: {np.median(orienting_conf):.3f})")
+            print(f"    Compensatory: {compensatory_conf.mean():.3f} ± {compensatory_conf.std():.3f} (median: {np.median(compensatory_conf):.3f})")
+            print(f"    Mann-Whitney U test: U={conf_stat:.1f}, p={conf_p:.4f}")
     else:
         print(f"  ⚠️ Cannot perform statistical comparisons - need both types present")
     
@@ -3164,7 +3956,8 @@ for video_key, res in saccade_results.items():
                 nbinsx=30,
                 name='Orienting',
                 marker_color='blue',
-                opacity=0.6
+                opacity=0.6,
+                histnorm='probability'
             ),
             row=1, col=1
         )
@@ -3175,7 +3968,8 @@ for video_key, res in saccade_results.items():
                 nbinsx=30,
                 name='Compensatory',
                 marker_color='orange',
-                opacity=0.6
+                opacity=0.6,
+                histnorm='probability'
             ),
             row=1, col=1
         )
@@ -3189,7 +3983,8 @@ for video_key, res in saccade_results.items():
                 name='Orienting',
                 marker_color='blue',
                 opacity=0.6,
-                showlegend=False
+                showlegend=False,
+                histnorm='probability'
             ),
             row=1, col=2
         )
@@ -3201,7 +3996,8 @@ for video_key, res in saccade_results.items():
                 name='Compensatory',
                 marker_color='orange',
                 opacity=0.6,
-                showlegend=False
+                showlegend=False,
+                histnorm='probability'
             ),
             row=1, col=2
         )
@@ -3215,7 +4011,8 @@ for video_key, res in saccade_results.items():
                 name='Orienting',
                 marker_color='blue',
                 opacity=0.6,
-                showlegend=False
+                showlegend=False,
+                histnorm='probability'
             ),
             row=1, col=3
         )
@@ -3227,7 +4024,8 @@ for video_key, res in saccade_results.items():
                 name='Compensatory',
                 marker_color='orange',
                 opacity=0.6,
-                showlegend=False
+                showlegend=False,
+                histnorm='probability'
             ),
             row=1, col=3
         )
@@ -3241,7 +4039,8 @@ for video_key, res in saccade_results.items():
                 name='Orienting',
                 marker_color='blue',
                 opacity=0.6,
-                showlegend=False
+                showlegend=False,
+                histnorm='probability'
             ),
             row=2, col=1
         )
@@ -3253,7 +4052,8 @@ for video_key, res in saccade_results.items():
                 name='Compensatory',
                 marker_color='orange',
                 opacity=0.6,
-                showlegend=False
+                showlegend=False,
+                histnorm='probability'
             ),
             row=2, col=1
         )
@@ -3267,7 +4067,8 @@ for video_key, res in saccade_results.items():
                 name='Orienting',
                 marker_color='blue',
                 opacity=0.6,
-                showlegend=False
+                showlegend=False,
+                histnorm='probability'
             ),
             row=2, col=2
         )
@@ -3279,7 +4080,8 @@ for video_key, res in saccade_results.items():
                 name='Compensatory',
                 marker_color='orange',
                 opacity=0.6,
-                showlegend=False
+                showlegend=False,
+                histnorm='probability'
             ),
             row=2, col=2
         )
@@ -3293,7 +4095,8 @@ for video_key, res in saccade_results.items():
                 name='Compensatory Bout Size',
                 marker_color='orange',
                 opacity=0.6,
-                showlegend=False
+                showlegend=False,
+                histnorm='probability'
             ),
             row=2, col=3
         )
@@ -3320,14 +4123,88 @@ for video_key, res in saccade_results.items():
     fig_class.update_xaxes(title_text="Variance (px²)", row=2, col=2)
     fig_class.update_xaxes(title_text="Bout Size (saccades)", row=2, col=3)
     
-    fig_class.update_yaxes(title_text="Count", row=1, col=1)
-    fig_class.update_yaxes(title_text="Count", row=1, col=2)
-    fig_class.update_yaxes(title_text="Count", row=1, col=3)
-    fig_class.update_yaxes(title_text="Count", row=2, col=1)
-    fig_class.update_yaxes(title_text="Count", row=2, col=2)
-    fig_class.update_yaxes(title_text="Count", row=2, col=3)
+    fig_class.update_yaxes(title_text="Probability", row=1, col=1)
+    fig_class.update_yaxes(title_text="Probability", row=1, col=2)
+    fig_class.update_yaxes(title_text="Probability", row=1, col=3)
+    fig_class.update_yaxes(title_text="Probability", row=2, col=1)
+    fig_class.update_yaxes(title_text="Probability", row=2, col=2)
+    fig_class.update_yaxes(title_text="Probability", row=2, col=3)
     
     fig_class.show()
+    
+    # Confidence distribution visualization
+    if 'classification_confidence' in all_saccades_df.columns:
+        fig_conf = make_subplots(
+            rows=1, cols=2,
+            subplot_titles=(
+                'Classification Confidence Distribution',
+                'Confidence by Saccade Type'
+            ),
+            horizontal_spacing=0.15
+        )
+        
+        # Overall confidence distribution
+        fig_conf.add_trace(
+            go.Histogram(
+                x=all_saccades_df['classification_confidence'],
+                nbinsx=30,
+                name='All Saccades',
+                marker_color='gray',
+                opacity=0.7,
+                histnorm='probability'
+            ),
+            row=1, col=1
+        )
+        
+        # Add vertical lines for confidence thresholds
+        fig_conf.add_vline(
+            x=0.7, line_dash="dash", line_color="green", 
+            annotation_text="High (≥0.7)", row=1, col=1
+        )
+        fig_conf.add_vline(
+            x=0.4, line_dash="dash", line_color="orange", 
+            annotation_text="Medium (0.4-0.7)", row=1, col=1
+        )
+        
+        # Confidence by type
+        if len(orienting_saccades) > 0:
+            fig_conf.add_trace(
+                go.Histogram(
+                    x=orienting_saccades['classification_confidence'],
+                    nbinsx=30,
+                    name='Orienting',
+                    marker_color='blue',
+                    opacity=0.6,
+                    histnorm='probability'
+                ),
+                row=1, col=2
+            )
+        if len(compensatory_saccades) > 0:
+            fig_conf.add_trace(
+                go.Histogram(
+                    x=compensatory_saccades['classification_confidence'],
+                    nbinsx=30,
+                    name='Compensatory',
+                    marker_color='orange',
+                    opacity=0.6,
+                    histnorm='probability'
+                ),
+                row=1, col=2
+            )
+        
+        fig_conf.update_layout(
+            title_text=f'Classification Confidence Analysis ({get_eye_label(video_key)})',
+            height=400,
+            showlegend=True,
+            legend=dict(x=0.02, y=0.98)
+        )
+        
+        fig_conf.update_xaxes(title_text="Confidence Score", row=1, col=1)
+        fig_conf.update_xaxes(title_text="Confidence Score", row=1, col=2)
+        fig_conf.update_yaxes(title_text="Probability", row=1, col=1)
+        fig_conf.update_yaxes(title_text="Probability", row=1, col=2)
+        
+        fig_conf.show()
     
     # Time series visualization with classification
     fig_ts = make_subplots(
@@ -3378,98 +4255,71 @@ for video_key, res in saccade_results.items():
         row=2, col=1
     )
     
-    # Calculate offset for saccade indicator lines
-    vel_max = res['df']['vel_x_smooth'].max()
-    vel_min = res['df']['vel_x_smooth'].min()
-    vel_range = vel_max - vel_min
-    line_offset = vel_range * 0.15
+    # Calculate position y-axis range for vertical lines
+    pos_max = res['df']['X_smooth'].max()
+    pos_min = res['df']['X_smooth'].min()
+    pos_range = pos_max - pos_min
+    # Add small padding to ensure lines span full visible range
+    pos_padding = pos_range * 0.05
+    pos_y_min = pos_min - pos_padding
+    pos_y_max = pos_max + pos_padding
     
-    # Plot orienting saccades (blue)
+    # Plot orienting saccades (blue) as rectangles on position trace
     orienting_in_df = all_saccades_df[all_saccades_df['saccade_type'] == 'orienting']
     if len(orienting_in_df) > 0:
         for idx, row in orienting_in_df.iterrows():
             start_time = row['start_time']
             end_time = row['end_time']
-            peak_time = row['time']
-            peak_velocity = row['velocity']
             
-            # Draw horizontal line
-            y_line_pos = vel_max + line_offset
+            # Use rectangle with thin border to show duration span more efficiently
+            # Opacity must be set via rgba color, not in line dict
             fig_ts.add_shape(
-                type="line",
-                x0=start_time, y0=y_line_pos,
-                x1=end_time, y1=y_line_pos,
-                line=dict(color='blue', width=3),
-                row=2, col=1
-            )
-            
-            # Add arrow
-            fig_ts.add_annotation(
-                x=peak_time,
-                y=y_line_pos,
-                ax=0,
-                ay=peak_velocity - y_line_pos,
-                arrowhead=2,
-                arrowsize=2,
-                arrowwidth=2,
-                arrowcolor='blue',
-                row=2, col=1,
-                showarrow=True
+                type="rect",
+                x0=start_time, y0=pos_y_min,
+                x1=end_time, y1=pos_y_max,
+                fillcolor='rgba(0,0,255,0.1)',  # Light blue fill with opacity
+                line=dict(color='rgba(0,0,255,0.3)', width=2),  # Blue border with opacity via rgba
+                row=1, col=1
             )
         
         # Legend entry
         fig_ts.add_trace(
             go.Scatter(
                 x=[None], y=[None],
-                mode='markers',
+                mode='lines',
                 name='Orienting Saccades',
-                marker=dict(symbol='line-ns', size=15, color='blue', line=dict(width=3))
+                line=dict(color='rgba(0,0,255,0.3)', width=3)  # Blue with opacity via rgba
             ),
-            row=2, col=1
+            row=1, col=1
         )
     
-    # Plot compensatory saccades (orange)
+    # Plot compensatory saccades (orange) as rectangles on position trace
     compensatory_in_df = all_saccades_df[all_saccades_df['saccade_type'] == 'compensatory']
     if len(compensatory_in_df) > 0:
         for idx, row in compensatory_in_df.iterrows():
             start_time = row['start_time']
             end_time = row['end_time']
-            peak_time = row['time']
-            peak_velocity = row['velocity']
             
-            # Draw horizontal line (below velocity trace)
-            y_line_pos = vel_min - line_offset
+            # Use rectangle with thin border to show duration span more efficiently
+            # Opacity must be set via rgba color, not in line dict
             fig_ts.add_shape(
-                type="line",
-                x0=start_time, y0=y_line_pos,
-                x1=end_time, y1=y_line_pos,
-                line=dict(color='orange', width=3),
-                row=2, col=1
-            )
-            
-            # Add arrow
-            fig_ts.add_annotation(
-                x=peak_time,
-                y=y_line_pos,
-                ax=0,
-                ay=peak_velocity - y_line_pos,
-                arrowhead=2,
-                arrowsize=2,
-                arrowwidth=2,
-                arrowcolor='orange',
-                row=2, col=1,
-                showarrow=True
+                type="rect",
+                x0=start_time, y0=pos_y_min,
+                x1=end_time, y1=pos_y_max,
+                fillcolor='rgba(255,165,0,0.1)',  # Light orange fill with opacity
+                line=dict(color='rgba(255,165,0,0.3)', width=2),  # Orange border with opacity via rgba
+                row=1, col=1
             )
         
         # Legend entry
         fig_ts.add_trace(
             go.Scatter(
                 x=[None], y=[None],
-                mode='markers',
+                mode='lines',
                 name='Compensatory Saccades',
-                marker=dict(symbol='line-ns', size=15, color='orange', line=dict(width=3))
+                line=dict(color='rgba(255,165,0,0.3)', width=3)  # Orange with opacity via rgba
             ),
-            row=2, col=1
+            row=1, col=1
         )
     
     # Update layout
