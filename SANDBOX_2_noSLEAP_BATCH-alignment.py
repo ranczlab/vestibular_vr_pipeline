@@ -76,10 +76,17 @@ for data_dir in data_dirs:
     rawdata_paths.extend(subdirs)  # Collect all subdirectories
 pprint(rawdata_paths)
 
-# Build processed data paths
-data_paths = [raw.parent / f"{raw.name}_processedData/downsampled_data" for raw in rawdata_paths]
+# Build processed data paths - only include paths that actually exist
+data_paths = []
+for raw in rawdata_paths:
+    processed_path = raw.parent / f"{raw.name}_processedData/downsampled_data"
+    if processed_path.exists():
+        data_paths.append(processed_path)
+    else:
+        print(f"⚠️ Skipping {raw.name}: processed data path does not exist: {processed_path}")
+
 # Print data paths in a more readable format
-print("Processed Data Paths:")
+print("Processed Data Paths (existing only):")
 pprint(data_paths)
 
 #-------------------------------
