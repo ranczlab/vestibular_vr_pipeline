@@ -207,29 +207,76 @@ class BehavioralAnalyzer:
         self.running_percentile = running_percentile
         self.turning_percentile = turning_percentile
         
-    def slice_data_until_block_timer_elapsed(self):
+    def _is_visual_mismatch_experiment(self) -> bool:
         """
-        Slice all data so that it ends when 'Block timer elapsed' event happens.
+        Check if this is a visual mismatch experiment based on the data path.
+        
+        Returns:
+        --------
+        bool
+            True if visual mismatch experiment, False otherwise
         """
-        # Find the first "Block timer elapsed" event
-        block_elapsed_events = self.experiment_events[
-            self.experiment_events["Event"] == "Block timer elapsed"
-        ]
+        path_str = str(self.data_path).lower()
+        return 'visual_mismatch' in path_str or 'visual mismatch' in path_str
+    
+    def slice_data_until_block_timer_elapsed(self, interval: str = "first_10min"):
+        """
+        Slice data based on experiment type and interval specification.
         
-        if len(block_elapsed_events) == 0:
-            print("⚠️ Warning: No 'Block timer elapsed' event found. Using all data.")
-            self.sliced_data = self.photometry_tracking_encoder_data.copy()
-            return
+        Parameters:
+        -----------
+        interval : str
+            Interval specification:
+            - "first_10min": First 10 minutes (600 seconds) - default for non-visual mismatch
+            - "first_block": Until first "Block timer elapsed" - for visual mismatch first interval
+            - "last_block": Until last "Block timer elapsed" - for visual mismatch second interval
+        """
+        start_time = self.photometry_tracking_encoder_data.index[0]
         
-        # Get the timestamp of the last occurrence
-        end_time = block_elapsed_events.index[0]
+        if interval == "first_10min":
+            # Default: first 10 minutes
+            end_time = start_time + pd.Timedelta(seconds=600)
+            self.sliced_data = self.photometry_tracking_encoder_data[
+                (self.photometry_tracking_encoder_data.index >= start_time) & 
+                (self.photometry_tracking_encoder_data.index <= end_time)
+            ].copy()
+            
+            if len(self.sliced_data) == 0:
+                print("⚠️ Warning: No data found in first 10 minutes. Using all data.")
+                self.sliced_data = self.photometry_tracking_encoder_data.copy()
+            else:
+                duration_seconds = (self.sliced_data.index[-1] - self.sliced_data.index[0]).total_seconds()
+                print(f"✅ Data sliced to first 10 minutes: {duration_seconds:.1f} seconds")
         
-        # Slice the data
-        self.sliced_data = self.photometry_tracking_encoder_data[
-            self.photometry_tracking_encoder_data.index <= end_time
-        ].copy()
+        elif interval in ["first_block", "last_block"]:
+            # For visual mismatch: use block timer elapsed events
+            block_elapsed_events = self.experiment_events[
+                self.experiment_events["Event"] == "Block timer elapsed"
+            ]
+            
+            if len(block_elapsed_events) == 0:
+                print(f"⚠️ Warning: No 'Block timer elapsed' event found for {interval}. Using all data.")
+                self.sliced_data = self.photometry_tracking_encoder_data.copy()
+                return
+            
+            if interval == "first_block":
+                end_time = block_elapsed_events.index[0]  # First occurrence
+                print(f"✅ Data sliced until first 'Block timer elapsed' at {end_time}")
+            else:  # last_block
+                end_time = block_elapsed_events.index[-1]  # Last occurrence
+                print(f"✅ Data sliced until last 'Block timer elapsed' at {end_time}")
+            
+            # Slice the data
+            self.sliced_data = self.photometry_tracking_encoder_data[
+                (self.photometry_tracking_encoder_data.index >= start_time) & 
+                (self.photometry_tracking_encoder_data.index <= end_time)
+            ].copy()
+            
+            duration_seconds = (self.sliced_data.index[-1] - self.sliced_data.index[0]).total_seconds()
+            print(f"   Duration: {duration_seconds:.1f} seconds")
         
-        print(f"✅ Data sliced until 'Block timer elapsed' at {end_time}")
+        else:
+            raise ValueError(f"Unknown interval specification: {interval}")
 
     
     def _save_figure(self, fig: plt.Figure, save_path: Path, description: str = "plot") -> None:
@@ -652,9 +699,16 @@ class BehavioralAnalyzer:
         else:
             return above_threshold
 
-    def analyze_running(self, save_dir: Path):   
+    def analyze_running(self, save_dir: Path, suffix: str = ""):   
         """
         Analyze running behavior from velocity_0x column.
+        
+        Parameters:
+        -----------
+        save_dir : Path
+            Directory to save outputs
+        suffix : str
+            Suffix to append to filenames (e.g., "_first_block", "_last_block")
         """
         print("ANALYZING RUNNING BEHAVIOR")
         
@@ -665,15 +719,15 @@ class BehavioralAnalyzer:
             velocities,
             positive_only=True,
             plot=True,
-            title=f"Running Velocity Distribution (robust) - {self.mouse_name}",
+            title=f"Running Velocity Distribution (robust) - {self.mouse_name}{suffix}",
             plot_bins=self.threshold_plot_bins,
             percentile=self.running_percentile
         )
         # Save threshold plot
         if fig is not None:
-            fig_path = save_dir / f"{self.mouse_name}_running_distribution.png"
+            fig_path = save_dir / f"{self.mouse_name}_running_distribution{suffix}.png"
             self._save_figure(fig, fig_path, "running distribution plot")
-            self.figures['running_distribution'] = fig_path
+            self.figures[f'running_distribution{suffix}'] = fig_path
         
         # Identify running bouts with threshold and min duration
         sampling_interval = pd.Timedelta(self.sliced_data.index.to_series().diff().median()).total_seconds()
@@ -706,8 +760,9 @@ class BehavioralAnalyzer:
         positive_velocities[positive_velocities < 0] = 0
         travelled_distance = np.sum(positive_velocities) * sampling_interval
         
-        # Store results
-        self.results['running'] = {
+        # Store results with suffix in key
+        result_key = f'running{suffix}' if suffix else 'running'
+        self.results[result_key] = {
             'threshold': threshold,
             'avg_velocity': avg_velocity,
             'std_velocity': std_velocity,
@@ -726,7 +781,7 @@ class BehavioralAnalyzer:
             'Travelled_Distance_m': travelled_distance,
             'Threshold_m_s': threshold
         }])
-        csv_path = save_dir / f"{self.mouse_name}_running_stats.csv"
+        csv_path = save_dir / f"{self.mouse_name}_running_stats{suffix}.csv"
         df.to_csv(csv_path, index=False)
         print(f"✅ Saved running statistics: {csv_path}")
 
@@ -734,17 +789,17 @@ class BehavioralAnalyzer:
         time_seconds = (self.sliced_data.index - self.sliced_data.index[0]).total_seconds()
         pos_vel = velocities.copy()
         pos_vel[pos_vel < 0] = 0  # only positive shown for running
-        ts_path = save_dir / f"{self.mouse_name}_running_thresholded_timeseries.png"
+        ts_path = save_dir / f"{self.mouse_name}_running_thresholded_timeseries{suffix}.png"
         self._plot_thresholded_timeseries(
             time_seconds=time_seconds,
             values=pos_vel,
             threshold=threshold,
-            title=f"Running Velocity (positive only) with Threshold - {self.mouse_name}",
+            title=f"Running Velocity (positive only) with Threshold - {self.mouse_name}{suffix}",
             ylabel='Velocity_0X (m/s)',
             save_path=ts_path,
             mask_above=(pos_vel > threshold)
         )
-        self.figures['running_thresholded_timeseries'] = ts_path
+        self.figures[f'running_thresholded_timeseries{suffix}'] = ts_path
 
         # # Save histogram of raw positive running velocities
         # hist_path = save_dir / f"{self.mouse_name}_running_velocity_hist.png"
@@ -758,9 +813,18 @@ class BehavioralAnalyzer:
         # )
         # self.figures['running_velocity_hist'] = hist_path
         
-    def analyze_turning(self, save_dir: Path, plot: bool = True):
+    def analyze_turning(self, save_dir: Path, plot: bool = True, suffix: str = ""):
         """
         Analyze turning behavior from Motor_Velocity column (platform/encoder velocity).
+        
+        Parameters:
+        -----------
+        save_dir : Path
+            Directory to save outputs
+        plot : bool
+            Whether to create plots
+        suffix : str
+            Suffix to append to filenames (e.g., "_first_block", "_last_block")
         """
         print("ANALYZING TURNING BEHAVIOR")
         
@@ -777,15 +841,15 @@ class BehavioralAnalyzer:
         threshold, fig = self.find_threshold_turning(
             abs_velocities,
             plot=True,
-            title=f"Turning Velocity Distribution - {self.mouse_name}",
+            title=f"Turning Velocity Distribution - {self.mouse_name}{suffix}",
             plot_bins=self.threshold_plot_bins
         )
         
         # Save threshold plot
         if fig is not None:
-            fig_path = save_dir / f"{self.mouse_name}_turning_distribution.png"
+            fig_path = save_dir / f"{self.mouse_name}_turning_distribution{suffix}.png"
             self._save_figure(fig, fig_path, "turning distribution plot")
-            self.figures['turning_distribution'] = fig_path
+            self.figures[f'turning_distribution{suffix}'] = fig_path
         
         # Identify turning bouts with threshold and min duration
         sampling_interval = pd.Timedelta(self.sliced_data.index.to_series().diff().median()).total_seconds()
@@ -827,8 +891,9 @@ class BehavioralAnalyzer:
             left_pct = 0.0
             right_pct = 0.0
         
-        # Store results
-        self.results['turning'] = {
+        # Store results with suffix in key
+        result_key = f'turning{suffix}' if suffix else 'turning'
+        self.results[result_key] = {
             'threshold': threshold,
             'avg_velocity': avg_velocity,
             'std_velocity': std_velocity,
@@ -851,33 +916,38 @@ class BehavioralAnalyzer:
             'Right_Turn_Percentage': right_pct,
             'Threshold_deg_s': threshold
         }])
-        csv_path = save_dir / f"{self.mouse_name}_turning_stats.csv"
+        csv_path = save_dir / f"{self.mouse_name}_turning_stats{suffix}.csv"
         df.to_csv(csv_path, index=False)
         print(f"✅ Saved turning statistics: {csv_path}")
         
         # Create and save thresholded time series plot for turning (use absolute velocity for thresholding/plotting)
         time_seconds = (self.sliced_data.index - self.sliced_data.index[0]).total_seconds()
-        ts_path = save_dir / f"{self.mouse_name}_turning_thresholded_timeseries.png"
+        ts_path = save_dir / f"{self.mouse_name}_turning_thresholded_timeseries{suffix}.png"
         self._plot_thresholded_timeseries(
             time_seconds=time_seconds,
             values=abs_turn,
             threshold=threshold,
-            title=f"Absolute Turning Velocity (Motor) with Threshold - {self.mouse_name}",
+            title=f"Absolute Turning Velocity (Motor) with Threshold - {self.mouse_name}{suffix}",
             ylabel='|Motor_Velocity| (degrees/s)',
             save_path=ts_path,
             mask_above=(abs_turn > threshold)
         )
-        self.figures['turning_thresholded_timeseries'] = ts_path
+        self.figures[f'turning_thresholded_timeseries{suffix}'] = ts_path
     
     def analyze_platform_velocity(self, save_dir: Path, 
-                                  encoder_column: str = "Motor_Velocity"):
+                                  encoder_column: str = "Motor_Velocity",
+                                  suffix: str = ""):
         """
         Analyze platform velocity and cross-correlation with turning.
         
         Parameters:
         -----------
+        save_dir : Path
+            Directory to save outputs
         encoder_column : str
             Column name for motor speed: Motor_velocity
+        suffix : str
+            Suffix to append to filenames (e.g., "_first_block", "_last_block")
         """
         print("ANALYZING PLATFORM VELOCITY")
         
@@ -932,8 +1002,9 @@ class BehavioralAnalyzer:
         else:
             gain = np.nan
         
-        # Store results
-        self.results['platform_velocity'] = {
+        # Store results with suffix in key
+        result_key = f'platform_velocity{suffix}' if suffix else 'platform_velocity'
+        self.results[result_key] = {
             'optimal_lag_samples': optimal_lag,
             'optimal_lag_seconds': optimal_lag_time,
             'pearson_r': pearson_r,
@@ -952,7 +1023,7 @@ class BehavioralAnalyzer:
             'P_Value': p_value,
             'Gain_Encoder_to_Turning': gain
         }])
-        csv_path = save_dir / f"{self.mouse_name}_platform_velocity_stats.csv"
+        csv_path = save_dir / f"{self.mouse_name}_platform_velocity_stats{suffix}.csv"
         df.to_csv(csv_path, index=False)
         print(f"✅ Saved platform velocity statistics: {csv_path}")
         
@@ -966,7 +1037,7 @@ class BehavioralAnalyzer:
                    label=f'Optimal lag = {optimal_lag_time:.3f}s')
         ax1.set_xlabel('Lag (seconds)', fontsize=12)
         ax1.set_ylabel('Cross-correlation', fontsize=12)
-        ax1.set_title(f'Cross-correlation: flowY vs Motor Velocity - {self.mouse_name}', 
+        ax1.set_title(f'Cross-correlation: flowY vs Motor Velocity - {self.mouse_name}{suffix}', 
                      fontsize=14, fontweight='bold')
         ax1.legend()
         ax1.grid(True, alpha=0.3)
@@ -979,15 +1050,19 @@ class BehavioralAnalyzer:
                      fontsize=12)
         ax2.grid(True, alpha=0.3)
         
-        fig_path = save_dir / f"{self.mouse_name}_cross_correlation.png"
+        fig_path = save_dir / f"{self.mouse_name}_cross_correlation{suffix}.png"
         self._save_figure(fig, fig_path, "cross-correlation plot")
-        self.figures['cross_correlation'] = fig_path
+        self.figures[f'cross_correlation{suffix}'] = fig_path
 
     
     def run_full_analysis(self, output_dir: Path, encoder_column: str = "Motor_Velocity",
                          experiment_day: str = None):
         """
         Run complete analysis pipeline.
+        
+        For visual mismatch experiments, runs analysis twice:
+        1. First interval: until first "Block timer elapsed"
+        2. Second interval: until last "Block timer elapsed"
         
         Parameters:
         -----------
@@ -1005,23 +1080,55 @@ class BehavioralAnalyzer:
         # Store experiment day for later use
         self.experiment_day = experiment_day if experiment_day else "Unknown"
         
-        print(f"\n{'='*60}")
-        print(f"STARTING FULL ANALYSIS FOR: {self.mouse_name}")
-        print(f"Experiment Day: {self.experiment_day}")
-        print(f"Output directory: {save_dir}")
-        print(f"{'='*60}")
+        # Check if this is a visual mismatch experiment
+        is_visual_mismatch = self._is_visual_mismatch_experiment()
         
-        # Step 1: Slice data
-        self.slice_data_until_block_timer_elapsed()
-        
-        # Step 2: Analyze running
-        self.analyze_running(save_dir)
-        
-        # Step 3: Analyze turning
-        self.analyze_turning(save_dir)
-        
-        # Step 4: Analyze platform velocity
-        self.analyze_platform_velocity(save_dir, encoder_column)
+        if is_visual_mismatch:
+            # Visual mismatch: analyze two intervals
+            print(f"\n{'='*60}")
+            print(f"VISUAL MISMATCH EXPERIMENT DETECTED")
+            print(f"STARTING FULL ANALYSIS FOR: {self.mouse_name}")
+            print(f"Experiment Day: {self.experiment_day}")
+            print(f"Output directory: {save_dir}")
+            print(f"{'='*60}")
+            
+            # First interval: until first block timer elapsed
+            print(f"\n{'='*60}")
+            print(f"ANALYZING FIRST INTERVAL (until first Block timer elapsed)")
+            print(f"{'='*60}")
+            self.slice_data_until_block_timer_elapsed(interval="first_block")
+            self.analyze_running(save_dir, suffix="_first_block")
+            self.analyze_turning(save_dir, suffix="_first_block")
+            self.analyze_platform_velocity(save_dir, encoder_column, suffix="_first_block")
+            
+            # Second interval: until last block timer elapsed
+            print(f"\n{'='*60}")
+            print(f"ANALYZING SECOND INTERVAL (until last Block timer elapsed)")
+            print(f"{'='*60}")
+            self.slice_data_until_block_timer_elapsed(interval="last_block")
+            self.analyze_running(save_dir, suffix="_last_block")
+            self.analyze_turning(save_dir, suffix="_last_block")
+            self.analyze_platform_velocity(save_dir, encoder_column, suffix="_last_block")
+            
+        else:
+            # Standard analysis: first 10 minutes
+            print(f"\n{'='*60}")
+            print(f"STARTING FULL ANALYSIS FOR: {self.mouse_name}")
+            print(f"Experiment Day: {self.experiment_day}")
+            print(f"Output directory: {save_dir}")
+            print(f"{'='*60}")
+            
+            # Step 1: Slice data
+            self.slice_data_until_block_timer_elapsed(interval="first_10min")
+            
+            # Step 2: Analyze running
+            self.analyze_running(save_dir)
+            
+            # Step 3: Analyze turning
+            self.analyze_turning(save_dir)
+            
+            # Step 4: Analyze platform velocity
+            self.analyze_platform_velocity(save_dir, encoder_column)
         
         # Save summary
         summary_path = save_dir / f"{self.mouse_name}_analysis_summary.json"
@@ -1040,6 +1147,8 @@ class BehavioralAnalyzer:
         """
         Get data formatted for cohort-level CSV.
         
+        For visual mismatch experiments, includes data for both intervals.
+        
         Returns:
         --------
         Dict with Animal_ID, Experiment_Day, and all behavioral variables
@@ -1049,43 +1158,64 @@ class BehavioralAnalyzer:
             'Experiment_Day': self.experiment_day
         }
         
-        # Add running data
-        if 'running' in self.results:
-            row_data.update({
-                'running_threshold_m_per_s': self.results['running']['threshold'],
-                'running_velocity_avg_m_per_s': self.results['running']['avg_velocity'],
-                'running_velocity_sd_m_per_s': self.results['running']['std_velocity'],
-                'running_time_percentage': self.results['running']['running_time_percentage'],
-                'running_distance_travelled_m': self.results['running']['travelled_distance_m'],
-                'running_time_seconds': self.results['running']['running_time_seconds'],
-                'running_total_time_seconds': self.results['running']['total_time_seconds']
-            })
+        # Helper function to add data with prefix
+        def add_behavioral_data(result_key, prefix):
+            if result_key in self.results:
+                data = self.results[result_key]
+                # Handle prefix: if empty, no prefix; otherwise add underscore
+                prefix_str = f"{prefix}_" if prefix else ""
+                
+                if 'running' in result_key:
+                    row_data.update({
+                        f'{prefix_str}running_threshold_m_per_s': data['threshold'],
+                        f'{prefix_str}running_velocity_avg_m_per_s': data['avg_velocity'],
+                        f'{prefix_str}running_velocity_sd_m_per_s': data['std_velocity'],
+                        f'{prefix_str}running_time_percentage': data['running_time_percentage'],
+                        f'{prefix_str}running_distance_travelled_m': data['travelled_distance_m'],
+                        f'{prefix_str}running_time_seconds': data['running_time_seconds'],
+                        f'{prefix_str}running_total_time_seconds': data['total_time_seconds']
+                    })
+                elif 'turning' in result_key:
+                    row_data.update({
+                        f'{prefix_str}turning_threshold_m_per_s': data['threshold'],
+                        f'{prefix_str}turning_velocity_avg_m_per_s': data['avg_velocity'],
+                        f'{prefix_str}turning_velocity_sd_m_per_s': data['std_velocity'],
+                        f'{prefix_str}turning_time_percentage': data['turning_time_percentage'],
+                        f'{prefix_str}turning_distance_turned_m': data['turned_distance_m'],
+                        f'{prefix_str}turning_left_percentage': data['left_percentage'],
+                        f'{prefix_str}turning_right_percentage': data['right_percentage'],
+                        f'{prefix_str}turning_time_seconds': data['turning_time_seconds'],
+                        f'{prefix_str}turning_total_time_seconds': data['total_time_seconds']
+                    })
+                elif 'platform_velocity' in result_key:
+                    row_data.update({
+                        f'{prefix_str}platform_cross_corr_lag_samples': data['optimal_lag_samples'],
+                        f'{prefix_str}platform_cross_corr_lag_seconds': data['optimal_lag_seconds'],
+                        f'{prefix_str}platform_cross_corr_pearson_r': data['pearson_r'],
+                        f'{prefix_str}platform_cross_corr_p_value': data['p_value'],
+                        f'{prefix_str}platform_gain_encoder_to_turning': data['gain'],
+                        f'{prefix_str}platform_mean_motor_velocity_m_per_s': data['mean_motor_velocity'],
+                        f'{prefix_str}platform_mean_turning_velocity_m_per_s': data['mean_turning_velocity']
+                    })
         
-        # Add turning data
-        if 'turning' in self.results:
-            row_data.update({
-                'turning_threshold_m_per_s': self.results['turning']['threshold'],
-                'turning_velocity_avg_m_per_s': self.results['turning']['avg_velocity'],
-                'turning_velocity_sd_m_per_s': self.results['turning']['std_velocity'],
-                'turning_time_percentage': self.results['turning']['turning_time_percentage'],
-                'turning_distance_turned_m': self.results['turning']['turned_distance_m'],
-                'turning_left_percentage': self.results['turning']['left_percentage'],
-                'turning_right_percentage': self.results['turning']['right_percentage'],
-                'turning_time_seconds': self.results['turning']['turning_time_seconds'],
-                'turning_total_time_seconds': self.results['turning']['total_time_seconds']
-            })
+        # Check if this is visual mismatch (has both intervals)
+        has_first_block = 'running_first_block' in self.results
+        has_last_block = 'running_last_block' in self.results
         
-        # Add platform velocity data
-        if 'platform_velocity' in self.results:
-            row_data.update({
-                'platform_cross_corr_lag_samples': self.results['platform_velocity']['optimal_lag_samples'],
-                'platform_cross_corr_lag_seconds': self.results['platform_velocity']['optimal_lag_seconds'],
-                'platform_cross_corr_pearson_r': self.results['platform_velocity']['pearson_r'],
-                'platform_cross_corr_p_value': self.results['platform_velocity']['p_value'],
-                'platform_gain_encoder_to_turning': self.results['platform_velocity']['gain'],
-                'platform_mean_motor_velocity_m_per_s': self.results['platform_velocity']['mean_motor_velocity'],
-                'platform_mean_turning_velocity_m_per_s': self.results['platform_velocity']['mean_turning_velocity']
-            })
+        if has_first_block and has_last_block:
+            # Visual mismatch: add both intervals
+            add_behavioral_data('running_first_block', 'first_block')
+            add_behavioral_data('turning_first_block', 'first_block')
+            add_behavioral_data('platform_velocity_first_block', 'first_block')
+            
+            add_behavioral_data('running_last_block', 'last_block')
+            add_behavioral_data('turning_last_block', 'last_block')
+            add_behavioral_data('platform_velocity_last_block', 'last_block')
+        else:
+            # Standard: add single interval data
+            add_behavioral_data('running', '')
+            add_behavioral_data('turning', '')
+            add_behavioral_data('platform_velocity', '')
         
         return row_data
 
