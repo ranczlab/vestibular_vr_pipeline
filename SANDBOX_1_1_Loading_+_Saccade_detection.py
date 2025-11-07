@@ -11,6 +11,7 @@
 #     display_name: aeon
 #     language: python
 #     name: python3
+
 # ---
 
 # %% [markdown]
@@ -293,93 +294,117 @@ if plot_QC_timeseries:
         y_max = max([coordinates_dict[f'{col}.y'][~np.isnan(coordinates_dict[f'{col}.y'])].max() for col in columns_of_interest])
         return x_min, x_max, y_min, y_max
 
-    # Only plot panels for 1 and 2 if VideoData1_Has_Sleap and/or VideoData2_Has_Sleap are true
 
-    # Compute min/max as before for global axes limits
-    if VideoData1_Has_Sleap:
-        x_min1, x_max1, y_min1, y_max1 = pf.min_max_dict(coordinates_dict1_raw, columns_of_interest)
-    if VideoData2_Has_Sleap:
-        x_min2, x_max2, y_min2, y_max2 = pf.min_max_dict(coordinates_dict2_raw, columns_of_interest)
+# Only plot panels for 1 and 2 if VideoData1_Has_Sleap and/or VideoData2_Has_Sleap are true
 
-    # Use global min and max for consistency only if both VideoData1_Has_Sleap and VideoData2_Has_Sleap are True
-    if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
-        x_min = min(x_min1, x_min2)
-        x_max = max(x_max1, x_max2)
-        y_min = min(y_min1, y_min2)
-        y_max = max(y_max1, y_max2)
-    elif VideoData1_Has_Sleap:
-        x_min, x_max, y_min, y_max = x_min1, x_max1, y_min1, y_max1
-    elif VideoData2_Has_Sleap:
-        x_min, x_max, y_min, y_max = x_min2, x_max2, y_min2, y_max2
-    else:
-        raise ValueError("Neither VideoData1 nor VideoData2 has Sleap data available.")
+# Compute min/max as before for global axes limits
+if VideoData1_Has_Sleap:
+    x_min1, x_max1, y_min1, y_max1 = pf.min_max_dict(coordinates_dict1_raw, columns_of_interest)
 
-    # Create the figure and axes
-    fig, ax = plt.subplots(nrows=2, ncols=2, figsize=(18, 12))
-    fig.suptitle(
-        f"XY coordinate distribution of different points for {get_eye_label('VideoData1')} and {get_eye_label('VideoData2')} before outlier removal and NaN interpolation", 
-        fontsize=14
-    )
+if VideoData2_Has_Sleap:
+    x_min2, x_max2, y_min2, y_max2 = pf.min_max_dict(coordinates_dict2_raw, columns_of_interest)
 
-    # Define colormap for p1-p8
-    colors = ['blue', 'green', 'red', 'cyan', 'magenta', 'yellow', 'black', 'orange']
+# Use global min and max for consistency only if both VideoData1_Has_Sleap and VideoData2_Has_Sleap are True
+if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
+    x_min = min(x_min1, x_min2)
+    x_max = max(x_max1, x_max2)
+    y_min = min(y_min1, y_min2)
+    y_max = max(y_max1, y_max2)
+elif VideoData1_Has_Sleap:
+    x_min, x_max, y_min, y_max = x_min1, x_max1, y_min1, y_max1
+elif VideoData2_Has_Sleap:
+    x_min, x_max, y_min, y_max = x_min2, x_max2, y_min2, y_max2
+else:
+    raise ValueError("Neither VideoData1 nor VideoData2 has Sleap data available.")
 
-    # Panel 1: left, right, center (dict1)
-    if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
-        ax[0, 0].set_title(f"{get_eye_label('VideoData1')}: left, right, center")
-        ax[0, 0].scatter(coordinates_dict1_raw['left.x'], coordinates_dict1_raw['left.y'], color='black', label='left', s=10)
-        ax[0, 0].scatter(coordinates_dict1_raw['right.x'], coordinates_dict1_raw['right.y'], color='grey', label='right', s=10)
-        ax[0, 0].scatter(coordinates_dict1_raw['center.x'], coordinates_dict1_raw['center.y'], color='red', label='center', s=10)
-        ax[0, 0].set_xlim([x_min, x_max])
-        ax[0, 0].set_ylim([y_min, y_max])
-        ax[0, 0].set_xlabel('x coordinates (pixels)')
-        ax[0, 0].set_ylabel('y coordinates (pixels)')
-        ax[0, 0].legend(loc='upper right')
-    else:
-        ax[0, 0].axis('off')
+# Create the figure and axes
 
-    # Panel 2: p1 to p8 (dict1)
-    if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
-        ax[0, 1].set_title(f"{get_eye_label('VideoData1')}: p1 to p8")
-        for idx, col in enumerate(columns_of_interest[3:]):
-            ax[0, 1].scatter(coordinates_dict1_raw[f'{col}.x'], coordinates_dict1_raw[f'{col}.y'], color=colors[idx], label=col, s=5)
-        ax[0, 1].set_xlim([x_min, x_max])
-        ax[0, 1].set_ylim([y_min, y_max])
-        ax[0, 1].set_xlabel('x coordinates (pixels)')
-        ax[0, 1].set_ylabel('y coordinates (pixels)')
-        ax[0, 1].legend(loc='upper right')
-    else:
-        ax[0, 1].axis('off')
+fig, ax = plt.subplots(nrows=2, ncols=2, figsize=(18, 12))
 
-    # Panel 3: left, right, center (dict2)
-    if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
-        ax[1, 0].set_title(f"{get_eye_label('VideoData2')}: left, right, center")
-        ax[1, 0].scatter(coordinates_dict2_raw['left.x'], coordinates_dict2_raw['left.y'], color='black', label='left', s=10)
-        ax[1, 0].scatter(coordinates_dict2_raw['right.x'], coordinates_dict2_raw['right.y'], color='grey', label='right', s=10)
-        ax[1, 0].scatter(coordinates_dict2_raw['center.x'], coordinates_dict2_raw['center.y'], color='red', label='center', s=10)
-        ax[1, 0].set_xlim([x_min, x_max])
-        ax[1, 0].set_ylim([y_min, y_max])
-        ax[1, 0].set_xlabel('x coordinates (pixels)')
-        ax[1, 0].set_ylabel('y coordinates (pixels)')
-        ax[1, 0].legend(loc='upper right')
-    else:
-        ax[1, 0].axis('off')
+fig.suptitle(
 
-    # Panel 4: p1 to p8 (dict2)
-    if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
-        ax[1, 1].set_title(f"{get_eye_label('VideoData2')}: p1 to p8")
-        for idx, col in enumerate(columns_of_interest[3:]):
-            ax[1, 1].scatter(coordinates_dict2_raw[f'{col}.x'], coordinates_dict2_raw[f'{col}.y'], color=colors[idx], label=col, s=5)
-        ax[1, 1].set_xlim([x_min, x_max])
-        ax[1, 1].set_ylim([y_min, y_max])
-        ax[1, 1].set_xlabel('x coordinates (pixels)')
-        ax[1, 1].set_ylabel('y coordinates (pixels)')
-        ax[1, 1].legend(loc='upper right')
-    else:
-        ax[1, 1].axis('off')
+    f"XY coordinate distribution of different points for {get_eye_label('VideoData1')} and {get_eye_label('VideoData2')} before outlier removal and NaN interpolation", 
+    fontsize=14
+)
 
-    plt.tight_layout(rect=[0, 0.03, 1, 0.96])
-    plt.show()
+
+# Define colormap for p1-p8
+
+colors = ['blue', 'green', 'red', 'cyan', 'magenta', 'yellow', 'black', 'orange']
+
+
+# Panel 1: left, right, center (dict1)
+
+if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
+
+    ax[0, 0].set_title(f"{get_eye_label('VideoData1')}: left, right, center")
+    ax[0, 0].scatter(coordinates_dict1_raw['left.x'], coordinates_dict1_raw['left.y'], color='black', label='left', s=10)
+    ax[0, 0].scatter(coordinates_dict1_raw['right.x'], coordinates_dict1_raw['right.y'], color='grey', label='right', s=10)
+    ax[0, 0].scatter(coordinates_dict1_raw['center.x'], coordinates_dict1_raw['center.y'], color='red', label='center', s=10)
+    ax[0, 0].set_xlim([x_min, x_max])
+    ax[0, 0].set_ylim([y_min, y_max])
+    ax[0, 0].set_xlabel('x coordinates (pixels)')
+    ax[0, 0].set_ylabel('y coordinates (pixels)')
+    ax[0, 0].legend(loc='upper right')
+else:
+
+    ax[0, 0].axis('off')
+
+# Panel 2: p1 to p8 (dict1)
+
+if 'VideoData1_Has_Sleap' in globals() and VideoData1_Has_Sleap:
+
+    ax[0, 1].set_title(f"{get_eye_label('VideoData1')}: p1 to p8")
+    for idx, col in enumerate(columns_of_interest[3:]):
+        ax[0, 1].scatter(coordinates_dict1_raw[f'{col}.x'], coordinates_dict1_raw[f'{col}.y'], color=colors[idx], label=col, s=5)
+
+    ax[0, 1].set_xlim([x_min, x_max])
+    ax[0, 1].set_ylim([y_min, y_max])
+    ax[0, 1].set_xlabel('x coordinates (pixels)')
+    ax[0, 1].set_ylabel('y coordinates (pixels)')
+    ax[0, 1].legend(loc='upper right')
+else:
+
+    ax[0, 1].axis('off')
+
+# Panel 3: left, right, center (dict2)
+
+if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
+
+    ax[1, 0].set_title(f"{get_eye_label('VideoData2')}: left, right, center")
+    ax[1, 0].scatter(coordinates_dict2_raw['left.x'], coordinates_dict2_raw['left.y'], color='black', label='left', s=10)
+    ax[1, 0].scatter(coordinates_dict2_raw['right.x'], coordinates_dict2_raw['right.y'], color='grey', label='right', s=10)
+    ax[1, 0].scatter(coordinates_dict2_raw['center.x'], coordinates_dict2_raw['center.y'], color='red', label='center', s=10)
+    ax[1, 0].set_xlim([x_min, x_max])
+    ax[1, 0].set_ylim([y_min, y_max])
+    ax[1, 0].set_xlabel('x coordinates (pixels)')
+    ax[1, 0].set_ylabel('y coordinates (pixels)')
+    ax[1, 0].legend(loc='upper right')
+else:
+
+    ax[1, 0].axis('off')
+
+# Panel 4: p1 to p8 (dict2)
+
+if 'VideoData2_Has_Sleap' in globals() and VideoData2_Has_Sleap:
+
+    ax[1, 1].set_title(f"{get_eye_label('VideoData2')}: p1 to p8")
+    for idx, col in enumerate(columns_of_interest[3:]):
+        ax[1, 1].scatter(coordinates_dict2_raw[f'{col}.x'], coordinates_dict2_raw[f'{col}.y'], color=colors[idx], label=col, s=5)
+
+    ax[1, 1].set_xlim([x_min, x_max])
+    ax[1, 1].set_ylim([y_min, y_max])
+    ax[1, 1].set_xlabel('x coordinates (pixels)')
+    ax[1, 1].set_ylabel('y coordinates (pixels)')
+    ax[1, 1].legend(loc='upper right')
+else:
+
+    ax[1, 1].axis('off')
+
+plt.tight_layout(rect=[0, 0.03, 1, 0.96])
+
+plt.show()
+
 
 
 # %%
@@ -966,17 +991,27 @@ if plot_QC_timeseries:
         fig2.add_trace(go.Scatter(x=VideoData2['Seconds'], y=VideoData2['right.y'], mode='lines', name='right.y'), row=2, col=1)
 
         # Row 3: Plot p.x coordinates for p1 to p8
+
         for col in ['p1.x', 'p2.x', 'p3.x', 'p4.x', 'p5.x', 'p6.x', 'p7.x', 'p8.x']:
+
             fig2.add_trace(go.Scatter(x=VideoData2['Seconds'], y=VideoData2[col], mode='lines', name=col), row=3, col=1)
 
+
         # Row 4: Plot p.y coordinates for p1 to p8
+
         for col in ['p1.y', 'p2.y', 'p3.y', 'p4.y', 'p5.y', 'p6.y', 'p7.y', 'p8.y']:
+
             fig2.add_trace(go.Scatter(x=VideoData2['Seconds'], y=VideoData2[col], mode='lines', name=col), row=4, col=1)
 
+
         fig2.update_layout(
+
             height=1200,
+
             title_text=f"VideoData2 - Time series subplots for coordinates (QC after interpolation)",
+
             showlegend=True
+
         )
         fig2.update_xaxes(title_text="Seconds", row=4, col=1)
         fig2.update_yaxes(title_text="X Position", row=1, col=1)
@@ -984,7 +1019,9 @@ if plot_QC_timeseries:
         fig2.update_yaxes(title_text="X Position", row=3, col=1)
         fig2.update_yaxes(title_text="Y Position", row=4, col=1)
 
+
         fig2.show(renderer='browser')
+
 
 
 # %%
@@ -995,92 +1032,138 @@ if plot_QC_timeseries:
     columns_of_interest = ['left.x','left.y','center.x','center.y','right.x','right.y','p1.x','p1.y','p2.x','p2.y','p3.x','p3.y','p4.x','p4.y','p5.x','p5.y','p6.x','p6.y','p7.x','p7.y','p8.x','p8.y']
 
     # Create coordinates_dict for both datasets
-    if VideoData1_Has_Sleap:
-        coordinates_dict1_processed = lp.get_coordinates_dict(VideoData1, columns_of_interest)
-    if VideoData2_Has_Sleap:
-        coordinates_dict2_processed = lp.get_coordinates_dict(VideoData2, columns_of_interest)
+if VideoData1_Has_Sleap:
+    coordinates_dict1_processed = lp.get_coordinates_dict(VideoData1, columns_of_interest)
 
-    columns_of_interest = ['left', 'right', 'center', 'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8']
+if VideoData2_Has_Sleap:
+    coordinates_dict2_processed = lp.get_coordinates_dict(VideoData2, columns_of_interest)
 
-    # Filter out NaN values and calculate the min and max values for X and Y coordinates for both dict1 and dict2
-    def min_max_dict(coordinates_dict):
-        x_min = min([coordinates_dict[f'{col}.x'][~np.isnan(coordinates_dict[f'{col}.x'])].min() for col in columns_of_interest])
-        x_max = max([coordinates_dict[f'{col}.x'][~np.isnan(coordinates_dict[f'{col}.x'])].max() for col in columns_of_interest])
-        y_min = min([coordinates_dict[f'{col}.y'][~np.isnan(coordinates_dict[f'{col}.y'])].min() for col in columns_of_interest])
-        y_max = max([coordinates_dict[f'{col}.y'][~np.isnan(coordinates_dict[f'{col}.y'])].max() for col in columns_of_interest])
-        return x_min, x_max, y_min, y_max
 
-    if VideoData1_Has_Sleap:
-        x_min1, x_max1, y_min1, y_max1 = min_max_dict(coordinates_dict1_processed)
-    if VideoData2_Has_Sleap:
-        x_min2, x_max2, y_min2, y_max2 = min_max_dict(coordinates_dict2_processed)
+columns_of_interest = ['left', 'right', 'center', 'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8']
 
-    # Use global min and max for consistency across subplots
-    if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
-        x_min = min(x_min1, x_min2)
-        x_max = max(x_max1, x_max2)
-        y_min = min(y_min1, y_min2)
-        y_max = max(y_max1, y_max2)
-    elif VideoData1_Has_Sleap:
-        x_min, x_max, y_min, y_max = x_min1, x_max1, y_min1, y_max1
-    elif VideoData2_Has_Sleap:
-        x_min, x_max, y_min, y_max = x_min2, x_max2, y_min2, y_max2
+# Filter out NaN values and calculate the min and max values for X and Y coordinates for both dict1 and dict2
+def min_max_dict(coordinates_dict):
+    x_min = min([coordinates_dict[f'{col}.x'][~np.isnan(coordinates_dict[f'{col}.x'])].min() for col in columns_of_interest])
 
-    fig, ax = plt.subplots(nrows=2, ncols=2, figsize=(18, 12))
-    fig.suptitle(
-        f"XY coordinate distribution of different points for {get_eye_label('VideoData1')} and {get_eye_label('VideoData2')} post outlier removal and NaN interpolation",
-        fontsize=14
-    )
+    x_max = max([coordinates_dict[f'{col}.x'][~np.isnan(coordinates_dict[f'{col}.x'])].max() for col in columns_of_interest])
 
-    # Define colormap for p1-p8
-    colors = ['blue', 'green', 'red', 'cyan', 'magenta', 'yellow', 'black', 'orange']
+    y_min = min([coordinates_dict[f'{col}.y'][~np.isnan(coordinates_dict[f'{col}.y'])].min() for col in columns_of_interest])
 
-    # Panel 1: left, right, center (VideoData1)
-    if VideoData1_Has_Sleap:
-        ax[0, 0].set_title(f"{get_eye_label('VideoData1')}: left, right, center")
-        ax[0, 0].scatter(coordinates_dict1_processed['left.x'], coordinates_dict1_processed['left.y'], color='black', label='left', s=10)
-        ax[0, 0].scatter(coordinates_dict1_processed['right.x'], coordinates_dict1_processed['right.y'], color='grey', label='right', s=10)
-        ax[0, 0].scatter(coordinates_dict1_processed['center.x'], coordinates_dict1_processed['center.y'], color='red', label='center', s=10)
-        ax[0, 0].set_xlim([x_min, x_max])
-        ax[0, 0].set_ylim([y_min, y_max])
-        ax[0, 0].set_xlabel('x coordinates (pixels)')
-        ax[0, 0].set_ylabel('y coordinates (pixels)')
-        ax[0, 0].legend(loc='upper right')
+    y_max = max([coordinates_dict[f'{col}.y'][~np.isnan(coordinates_dict[f'{col}.y'])].max() for col in columns_of_interest])
 
-        # Panel 2: p1 to p8 (VideoData1)
-        ax[0, 1].set_title(f"{get_eye_label('VideoData1')}: p1 to p8")
-        for idx, col in enumerate(columns_of_interest[3:]):
-            ax[0, 1].scatter(coordinates_dict1_processed[f'{col}.x'], coordinates_dict1_processed[f'{col}.y'], color=colors[idx], label=col, s=5)
-        ax[0, 1].set_xlim([x_min, x_max])
-        ax[0, 1].set_ylim([y_min, y_max])
-        ax[0, 1].set_xlabel('x coordinates (pixels)')
-        ax[0, 1].set_ylabel('y coordinates (pixels)')
-        ax[0, 1].legend(loc='upper right')
+    return x_min, x_max, y_min, y_max
 
-    # Panel 3: left, right, center (VideoData2)
-    if VideoData2_Has_Sleap:
-        ax[1, 0].set_title(f"{get_eye_label('VideoData2')}: left, right, center")
-        ax[1, 0].scatter(coordinates_dict2_processed['left.x'], coordinates_dict2_processed['left.y'], color='black', label='left', s=10)
-        ax[1, 0].scatter(coordinates_dict2_processed['right.x'], coordinates_dict2_processed['right.y'], color='grey', label='right', s=10)
-        ax[1, 0].scatter(coordinates_dict2_processed['center.x'], coordinates_dict2_processed['center.y'], color='red', label='center', s=10)
-        ax[1, 0].set_xlim([x_min, x_max])
-        ax[1, 0].set_ylim([y_min, y_max])
-        ax[1, 0].set_xlabel('x coordinates (pixels)')
-        ax[1, 0].set_ylabel('y coordinates (pixels)')
-        ax[1, 0].legend(loc='upper right')
 
-        # Panel 4: p1 to p8 (VideoData2)
-        ax[1, 1].set_title(f"{get_eye_label('VideoData2')}: p1 to p8")
-        for idx, col in enumerate(columns_of_interest[3:]):
-            ax[1, 1].scatter(coordinates_dict2_processed[f'{col}.x'], coordinates_dict2_processed[f'{col}.y'], color=colors[idx], label=col, s=5)
-        ax[1, 1].set_xlim([x_min, x_max])
-        ax[1, 1].set_ylim([y_min, y_max])
-        ax[1, 1].set_xlabel('x coordinates (pixels)')
-        ax[1, 1].set_ylabel('y coordinates (pixels)')
-        ax[1, 1].legend(loc='upper right')
+if VideoData1_Has_Sleap:
+    x_min1, x_max1, y_min1, y_max1 = min_max_dict(coordinates_dict1_processed)
+if VideoData2_Has_Sleap:
+    x_min2, x_max2, y_min2, y_max2 = min_max_dict(coordinates_dict2_processed)
 
-    plt.tight_layout(rect=[0, 0.03, 1, 0.96])
-    plt.show()
+# Use global min and max for consistency across subplots
+if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
+    x_min = min(x_min1, x_min2)
+    x_max = max(x_max1, x_max2)
+    y_min = min(y_min1, y_min2)
+    y_max = max(y_max1, y_max2)
+elif VideoData1_Has_Sleap:
+    x_min, x_max, y_min, y_max = x_min1, x_max1, y_min1, y_max1
+elif VideoData2_Has_Sleap:
+    x_min, x_max, y_min, y_max = x_min2, x_max2, y_min2, y_max2
+
+
+fig, ax = plt.subplots(nrows=2, ncols=2, figsize=(18, 12))
+fig.suptitle(
+    f"XY coordinate distribution of different points for {get_eye_label('VideoData1')} and {get_eye_label('VideoData2')} post outlier removal and NaN interpolation",
+
+    fontsize=14
+
+)
+
+# Define colormap for p1-p8
+colors = ['blue', 'green', 'red', 'cyan', 'magenta', 'yellow', 'black', 'orange']
+
+# Panel 1: left, right, center (VideoData1)
+if VideoData1_Has_Sleap:
+    ax[0, 0].set_title(f"{get_eye_label('VideoData1')}: left, right, center")
+
+    ax[0, 0].scatter(coordinates_dict1_processed['left.x'], coordinates_dict1_processed['left.y'], color='black', label='left', s=10)
+
+    ax[0, 0].scatter(coordinates_dict1_processed['right.x'], coordinates_dict1_processed['right.y'], color='grey', label='right', s=10)
+
+    ax[0, 0].scatter(coordinates_dict1_processed['center.x'], coordinates_dict1_processed['center.y'], color='red', label='center', s=10)
+
+    ax[0, 0].set_xlim([x_min, x_max])
+
+    ax[0, 0].set_ylim([y_min, y_max])
+
+    ax[0, 0].set_xlabel('x coordinates (pixels)')
+
+    ax[0, 0].set_ylabel('y coordinates (pixels)')
+
+    ax[0, 0].legend(loc='upper right')
+
+
+    # Panel 2: p1 to p8 (VideoData1)
+
+    ax[0, 1].set_title(f"{get_eye_label('VideoData1')}: p1 to p8")
+
+    for idx, col in enumerate(columns_of_interest[3:]):
+
+        ax[0, 1].scatter(coordinates_dict1_processed[f'{col}.x'], coordinates_dict1_processed[f'{col}.y'], color=colors[idx], label=col, s=5)
+
+    ax[0, 1].set_xlim([x_min, x_max])
+
+    ax[0, 1].set_ylim([y_min, y_max])
+
+    ax[0, 1].set_xlabel('x coordinates (pixels)')
+
+    ax[0, 1].set_ylabel('y coordinates (pixels)')
+
+    ax[0, 1].legend(loc='upper right')
+
+
+# Panel 3: left, right, center (VideoData2)
+if VideoData2_Has_Sleap:
+    ax[1, 0].set_title(f"{get_eye_label('VideoData2')}: left, right, center")
+
+    ax[1, 0].scatter(coordinates_dict2_processed['left.x'], coordinates_dict2_processed['left.y'], color='black', label='left', s=10)
+
+    ax[1, 0].scatter(coordinates_dict2_processed['right.x'], coordinates_dict2_processed['right.y'], color='grey', label='right', s=10)
+
+    ax[1, 0].scatter(coordinates_dict2_processed['center.x'], coordinates_dict2_processed['center.y'], color='red', label='center', s=10)
+
+    ax[1, 0].set_xlim([x_min, x_max])
+
+    ax[1, 0].set_ylim([y_min, y_max])
+
+    ax[1, 0].set_xlabel('x coordinates (pixels)')
+
+    ax[1, 0].set_ylabel('y coordinates (pixels)')
+
+    ax[1, 0].legend(loc='upper right')
+
+
+    # Panel 4: p1 to p8 (VideoData2)
+
+    ax[1, 1].set_title(f"{get_eye_label('VideoData2')}: p1 to p8")
+
+    for idx, col in enumerate(columns_of_interest[3:]):
+
+        ax[1, 1].scatter(coordinates_dict2_processed[f'{col}.x'], coordinates_dict2_processed[f'{col}.y'], color=colors[idx], label=col, s=5)
+
+    ax[1, 1].set_xlim([x_min, x_max])
+
+    ax[1, 1].set_ylim([y_min, y_max])
+
+    ax[1, 1].set_xlabel('x coordinates (pixels)')
+
+    ax[1, 1].set_ylabel('y coordinates (pixels)')
+
+    ax[1, 1].legend(loc='upper right')
+
+
+plt.tight_layout(rect=[0, 0.03, 1, 0.96])
+plt.show()
 
 # %%
 # fit ellipses on the 8 points to determine pupil centre and diameter
@@ -1452,38 +1535,62 @@ if VideoData1_Has_Sleap is True and VideoData2_Has_Sleap is True:
     com_ellipse_y1 = VideoData1["Ellipse.Center.Y"].mean()
     
     # Calculate absolute distances for VideoData1
+
     dist_x1 = abs(com_center_x1 - com_ellipse_x1)
+
     dist_y1 = abs(com_center_y1 - com_ellipse_y1)
+
     
     print(f"\n{get_eye_label('VideoData1')}:")
+
     print(f"  Center of mass for center.x/y: ({com_center_x1:.4f}, {com_center_y1:.4f})")
+
     print(f"  Center of mass for Ellipse.Center.X/Y: ({com_ellipse_x1:.4f}, {com_ellipse_y1:.4f})")
+
     print(f"  Absolute distance in X: {dist_x1:.4f} pixels")
+
     print(f"  Absolute distance in Y: {dist_y1:.4f} pixels")
+
     
     # Calculate center of mass (mean) for VideoData2
+
     com_center_x2 = VideoData2["center.x"].mean()
+
     com_center_y2 = VideoData2["center.y"].mean()
+
     com_ellipse_x2 = VideoData2["Ellipse.Center.X"].mean()
+
     com_ellipse_y2 = VideoData2["Ellipse.Center.Y"].mean()
+
     
     # Calculate absolute distances for VideoData2
+
     dist_x2 = abs(com_center_x2 - com_ellipse_x2)
+
     dist_y2 = abs(com_center_y2 - com_ellipse_y2)
+
     
     print(f"\n{get_eye_label('VideoData2')}:")
+
     print(f"  Center of mass for center.x/y: ({com_center_x2:.4f}, {com_center_y2:.4f})")
+
     print(f"  Center of mass for Ellipse.Center.X/Y: ({com_ellipse_x2:.4f}, {com_ellipse_y2:.4f})")
+
     print(f"  Absolute distance in X: {dist_x2:.4f} pixels")
+
     print(f"  Absolute distance in Y: {dist_y2:.4f} pixels")
+
 
 # ------------------------------------------------------------------
 # 4) Re-center Ellipse.Center.X and Ellipse.Center.Y using median
 # ------------------------------------------------------------------
 print("\n=== Re-centering Ellipse.Center coordinates ===")
 
+
 # Re-center VideoData1 Ellipse.Center coordinates
+
 if VideoData1_Has_Sleap is True:
+
     # Calculate median
     median_ellipse_x1 = VideoData1["Ellipse.Center.X"].median()
     median_ellipse_y1 = VideoData1["Ellipse.Center.Y"].median()
@@ -1521,295 +1628,324 @@ except NameError:
     print("⚠️ Note: Statistics not found. They should be calculated in Cell 11.")
 
 # Visualization and statistics calculation (only if plot_QC_timeseries is True)
-if plot_QC_timeseries:
-    # Calculate correlation for Ellipse.Center.X between VideoData1 and VideoData2 (if both exist)
-    pearson_r_center = None
-    pearson_p_center = None
-    peak_lag_time_center = None
+    if plot_QC_timeseries:
 
-    if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
-        # Get the Center.X data
-        center_x1 = VideoData1['Ellipse.Center.X'].values
-        center_x2 = VideoData2['Ellipse.Center.X'].values
-        
-        min_length = min(len(center_x1), len(center_x2))
-        center_x1_truncated = center_x1[:min_length]
-        center_x2_truncated = center_x2[:min_length]
-        
-        valid_mask1 = ~np.isnan(center_x1_truncated)
-        valid_mask2 = ~np.isnan(center_x2_truncated)
-        valid_mask = valid_mask1 & valid_mask2
-        
-        center_x1_clean = center_x1_truncated[valid_mask]
-        center_x2_clean = center_x2_truncated[valid_mask]
-        
-        if len(center_x1_clean) >= 2 and len(center_x2_clean) >= 2:
-            try:
-                # Calculate Pearson correlation
-                pearson_r_center, pearson_p_center = pearsonr(center_x1_clean, center_x2_clean)
-                
-                # Calculate cross-correlation for peak lag
-                correlation = correlate(center_x1_clean, center_x2_clean, mode='full')
-                lags = np.arange(-len(center_x2_clean) + 1, len(center_x1_clean))
-                dt = np.median(np.diff(VideoData1['Seconds']))
-                lag_times = lags * dt
-                peak_idx = np.argmax(correlation)
-                peak_lag_time_center = lag_times[peak_idx]
-            except Exception as e:
-                print(f"❌ Error calculating Ellipse.Center.X correlation stats: {e}")
+# Calculate correlation for Ellipse.Center.X between VideoData1 and VideoData2 (if both exist)
 
-    # Create the QC summary figure using matplotlib with custom grid layout
-    fig = plt.figure(figsize=(20, 18))
-    fig.suptitle(str(data_path), fontsize=16, y=0.995)
+pearson_r_center = None
 
-    # Create a grid layout:
-    # - Top row (full width): VideoData1 Time Series
-    # - Second row (full width): VideoData2 Time Series  
-    # - Third row (two columns): 2D scatter plots (VideoData1 left, VideoData2 right)
-    # - Fourth row (two columns): Pupil diameter (left), Ellipse.Center.X correlation (right)
+pearson_p_center = None
 
-    gs = fig.add_gridspec(4, 2, hspace=0.3, wspace=0.3)
+peak_lag_time_center = None
 
-    # Panel 1: VideoData1 center coordinates - Time Series (full width)
-    if VideoData1_Has_Sleap:
-        ax1 = fig.add_subplot(gs[0, :])
-        ax1.plot(VideoData1_centered['Seconds'], VideoData1_centered['center.x'],
-                linewidth=0.5, c='blue', alpha=0.6, label='center.x original')
-        ax1.plot(VideoData1['Seconds'], VideoData1['Ellipse.Center.X'],
-                linewidth=0.5, c='red', alpha=0.6, label='Ellipse Center.X')
-        ax1.set_xlabel('Time (s)')
-        ax1.set_ylabel('Position (pixels)')
-        ax1.set_title(f"{get_eye_label('VideoData1')} - center.X Time Series")
-        ax1.legend()
-        ax1.grid(True, alpha=0.3)
 
-    # Panel 2: VideoData2 center coordinates - Time Series (full width)
-    if VideoData2_Has_Sleap:
-        ax2 = fig.add_subplot(gs[1, :])
-        ax2.plot(VideoData2_centered['Seconds'], VideoData2_centered['center.x'],
-                linewidth=0.5, c='blue', alpha=0.6, label='center.x original')
-        ax2.plot(VideoData2['Seconds'], VideoData2['Ellipse.Center.X'],
-                linewidth=0.5, c='red', alpha=0.6, label='Ellipse Center.X')
-        ax2.set_xlabel('Time (s)')
-        ax2.set_ylabel('Position (pixels)')
-        ax2.set_title(f"{get_eye_label('VideoData2')} - center.X Time Series")
-        ax2.legend()
-        ax2.grid(True, alpha=0.3)
+if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
+    # Get the Center.X data
 
-    # Panel 3: VideoData1 center coordinates - Scatter plot (left half)
-    if VideoData1_Has_Sleap:
-        ax3 = fig.add_subplot(gs[2, 0])
-        
-        # Ellipse.Center (blue)
-        x_ellipse1 = VideoData1['Ellipse.Center.X'].to_numpy()
-        y_ellipse1 = VideoData1['Ellipse.Center.Y'].to_numpy()
-        mask1 = ~(np.isnan(x_ellipse1) | np.isnan(y_ellipse1))
-        
-        ax3.scatter(x_ellipse1[mask1], y_ellipse1[mask1],
-                   s=1, alpha=0.3, c='blue', label='Ellipse.Center')
-        
-        # Center (red) - from centered data
-        x_center1 = VideoData1_centered['center.x'].to_numpy()
-        y_center1 = VideoData1_centered['center.y'].to_numpy()
-        mask2 = ~(np.isnan(x_center1) | np.isnan(y_center1))
-        
-        ax3.scatter(x_center1[mask2], y_center1[mask2],
-                   s=1, alpha=0.3, c='red', label='center.x original')
-        
-        ax3.set_xlabel('Center X (pixels)')
-        ax3.set_ylabel('Center Y (pixels)')
-        ax3.set_title(f"{get_eye_label('VideoData1')} - Center X-Y Distribution (center.X vs Ellipse)")
-        ax3.legend()
-        ax3.grid(True, alpha=0.3)
-        
-        # Add R² statistics for VideoData1 (bottom left)
+    center_x1 = VideoData1['Ellipse.Center.X'].values
+
+    center_x2 = VideoData2['Ellipse.Center.X'].values
+
+    
+    min_length = min(len(center_x1), len(center_x2))
+
+    center_x1_truncated = center_x1[:min_length]
+
+    center_x2_truncated = center_x2[:min_length]
+
+    
+    valid_mask1 = ~np.isnan(center_x1_truncated)
+
+    valid_mask2 = ~np.isnan(center_x2_truncated)
+
+    valid_mask = valid_mask1 & valid_mask2
+
+    
+    center_x1_clean = center_x1_truncated[valid_mask]
+
+    center_x2_clean = center_x2_truncated[valid_mask]
+
+    
+    if len(center_x1_clean) >= 2 and len(center_x2_clean) >= 2:
+
         try:
-            if 'r_squared_x1' in globals() and 'r_squared_y1' in globals():
-                stats_text = f'R² X: {r_squared_x1:.2g}\nR² Y: {r_squared_y1:.2g}'
-                ax3.text(0.02, 0.02, stats_text, transform=ax3.transAxes,
-                        verticalalignment='bottom', horizontalalignment='left',
-                        bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8),
-                        fontsize=9, family='monospace')
-        except:
-            pass
-        
-        # Add center of mass distance for VideoData1 (bottom right)
-        try:
-            if 'dist_x1' in globals() and 'dist_y1' in globals():
-                distance_text = f'COM Dist X: {dist_x1:.3g}\nCOM Dist Y: {dist_y1:.3g}'
-                ax3.text(0.98, 0.02, distance_text, transform=ax3.transAxes,
-                        verticalalignment='bottom', horizontalalignment='right',
-                        bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8),
-                        fontsize=9, family='monospace')
-        except:
-            pass
 
-    # Panel 4: VideoData2 center coordinates - Scatter plot (right half)
-    if VideoData2_Has_Sleap:
-        ax4 = fig.add_subplot(gs[2, 1])
-        
-        # Ellipse.Center (blue)
-        x_ellipse2 = VideoData2['Ellipse.Center.X'].to_numpy()
-        y_ellipse2 = VideoData2['Ellipse.Center.Y'].to_numpy()
-        mask3 = ~(np.isnan(x_ellipse2) | np.isnan(y_ellipse2))
-        
-        ax4.scatter(x_ellipse2[mask3], y_ellipse2[mask3],
-                   s=1, alpha=0.3, c='blue', label='Ellipse.Center')
-        
-        # Center (red) - from centered data
-        x_center2 = VideoData2_centered['center.x'].to_numpy()
-        y_center2 = VideoData2_centered['center.y'].to_numpy()
-        mask4 = ~(np.isnan(x_center2) | np.isnan(y_center2))
-        
-        ax4.scatter(x_center2[mask4], y_center2[mask4],
-                   s=1, alpha=0.3, c='red', label='center.X Center')
-        
-        ax4.set_xlabel('Center X (pixels)')
-        ax4.set_ylabel('Center Y (pixels)')
-        ax4.set_title(f"{get_eye_label('VideoData2')} - Center X-Y Distribution (center.X vs Ellipse)")
-        ax4.legend()
-        ax4.grid(True, alpha=0.3)
-        
-        # Add R² statistics for VideoData2 (bottom left)
-        try:
-            if 'r_squared_x2' in globals() and 'r_squared_y2' in globals():
-                stats_text = f'R² X: {r_squared_x2:.2g}\nR² Y: {r_squared_y2:.2g}'
-                ax4.text(0.02, 0.02, stats_text, transform=ax4.transAxes,
-                        verticalalignment='bottom', horizontalalignment='left',
-                        bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8),
-                        fontsize=9, family='monospace')
-        except:
-            pass
-        
-        # Add center of mass distance for VideoData2 (bottom right)
-        try:
-            if 'dist_x2' in globals() and 'dist_y2' in globals():
-                distance_text = f'COM Dist X: {dist_x2:.3g}\nCOM Dist Y: {dist_y2:.3g}'
-                ax4.text(0.98, 0.02, distance_text, transform=ax4.transAxes,
-                        verticalalignment='bottom', horizontalalignment='right',
-                        bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8),
-                        fontsize=9, family='monospace')
-        except:
-            pass
+            # Calculate Pearson correlation
 
-    # Panel 5: Pupil diameter comparison (bottom left)
-    ax5 = fig.add_subplot(gs[3, 0])
-    if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
-        ax5.plot(VideoData1['Seconds'], VideoData1['Ellipse.Diameter.Filt'],
-                linewidth=0.5, c='#FF7F00', alpha=0.6, label='VideoData1 Diameter')
-        ax5.plot(VideoData2['Seconds'], VideoData2['Ellipse.Diameter.Filt'],
-                linewidth=0.5, c='#9370DB', alpha=0.6, label='VideoData2 Diameter')
-    elif VideoData1_Has_Sleap:
-        ax5.plot(VideoData1['Seconds'], VideoData1['Ellipse.Diameter.Filt'],
-                linewidth=0.5, c='#FF7F00', alpha=0.6, label='VideoData1 Diameter')
-    elif VideoData2_Has_Sleap:
-        ax5.plot(VideoData2['Seconds'], VideoData2['Ellipse.Diameter.Filt'],
-                linewidth=0.5, c='#9370DB', alpha=0.6, label='VideoData2 Diameter')
+            pearson_r_center, pearson_p_center = pearsonr(center_x1_clean, center_x2_clean)
 
-    ax5.set_xlabel('Time (s)')
-    ax5.set_ylabel('Diameter (pixels)')
-    ax5.set_title('Pupil Diameter Comparison')
-    ax5.legend()
-    ax5.grid(True, alpha=0.3)
+            
+            # Calculate cross-correlation for peak lag
 
-    # Add statistics text to Panel 5
-    if pearson_r_display is not None and pearson_p_display is not None and peak_lag_time_display is not None:
-        stats_text = (f'Pearson r = {pearson_r_display:.4f}\n'
-                      f'Pearson p = {pearson_p_display:.4e}\n'
-                      f'Peak lag = {peak_lag_time_display:.4f} s')
-        ax5.text(0.98, 0.98, stats_text, transform=ax5.transAxes,
-                verticalalignment='top', horizontalalignment='right',
-                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8),
-                fontsize=10, family='monospace')
-    else:
-        ax5.text(0.5, 0.5, 'Statistics not available\n(See Cell 11 for correlation analysis)', 
-                transform=ax5.transAxes, ha='center', va='center', fontsize=10)
+            correlation = correlate(center_x1_clean, center_x2_clean, mode='full')
 
-    # Panel 6: Ellipse.Center.X comparison (bottom right) with dual y-axis
-    ax6 = fig.add_subplot(gs[3, 1])
-    ax6_twin = ax6.twinx()  # Create a second y-axis
+            lags = np.arange(-len(center_x2_clean) + 1, len(center_x1_clean))
 
-    if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
-        # Plot the individual traces
-        ax6.plot(VideoData1['Seconds'], VideoData1['Ellipse.Center.X'],
-                linewidth=0.5, c='#FF7F00', alpha=0.6, label='VideoData1 Ellipse.Center.X')
-        ax6.plot(VideoData2['Seconds'], VideoData2['Ellipse.Center.X'],
-                linewidth=0.5, c='#9370DB', alpha=0.6, label='VideoData2 Ellipse.Center.X')
-        
-        # Plot the difference on the right axis
-        # Align the data to the same length and normalize for fair comparison
-        min_length = min(len(VideoData1), len(VideoData2))
-        
-        # Normalize data (z-score) to account for different scales
-        center_x1_aligned = VideoData1['Ellipse.Center.X'].iloc[:min_length]
-        center_x2_aligned = VideoData2['Ellipse.Center.X'].iloc[:min_length]
-        
-        # Calculate mean and std for normalization
-        mean1 = center_x1_aligned.mean()
-        std1 = center_x1_aligned.std()
-        mean2 = center_x2_aligned.mean()
-        std2 = center_x2_aligned.std()
-        
-        # Normalize both datasets
-        center_x1_norm = (center_x1_aligned - mean1) / std1
-        center_x2_norm = (center_x2_aligned - mean2) / std2
-        
-        # Calculate difference of normalized data
-        center_x_diff = center_x1_norm - center_x2_norm
-        seconds_aligned = VideoData1['Seconds'].iloc[:min_length]
-        ax6_twin.plot(seconds_aligned, center_x_diff,
-                      linewidth=0.5, c='green', alpha=0.6, label='Difference (normalized)')
-        
-    elif VideoData1_Has_Sleap:
-        ax6.plot(VideoData1['Seconds'], VideoData1['Ellipse.Center.X'],
-                linewidth=0.5, c='#FF7F00', alpha=0.6, label='VideoData1 Ellipse.Center.X')
-    elif VideoData2_Has_Sleap:
-        ax6.plot(VideoData2['Seconds'], VideoData2['Ellipse.Center.X'],
-                linewidth=0.5, c='#9370DB', alpha=0.6, label='VideoData2 Ellipse.Center.X')
+            dt = np.median(np.diff(VideoData1['Seconds']))
 
-    ax6.set_xlabel('Time (s)')
-    ax6.set_ylabel('Center X (pixels)', color='black')
-    ax6.set_title('Ellipse.Center.X Comparison')
-    ax6.tick_params(axis='y', labelcolor='black')
-    if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
-        ax6_twin.set_ylabel('Normalized Difference (z-score)', color='green')
-        ax6_twin.tick_params(axis='y', labelcolor='green')
+            lag_times = lags * dt
 
-    # Combine legends from both axes
-    lines1, labels1 = ax6.get_legend_handles_labels()
-    if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
-        lines2, labels2 = ax6_twin.get_legend_handles_labels()
-        ax6.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
-    else:
-        ax6.legend(loc='upper left')
+            peak_idx = np.argmax(correlation)
 
-    ax6.grid(True, alpha=0.3)
+            peak_lag_time_center = lag_times[peak_idx]
 
-    # Add statistics text to Panel 6
-    if pearson_r_center is not None and pearson_p_center is not None and peak_lag_time_center is not None:
-        stats_text = (f'Pearson r = {pearson_r_center:.4f}\n'
-                      f'Pearson p = {pearson_p_center:.4e}\n'
-                      f'Peak lag = {peak_lag_time_center:.4f} s')
-        ax6.text(0.98, 0.98, stats_text, transform=ax6.transAxes,
-                verticalalignment='top', horizontalalignment='right',
-                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8),
-                fontsize=10, family='monospace')
-    else:
-        ax6.text(0.5, 0.5, 'Statistics not available\n(both eyes required)', 
-                transform=ax6.transAxes, ha='center', va='center', fontsize=10)
+        except Exception as e:
 
-    # Save as PDF (editable vector format)
-    save_path.mkdir(parents=True, exist_ok=True)
-    pdf_path = save_path / "Eye_data_QC.pdf"
-    plt.savefig(pdf_path, dpi=300, bbox_inches='tight', format='pdf')
-    print(f"✅ QC figure saved as PDF (editable): {pdf_path}")
+            print(f"❌ Error calculating Ellipse.Center.X correlation stats: {e}")
 
-    # Also save as 600 dpi PNG (high-resolution for printing)
-    png_path = save_path / "Eye_data_QC.png"
-    plt.savefig(png_path, dpi=600, bbox_inches='tight', format='png')
-    print(f"✅ QC figure saved as PNG (600 dpi for printing): {png_path}")
 
-    plt.show()
+# Create the QC summary figure using matplotlib with custom grid layout
+fig = plt.figure(figsize=(20, 18))
+fig.suptitle(str(data_path), fontsize=16, y=0.995)
+
+# Create a grid layout:
+# - Top row (full width): VideoData1 Time Series
+# - Second row (full width): VideoData2 Time Series  
+# - Third row (two columns): 2D scatter plots (VideoData1 left, VideoData2 right)
+# - Fourth row (two columns): Pupil diameter (left), Ellipse.Center.X correlation (right)
+
+gs = fig.add_gridspec(4, 2, hspace=0.3, wspace=0.3)
+
+# Panel 1: VideoData1 center coordinates - Time Series (full width)
+if VideoData1_Has_Sleap:
+    ax1 = fig.add_subplot(gs[0, :])
+    ax1.plot(VideoData1_centered['Seconds'], VideoData1_centered['center.x'],
+            linewidth=0.5, c='blue', alpha=0.6, label='center.x original')
+    ax1.plot(VideoData1['Seconds'], VideoData1['Ellipse.Center.X'],
+            linewidth=0.5, c='red', alpha=0.6, label='Ellipse Center.X')
+    ax1.set_xlabel('Time (s)')
+    ax1.set_ylabel('Position (pixels)')
+    ax1.set_title(f"{get_eye_label('VideoData1')} - center.X Time Series")
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+
+# Panel 2: VideoData2 center coordinates - Time Series (full width)
+if VideoData2_Has_Sleap:
+    ax2 = fig.add_subplot(gs[1, :])
+    ax2.plot(VideoData2_centered['Seconds'], VideoData2_centered['center.x'],
+            linewidth=0.5, c='blue', alpha=0.6, label='center.x original')
+    ax2.plot(VideoData2['Seconds'], VideoData2['Ellipse.Center.X'],
+            linewidth=0.5, c='red', alpha=0.6, label='Ellipse Center.X')
+    ax2.set_xlabel('Time (s)')
+    ax2.set_ylabel('Position (pixels)')
+    ax2.set_title(f"{get_eye_label('VideoData2')} - center.X Time Series")
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+
+# Panel 3: VideoData1 center coordinates - Scatter plot (left half)
+if VideoData1_Has_Sleap:
+    ax3 = fig.add_subplot(gs[2, 0])
+    
+    # Ellipse.Center (blue)
+    x_ellipse1 = VideoData1['Ellipse.Center.X'].to_numpy()
+    y_ellipse1 = VideoData1['Ellipse.Center.Y'].to_numpy()
+    mask1 = ~(np.isnan(x_ellipse1) | np.isnan(y_ellipse1))
+    
+    ax3.scatter(x_ellipse1[mask1], y_ellipse1[mask1],
+               s=1, alpha=0.3, c='blue', label='Ellipse.Center')
+    
+    # Center (red) - from centered data
+    x_center1 = VideoData1_centered['center.x'].to_numpy()
+    y_center1 = VideoData1_centered['center.y'].to_numpy()
+    mask2 = ~(np.isnan(x_center1) | np.isnan(y_center1))
+    
+    ax3.scatter(x_center1[mask2], y_center1[mask2],
+               s=1, alpha=0.3, c='red', label='center.x original')
+    
+    ax3.set_xlabel('Center X (pixels)')
+    ax3.set_ylabel('Center Y (pixels)')
+    ax3.set_title(f"{get_eye_label('VideoData1')} - Center X-Y Distribution (center.X vs Ellipse)")
+    ax3.legend()
+    ax3.grid(True, alpha=0.3)
+    
+    # Add R² statistics for VideoData1 (bottom left)
+    try:
+        if 'r_squared_x1' in globals() and 'r_squared_y1' in globals():
+            stats_text = f'R² X: {r_squared_x1:.2g}\nR² Y: {r_squared_y1:.2g}'
+            ax3.text(0.02, 0.02, stats_text, transform=ax3.transAxes,
+                    verticalalignment='bottom', horizontalalignment='left',
+                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8),
+                    fontsize=9, family='monospace')
+    except:
+        pass
+    
+    # Add center of mass distance for VideoData1 (bottom right)
+    try:
+        if 'dist_x1' in globals() and 'dist_y1' in globals():
+            distance_text = f'COM Dist X: {dist_x1:.3g}\nCOM Dist Y: {dist_y1:.3g}'
+            ax3.text(0.98, 0.02, distance_text, transform=ax3.transAxes,
+                    verticalalignment='bottom', horizontalalignment='right',
+                    bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8),
+                    fontsize=9, family='monospace')
+    except:
+        pass
+
+# Panel 4: VideoData2 center coordinates - Scatter plot (right half)
+if VideoData2_Has_Sleap:
+    ax4 = fig.add_subplot(gs[2, 1])
+    
+    # Ellipse.Center (blue)
+    x_ellipse2 = VideoData2['Ellipse.Center.X'].to_numpy()
+    y_ellipse2 = VideoData2['Ellipse.Center.Y'].to_numpy()
+    mask3 = ~(np.isnan(x_ellipse2) | np.isnan(y_ellipse2))
+    
+    ax4.scatter(x_ellipse2[mask3], y_ellipse2[mask3],
+               s=1, alpha=0.3, c='blue', label='Ellipse.Center')
+    
+    # Center (red) - from centered data
+    x_center2 = VideoData2_centered['center.x'].to_numpy()
+    y_center2 = VideoData2_centered['center.y'].to_numpy()
+    mask4 = ~(np.isnan(x_center2) | np.isnan(y_center2))
+    
+    ax4.scatter(x_center2[mask4], y_center2[mask4],
+               s=1, alpha=0.3, c='red', label='center.X Center')
+    
+    ax4.set_xlabel('Center X (pixels)')
+    ax4.set_ylabel('Center Y (pixels)')
+    ax4.set_title(f"{get_eye_label('VideoData2')} - Center X-Y Distribution (center.X vs Ellipse)")
+    ax4.legend()
+    ax4.grid(True, alpha=0.3)
+    
+    # Add R² statistics for VideoData2 (bottom left)
+    try:
+        if 'r_squared_x2' in globals() and 'r_squared_y2' in globals():
+            stats_text = f'R² X: {r_squared_x2:.2g}\nR² Y: {r_squared_y2:.2g}'
+            ax4.text(0.02, 0.02, stats_text, transform=ax4.transAxes,
+                    verticalalignment='bottom', horizontalalignment='left',
+                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8),
+                    fontsize=9, family='monospace')
+    except:
+        pass
+    
+    # Add center of mass distance for VideoData2 (bottom right)
+    try:
+        if 'dist_x2' in globals() and 'dist_y2' in globals():
+            distance_text = f'COM Dist X: {dist_x2:.3g}\nCOM Dist Y: {dist_y2:.3g}'
+            ax4.text(0.98, 0.02, distance_text, transform=ax4.transAxes,
+                    verticalalignment='bottom', horizontalalignment='right',
+                    bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8),
+                    fontsize=9, family='monospace')
+    except:
+        pass
+
+# Panel 5: Pupil diameter comparison (bottom left)
+ax5 = fig.add_subplot(gs[3, 0])
+if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
+    ax5.plot(VideoData1['Seconds'], VideoData1['Ellipse.Diameter.Filt'],
+            linewidth=0.5, c='#FF7F00', alpha=0.6, label='VideoData1 Diameter')
+    ax5.plot(VideoData2['Seconds'], VideoData2['Ellipse.Diameter.Filt'],
+            linewidth=0.5, c='#9370DB', alpha=0.6, label='VideoData2 Diameter')
+elif VideoData1_Has_Sleap:
+    ax5.plot(VideoData1['Seconds'], VideoData1['Ellipse.Diameter.Filt'],
+            linewidth=0.5, c='#FF7F00', alpha=0.6, label='VideoData1 Diameter')
+elif VideoData2_Has_Sleap:
+    ax5.plot(VideoData2['Seconds'], VideoData2['Ellipse.Diameter.Filt'],
+            linewidth=0.5, c='#9370DB', alpha=0.6, label='VideoData2 Diameter')
+
+ax5.set_xlabel('Time (s)')
+ax5.set_ylabel('Diameter (pixels)')
+ax5.set_title('Pupil Diameter Comparison')
+ax5.legend()
+ax5.grid(True, alpha=0.3)
+
+# Add statistics text to Panel 5
+if pearson_r_display is not None and pearson_p_display is not None and peak_lag_time_display is not None:
+    stats_text = (f'Pearson r = {pearson_r_display:.4f}\n'
+                  f'Pearson p = {pearson_p_display:.4e}\n'
+                  f'Peak lag = {peak_lag_time_display:.4f} s')
+    ax5.text(0.98, 0.98, stats_text, transform=ax5.transAxes,
+            verticalalignment='top', horizontalalignment='right',
+            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8),
+            fontsize=10, family='monospace')
+else:
+    ax5.text(0.5, 0.5, 'Statistics not available\n(See Cell 11 for correlation analysis)', 
+            transform=ax5.transAxes, ha='center', va='center', fontsize=10)
+
+# Panel 6: Ellipse.Center.X comparison (bottom right) with dual y-axis
+ax6 = fig.add_subplot(gs[3, 1])
+ax6_twin = ax6.twinx()  # Create a second y-axis
+
+if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
+    # Plot the individual traces
+    ax6.plot(VideoData1['Seconds'], VideoData1['Ellipse.Center.X'],
+            linewidth=0.5, c='#FF7F00', alpha=0.6, label='VideoData1 Ellipse.Center.X')
+    ax6.plot(VideoData2['Seconds'], VideoData2['Ellipse.Center.X'],
+            linewidth=0.5, c='#9370DB', alpha=0.6, label='VideoData2 Ellipse.Center.X')
+    
+    # Plot the difference on the right axis
+    # Align the data to the same length and normalize for fair comparison
+    min_length = min(len(VideoData1), len(VideoData2))
+    
+    # Normalize data (z-score) to account for different scales
+    center_x1_aligned = VideoData1['Ellipse.Center.X'].iloc[:min_length]
+    center_x2_aligned = VideoData2['Ellipse.Center.X'].iloc[:min_length]
+    
+    # Calculate mean and std for normalization
+    mean1 = center_x1_aligned.mean()
+    std1 = center_x1_aligned.std()
+    mean2 = center_x2_aligned.mean()
+    std2 = center_x2_aligned.std()
+    
+    # Normalize both datasets
+    center_x1_norm = (center_x1_aligned - mean1) / std1
+    center_x2_norm = (center_x2_aligned - mean2) / std2
+    
+    # Calculate difference of normalized data
+    center_x_diff = center_x1_norm - center_x2_norm
+    seconds_aligned = VideoData1['Seconds'].iloc[:min_length]
+    ax6_twin.plot(seconds_aligned, center_x_diff,
+                  linewidth=0.5, c='green', alpha=0.6, label='Difference (normalized)')
+    
+elif VideoData1_Has_Sleap:
+    ax6.plot(VideoData1['Seconds'], VideoData1['Ellipse.Center.X'],
+            linewidth=0.5, c='#FF7F00', alpha=0.6, label='VideoData1 Ellipse.Center.X')
+elif VideoData2_Has_Sleap:
+    ax6.plot(VideoData2['Seconds'], VideoData2['Ellipse.Center.X'],
+            linewidth=0.5, c='#9370DB', alpha=0.6, label='VideoData2 Ellipse.Center.X')
+
+ax6.set_xlabel('Time (s)')
+ax6.set_ylabel('Center X (pixels)', color='black')
+ax6.set_title('Ellipse.Center.X Comparison')
+ax6.tick_params(axis='y', labelcolor='black')
+if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
+    ax6_twin.set_ylabel('Normalized Difference (z-score)', color='green')
+    ax6_twin.tick_params(axis='y', labelcolor='green')
+
+# Combine legends from both axes
+lines1, labels1 = ax6.get_legend_handles_labels()
+if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
+    lines2, labels2 = ax6_twin.get_legend_handles_labels()
+    ax6.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
+else:
+    ax6.legend(loc='upper left')
+
+ax6.grid(True, alpha=0.3)
+
+# Add statistics text to Panel 6
+if pearson_r_center is not None and pearson_p_center is not None and peak_lag_time_center is not None:
+    stats_text = (f'Pearson r = {pearson_r_center:.4f}\n'
+                  f'Pearson p = {pearson_p_center:.4e}\n'
+                  f'Peak lag = {peak_lag_time_center:.4f} s')
+    ax6.text(0.98, 0.98, stats_text, transform=ax6.transAxes,
+            verticalalignment='top', horizontalalignment='right',
+            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8),
+            fontsize=10, family='monospace')
+else:
+    ax6.text(0.5, 0.5, 'Statistics not available\n(both eyes required)', 
+            transform=ax6.transAxes, ha='center', va='center', fontsize=10)
+
+# Save as PDF (editable vector format)
+save_path.mkdir(parents=True, exist_ok=True)
+pdf_path = save_path / "Eye_data_QC.pdf"
+plt.savefig(pdf_path, dpi=300, bbox_inches='tight', format='pdf')
+print(f"✅ QC figure saved as PDF (editable): {pdf_path}")
+
+# Also save as 600 dpi PNG (high-resolution for printing)
+png_path = save_path / "Eye_data_QC.png"
+plt.savefig(png_path, dpi=600, bbox_inches='tight', format='png')
+print(f"✅ QC figure saved as PNG (600 dpi for printing): {png_path}")
+
+plt.show()
 
 
 # %%
@@ -2755,6 +2891,7 @@ if debug and len(saccade_results) > 0:
             ax.axvline(current_pre_vel_threshold, color='red', linestyle='--', linewidth=2, 
                       label=f'Threshold: {current_pre_vel_threshold:.2f} px/s')
             if use_adaptive_thresholds:
+
                 ax.axvline(np.percentile(pre_vel, 50), color='gray', linestyle=':', linewidth=1, 
                           label=f'Median: {np.percentile(pre_vel, 50):.2f} px/s')
                 ax.axvline(np.percentile(pre_vel, 75), color='orange', linestyle=':', linewidth=1, 
@@ -2774,6 +2911,7 @@ if debug and len(saccade_results) > 0:
             ax.axvline(current_pre_drift_threshold, color='red', linestyle='--', linewidth=2,
                       label=f'Threshold: {current_pre_drift_threshold:.2f} px')
             if use_adaptive_thresholds:
+
                 ax.axvline(np.percentile(pre_drift, 50), color='gray', linestyle=':', linewidth=1,
                           label=f'Median: {np.percentile(pre_drift, 50):.2f} px')
                 ax.axvline(np.percentile(pre_drift, 75), color='orange', linestyle=':', linewidth=1,
@@ -2793,6 +2931,7 @@ if debug and len(saccade_results) > 0:
             ax.axvline(current_post_var_threshold, color='red', linestyle='--', linewidth=2,
                       label=f'Threshold: {current_post_var_threshold:.2f} px²')
             if use_adaptive_thresholds:
+
                 ax.axvline(np.percentile(post_var, 25), color='orange', linestyle=':', linewidth=1,
                           label=f'25th: {np.percentile(post_var, 25):.2f} px²')
                 ax.axvline(np.percentile(post_var, 50), color='gray', linestyle=':', linewidth=1,
@@ -2847,506 +2986,1078 @@ if debug and len(saccade_results) > 0:
 # Create validation plots and statistical comparisons for saccade classification
 
 if plot_saccade_detection_QC:
-    for video_key, res in saccade_results.items():
-        dir_map = get_direction_map_for_video(video_key)
-        label_up = dir_map['upward']
-        label_down = dir_map['downward']
+for video_key, res in saccade_results.items():
+    dir_map = get_direction_map_for_video(video_key)
+    label_up = dir_map['upward']
+    label_down = dir_map['downward']
+    
+    all_saccades_df = res.get('all_saccades_df', pd.DataFrame())
+
+    
+    if len(all_saccades_df) == 0:
+
+        print(f"\n⚠️ No saccades found for {get_eye_label(video_key)}")
+
+
+        continue
+
+
+    
+    # Check if classification was performed
+
+
+    if 'saccade_type' not in all_saccades_df.columns:
+
+
+
+        print(f"\n⚠️ Classification not performed for {get_eye_label(video_key)}")
+
+
+        continue
+
+
+    
+    orienting_saccades = all_saccades_df[all_saccades_df['saccade_type'] == 'orienting']
+
+
+    compensatory_saccades = all_saccades_df[all_saccades_df['saccade_type'] == 'compensatory']
+
+
+    
+    print(f"\n{'='*80}")
+
+
+    print(f"CLASSIFICATION ANALYSIS: {get_eye_label(video_key)}")
+
+
+    print(f"{'='*80}")
+
+
+    
+    # Statistical comparisons
+
+
+    from scipy import stats
+
+
+    
+    print(f"\n📊 Statistical Comparisons:")
+
+
+
+    print(f"  Orienting saccades: {len(orienting_saccades)}")
+
+
+
+    print(f"  Compensatory saccades: {len(compensatory_saccades)}")
+
+
+
+    
+    if len(orienting_saccades) > 0 and len(compensatory_saccades) > 0:
+
+
+        # Amplitude comparison
+
+
+        orienting_amps = orienting_saccades['amplitude'].values
+
+
+        compensatory_amps = compensatory_saccades['amplitude'].values
+
+
+        amp_stat, amp_p = stats.mannwhitneyu(orienting_amps, compensatory_amps, alternative='two-sided')
+
+
+        print(f"\n  Amplitude (px):")
+
+
+        print(f"    Orienting: {orienting_amps.mean():.2f} ± {orienting_amps.std():.2f} (median: {np.median(orienting_amps):.2f})")
+
+
+        print(f"    Compensatory: {compensatory_amps.mean():.2f} ± {compensatory_amps.std():.2f} (median: {np.median(compensatory_amps):.2f})")
+
+
+        print(f"    Mann-Whitney U test: U={amp_stat:.1f}, p={amp_p:.4f}")
+
+
         
-        all_saccades_df = res.get('all_saccades_df', pd.DataFrame())
+        # Duration comparison
+
+
+        orienting_durs = orienting_saccades['duration'].values
+
+
+        compensatory_durs = compensatory_saccades['duration'].values
+
+
+        dur_stat, dur_p = stats.mannwhitneyu(orienting_durs, compensatory_durs, alternative='two-sided')
+
+
+        print(f"\n  Duration (s):")
+
+
+        print(f"    Orienting: {orienting_durs.mean():.3f} ± {orienting_durs.std():.3f} (median: {np.median(orienting_durs):.3f})")
+
+
+        print(f"    Compensatory: {compensatory_durs.mean():.3f} ± {compensatory_durs.std():.3f} (median: {np.median(compensatory_durs):.3f})")
+
+
+
+        print(f"    Mann-Whitney U test: U={dur_stat:.1f}, p={dur_p:.4f}")
+
+
+
         
-        if len(all_saccades_df) == 0:
-            print(f"\n⚠️ No saccades found for {get_eye_label(video_key)}")
-            continue
+        # Pre-saccade velocity comparison
+
+
+
+        orienting_pre_vel = orienting_saccades['pre_saccade_mean_velocity'].values
+
+
+
+        compensatory_pre_vel = compensatory_saccades['pre_saccade_mean_velocity'].values
+
+
+
+        pre_vel_stat, pre_vel_p = stats.mannwhitneyu(orienting_pre_vel, compensatory_pre_vel, alternative='two-sided')
+
+
+
+        print(f"\n  Pre-saccade velocity (px/s):")
+
+
+
+        print(f"    Orienting: {orienting_pre_vel.mean():.2f} ± {orienting_pre_vel.std():.2f} (median: {np.median(orienting_pre_vel):.2f})")
+
+
+
+        print(f"    Compensatory: {compensatory_pre_vel.mean():.2f} ± {compensatory_pre_vel.std():.2f} (median: {np.median(compensatory_pre_vel):.2f})")
+
+
+
+        print(f"    Mann-Whitney U test: U={pre_vel_stat:.1f}, p={pre_vel_p:.4f}")
+
+
+
         
-        # Check if classification was performed
-        if 'saccade_type' not in all_saccades_df.columns:
-            print(f"\n⚠️ Classification not performed for {get_eye_label(video_key)}")
-            continue
+        # Pre-saccade drift comparison
+
+        orienting_pre_drift = orienting_saccades['pre_saccade_position_drift'].values
+
+        compensatory_pre_drift = compensatory_saccades['pre_saccade_position_drift'].values
+
+        pre_drift_stat, pre_drift_p = stats.mannwhitneyu(orienting_pre_drift, compensatory_pre_drift, alternative='two-sided')
+
+        print(f"\n  Pre-saccade position drift (px):")
+
+        print(f"    Orienting: {orienting_pre_drift.mean():.2f} ± {orienting_pre_drift.std():.2f} (median: {np.median(orienting_pre_drift):.2f})")
+
+        print(f"    Compensatory: {compensatory_pre_drift.mean():.2f} ± {compensatory_pre_drift.std():.2f} (median: {np.median(compensatory_pre_drift):.2f})")
+
+        print(f"    Mann-Whitney U test: U={pre_drift_stat:.1f}, p={pre_drift_p:.4f}")
+
         
-        orienting_saccades = all_saccades_df[all_saccades_df['saccade_type'] == 'orienting']
-        compensatory_saccades = all_saccades_df[all_saccades_df['saccade_type'] == 'compensatory']
+        # Post-saccade variance comparison
+
+        orienting_post_var = orienting_saccades['post_saccade_position_variance'].values
+
+        compensatory_post_var = compensatory_saccades['post_saccade_position_variance'].values
+
+        post_var_stat, post_var_p = stats.mannwhitneyu(orienting_post_var, compensatory_post_var, alternative='two-sided')
+
+        print(f"\n  Post-saccade position variance (px²):")
+
+        print(f"    Orienting: {orienting_post_var.mean():.2f} ± {orienting_post_var.std():.2f} (median: {np.median(orienting_post_var):.2f})")
+
+        print(f"    Compensatory: {compensatory_post_var.mean():.2f} ± {compensatory_post_var.std():.2f} (median: {np.median(compensatory_post_var):.2f})")
+
+        print(f"    Mann-Whitney U test: U={post_var_stat:.1f}, p={post_var_p:.4f}")
+
         
-        print(f"\n{'='*80}")
-        print(f"CLASSIFICATION ANALYSIS: {get_eye_label(video_key)}")
-        print(f"{'='*80}")
-        
-        # Statistical comparisons
-        from scipy import stats
-        
-        print(f"\n📊 Statistical Comparisons:")
-        print(f"  Orienting saccades: {len(orienting_saccades)}")
-        print(f"  Compensatory saccades: {len(compensatory_saccades)}")
-        
-        if len(orienting_saccades) > 0 and len(compensatory_saccades) > 0:
-            # Amplitude comparison
-            orienting_amps = orienting_saccades['amplitude'].values
-            compensatory_amps = compensatory_saccades['amplitude'].values
-            amp_stat, amp_p = stats.mannwhitneyu(orienting_amps, compensatory_amps, alternative='two-sided')
-            print(f"\n  Amplitude (px):")
-            print(f"    Orienting: {orienting_amps.mean():.2f} ± {orienting_amps.std():.2f} (median: {np.median(orienting_amps):.2f})")
-            print(f"    Compensatory: {compensatory_amps.mean():.2f} ± {compensatory_amps.std():.2f} (median: {np.median(compensatory_amps):.2f})")
-            print(f"    Mann-Whitney U test: U={amp_stat:.1f}, p={amp_p:.4f}")
-            
-            # Duration comparison
-            orienting_durs = orienting_saccades['duration'].values
-            compensatory_durs = compensatory_saccades['duration'].values
-            dur_stat, dur_p = stats.mannwhitneyu(orienting_durs, compensatory_durs, alternative='two-sided')
-            print(f"\n  Duration (s):")
-            print(f"    Orienting: {orienting_durs.mean():.3f} ± {orienting_durs.std():.3f} (median: {np.median(orienting_durs):.3f})")
-            print(f"    Compensatory: {compensatory_durs.mean():.3f} ± {compensatory_durs.std():.3f} (median: {np.median(compensatory_durs):.3f})")
-            print(f"    Mann-Whitney U test: U={dur_stat:.1f}, p={dur_p:.4f}")
-            
-            # Pre-saccade velocity comparison
-            orienting_pre_vel = orienting_saccades['pre_saccade_mean_velocity'].values
-            compensatory_pre_vel = compensatory_saccades['pre_saccade_mean_velocity'].values
-            pre_vel_stat, pre_vel_p = stats.mannwhitneyu(orienting_pre_vel, compensatory_pre_vel, alternative='two-sided')
-            print(f"\n  Pre-saccade velocity (px/s):")
-            print(f"    Orienting: {orienting_pre_vel.mean():.2f} ± {orienting_pre_vel.std():.2f} (median: {np.median(orienting_pre_vel):.2f})")
-            print(f"    Compensatory: {compensatory_pre_vel.mean():.2f} ± {compensatory_pre_vel.std():.2f} (median: {np.median(compensatory_pre_vel):.2f})")
-            print(f"    Mann-Whitney U test: U={pre_vel_stat:.1f}, p={pre_vel_p:.4f}")
-            
-            # Pre-saccade drift comparison
-            orienting_pre_drift = orienting_saccades['pre_saccade_position_drift'].values
-            compensatory_pre_drift = compensatory_saccades['pre_saccade_position_drift'].values
-            pre_drift_stat, pre_drift_p = stats.mannwhitneyu(orienting_pre_drift, compensatory_pre_drift, alternative='two-sided')
-            print(f"\n  Pre-saccade position drift (px):")
-            print(f"    Orienting: {orienting_pre_drift.mean():.2f} ± {orienting_pre_drift.std():.2f} (median: {np.median(orienting_pre_drift):.2f})")
-            print(f"    Compensatory: {compensatory_pre_drift.mean():.2f} ± {compensatory_pre_drift.std():.2f} (median: {np.median(compensatory_pre_drift):.2f})")
-            print(f"    Mann-Whitney U test: U={pre_drift_stat:.1f}, p={pre_drift_p:.4f}")
-            
-            # Post-saccade variance comparison
-            orienting_post_var = orienting_saccades['post_saccade_position_variance'].values
-            compensatory_post_var = compensatory_saccades['post_saccade_position_variance'].values
-            post_var_stat, post_var_p = stats.mannwhitneyu(orienting_post_var, compensatory_post_var, alternative='two-sided')
-            print(f"\n  Post-saccade position variance (px²):")
-            print(f"    Orienting: {orienting_post_var.mean():.2f} ± {orienting_post_var.std():.2f} (median: {np.median(orienting_post_var):.2f})")
-            print(f"    Compensatory: {compensatory_post_var.mean():.2f} ± {compensatory_post_var.std():.2f} (median: {np.median(compensatory_post_var):.2f})")
-            print(f"    Mann-Whitney U test: U={post_var_stat:.1f}, p={post_var_p:.4f}")
-            
-            # Bout size for compensatory saccades
-            if len(compensatory_saccades) > 0:
-                bout_sizes = compensatory_saccades['bout_size'].values
-                print(f"\n  Bout size (compensatory saccades only):")
-                print(f"    Mean: {bout_sizes.mean():.2f} ± {bout_sizes.std():.2f} saccades")
-                print(f"    Range: {bout_sizes.min():.0f} - {bout_sizes.max():.0f} saccades")
-                print(f"    Median: {np.median(bout_sizes):.0f} saccades")
-            
-            # Classification confidence comparison
-            if 'classification_confidence' in all_saccades_df.columns:
-                orienting_conf = orienting_saccades['classification_confidence'].values
-                compensatory_conf = compensatory_saccades['classification_confidence'].values
-                conf_stat, conf_p = stats.mannwhitneyu(orienting_conf, compensatory_conf, alternative='two-sided')
-                print(f"\n  Classification Confidence:")
-                print(f"    Orienting: {orienting_conf.mean():.3f} ± {orienting_conf.std():.3f} (median: {np.median(orienting_conf):.3f})")
-                print(f"    Compensatory: {compensatory_conf.mean():.3f} ± {compensatory_conf.std():.3f} (median: {np.median(compensatory_conf):.3f})")
-                print(f"    Mann-Whitney U test: U={conf_stat:.1f}, p={conf_p:.4f}")
-        else:
-            print(f"  ⚠️ Cannot perform statistical comparisons - need both types present")
-        
-        # Visualization
-        # Create visualization figure
-        fig_class = make_subplots(
-            rows=2, cols=3,
-            subplot_titles=(
-                'Amplitude Distribution',
-                'Duration Distribution',
-                'Pre-saccade Velocity Distribution',
-                'Pre-saccade Position Drift',
-                'Post-saccade Position Variance',
-                'Bout Size Distribution (Compensatory)'
-            ),
-            vertical_spacing=0.12,
-            horizontal_spacing=0.1
-        )
-        
-        # Row 1, Col 1: Amplitude distributions
-        if len(orienting_saccades) > 0:
-            fig_class.add_trace(
-                go.Histogram(
-                    x=orienting_saccades['amplitude'],
-                    nbinsx=30,
-                    name='Orienting',
-                    marker_color='blue',
-                    opacity=0.6,
-                    histnorm='probability'
-                ),
-                row=1, col=1
-            )
+        # Bout size for compensatory saccades
+
         if len(compensatory_saccades) > 0:
-            fig_class.add_trace(
-                go.Histogram(
-                    x=compensatory_saccades['amplitude'],
-                    nbinsx=30,
-                    name='Compensatory',
-                    marker_color='orange',
-                    opacity=0.6,
-                    histnorm='probability'
-                ),
-                row=1, col=1
-            )
+            bout_sizes = compensatory_saccades['bout_size'].values
+            print(f"\n  Bout size (compensatory saccades only):")
+            print(f"    Mean: {bout_sizes.mean():.2f} ± {bout_sizes.std():.2f} saccades")
+            print(f"    Range: {bout_sizes.min():.0f} - {bout_sizes.max():.0f} saccades")
+            print(f"    Median: {np.median(bout_sizes):.0f} saccades")
         
-        # Row 1, Col 2: Duration distributions
-        if len(orienting_saccades) > 0:
-            fig_class.add_trace(
-                go.Histogram(
-                    x=orienting_saccades['duration'],
-                    nbinsx=30,
-                    name='Orienting',
-                    marker_color='blue',
-                    opacity=0.6,
-                    showlegend=False,
-                    histnorm='probability'
-                ),
-                row=1, col=2
-            )
-        if len(compensatory_saccades) > 0:
-            fig_class.add_trace(
-                go.Histogram(
-                    x=compensatory_saccades['duration'],
-                    nbinsx=30,
-                    name='Compensatory',
-                    marker_color='orange',
-                    opacity=0.6,
-                    showlegend=False,
-                    histnorm='probability'
-                ),
-                row=1, col=2
-            )
-        
-        # Row 1, Col 3: Pre-saccade velocity distributions
-        if len(orienting_saccades) > 0:
-            fig_class.add_trace(
-                go.Histogram(
-                    x=orienting_saccades['pre_saccade_mean_velocity'],
-                    nbinsx=30,
-                    name='Orienting',
-                    marker_color='blue',
-                    opacity=0.6,
-                    showlegend=False,
-                    histnorm='probability'
-                ),
-                row=1, col=3
-            )
-        if len(compensatory_saccades) > 0:
-            fig_class.add_trace(
-                go.Histogram(
-                    x=compensatory_saccades['pre_saccade_mean_velocity'],
-                    nbinsx=30,
-                    name='Compensatory',
-                    marker_color='orange',
-                    opacity=0.6,
-                    showlegend=False,
-                    histnorm='probability'
-                ),
-                row=1, col=3
-            )
-        
-        # Row 2, Col 1: Pre-saccade drift distributions
-        if len(orienting_saccades) > 0:
-            fig_class.add_trace(
-                go.Histogram(
-                    x=orienting_saccades['pre_saccade_position_drift'],
-                    nbinsx=30,
-                    name='Orienting',
-                    marker_color='blue',
-                    opacity=0.6,
-                    showlegend=False,
-                    histnorm='probability'
-                ),
-                row=2, col=1
-            )
-        if len(compensatory_saccades) > 0:
-            fig_class.add_trace(
-                go.Histogram(
-                    x=compensatory_saccades['pre_saccade_position_drift'],
-                    nbinsx=30,
-                    name='Compensatory',
-                    marker_color='orange',
-                    opacity=0.6,
-                    showlegend=False,
-                    histnorm='probability'
-                ),
-                row=2, col=1
-            )
-        
-        # Row 2, Col 2: Post-saccade variance distributions
-        if len(orienting_saccades) > 0:
-            fig_class.add_trace(
-                go.Histogram(
-                    x=orienting_saccades['post_saccade_position_variance'],
-                    nbinsx=30,
-                    name='Orienting',
-                    marker_color='blue',
-                    opacity=0.6,
-                    showlegend=False,
-                    histnorm='probability'
-                ),
-                row=2, col=2
-            )
-        if len(compensatory_saccades) > 0:
-            fig_class.add_trace(
-                go.Histogram(
-                    x=compensatory_saccades['post_saccade_position_variance'],
-                    nbinsx=30,
-                    name='Compensatory',
-                    marker_color='orange',
-                    opacity=0.6,
-                    showlegend=False,
-                    histnorm='probability'
-                ),
-                row=2, col=2
-            )
-        
-        # Row 2, Col 3: Bout size distribution (compensatory only)
-        if len(compensatory_saccades) > 0:
-            fig_class.add_trace(
-                go.Histogram(
-                    x=compensatory_saccades['bout_size'],
-                    nbinsx=20,
-                    name='Compensatory Bout Size',
-                    marker_color='orange',
-                    opacity=0.6,
-                    showlegend=False,
-                    histnorm='probability'
-                ),
-                row=2, col=3
-            )
-        else:
-            # Add empty trace to maintain layout
-            fig_class.add_trace(
-                go.Histogram(x=[], name='No compensatory saccades'),
-                row=2, col=3
-            )
-        
-        # Update layout
-        fig_class.update_layout(
-            title_text=f'Saccade Classification Analysis: Orienting vs Compensatory ({get_eye_label(video_key)})',
-            height=800,
-            showlegend=True,
-            legend=dict(x=0.02, y=0.98)
-        )
-        
-        # Update axes labels
-        fig_class.update_xaxes(title_text="Amplitude (px)", row=1, col=1)
-        fig_class.update_xaxes(title_text="Duration (s)", row=1, col=2)
-        fig_class.update_xaxes(title_text="Velocity (px/s)", row=1, col=3)
-        fig_class.update_xaxes(title_text="Drift (px)", row=2, col=1)
-        fig_class.update_xaxes(title_text="Variance (px²)", row=2, col=2)
-        fig_class.update_xaxes(title_text="Bout Size (saccades)", row=2, col=3)
-        
-        fig_class.update_yaxes(title_text="Probability", row=1, col=1)
-        fig_class.update_yaxes(title_text="Probability", row=1, col=2)
-        fig_class.update_yaxes(title_text="Probability", row=1, col=3)
-        fig_class.update_yaxes(title_text="Probability", row=2, col=1)
-        fig_class.update_yaxes(title_text="Probability", row=2, col=2)
-        fig_class.update_yaxes(title_text="Probability", row=2, col=3)
-        
-        fig_class.show()
-        
-        # Confidence distribution visualization
+        # Classification confidence comparison
         if 'classification_confidence' in all_saccades_df.columns:
-            fig_conf = make_subplots(
-                rows=1, cols=2,
-                subplot_titles=(
-                    'Classification Confidence Distribution',
-                    'Confidence by Saccade Type'
-                ),
-                horizontal_spacing=0.15
-            )
-            
-            # Overall confidence distribution
+
+            orienting_conf = orienting_saccades['classification_confidence'].values
+
+
+            compensatory_conf = compensatory_saccades['classification_confidence'].values
+
+
+            conf_stat, conf_p = stats.mannwhitneyu(orienting_conf, compensatory_conf, alternative='two-sided')
+
+
+            print(f"\n  Classification Confidence:")
+
+
+            print(f"    Orienting: {orienting_conf.mean():.3f} ± {orienting_conf.std():.3f} (median: {np.median(orienting_conf):.3f})")
+
+
+            print(f"    Compensatory: {compensatory_conf.mean():.3f} ± {compensatory_conf.std():.3f} (median: {np.median(compensatory_conf):.3f})")
+
+
+            print(f"    Mann-Whitney U test: U={conf_stat:.1f}, p={conf_p:.4f}")
+
+
+    else:
+
+
+
+        print(f"  ⚠️ Cannot perform statistical comparisons - need both types present")
+    
+
+    
+            # Visualization
+
+    
+    # Create visualization figure
+
+
+
+    fig_class = make_subplots(
+
+
+
+        rows=2, cols=3,
+
+
+
+        subplot_titles=(
+
+
+
+            'Amplitude Distribution',
+
+
+
+            'Duration Distribution',
+
+
+
+            'Pre-saccade Velocity Distribution',
+
+
+
+            'Pre-saccade Position Drift',
+
+
+
+            'Post-saccade Position Variance',
+
+
+
+            'Bout Size Distribution (Compensatory)'
+
+
+
+        ),
+
+
+
+        vertical_spacing=0.12,
+
+
+
+        horizontal_spacing=0.1
+
+
+
+    )
+
+
+
+    
+    # Row 1, Col 1: Amplitude distributions
+
+
+
+    if len(orienting_saccades) > 0:
+
+
+        fig_class.add_trace(
+
+
+            go.Histogram(
+
+
+                x=orienting_saccades['amplitude'],
+
+
+                nbinsx=30,
+
+
+                name='Orienting',
+
+
+                marker_color='blue',
+
+
+                opacity=0.6,
+
+
+                histnorm='probability'
+
+
+            ),
+
+
+            row=1, col=1
+
+
+        )
+
+
+    if len(compensatory_saccades) > 0:
+
+
+
+        fig_class.add_trace(
+
+
+            go.Histogram(
+
+
+                x=compensatory_saccades['amplitude'],
+
+
+
+                nbinsx=30,
+
+
+
+                name='Compensatory',
+
+
+
+                marker_color='orange',
+
+
+
+                opacity=0.6,
+
+
+
+                histnorm='probability'
+
+
+
+            ),
+
+
+
+            row=1, col=1
+
+
+        )
+
+    
+    # Row 1, Col 2: Duration distributions
+
+    if len(orienting_saccades) > 0:
+        fig_class.add_trace(
+            go.Histogram(
+                x=orienting_saccades['duration'],
+                nbinsx=30,
+                name='Orienting',
+                marker_color='blue',
+                opacity=0.6,
+                showlegend=False,
+                histnorm='probability'
+            ),
+            row=1, col=2
+        )
+    if len(compensatory_saccades) > 0:
+
+        fig_class.add_trace(
+
+
+            go.Histogram(
+
+
+                x=compensatory_saccades['duration'],
+
+
+                nbinsx=30,
+
+
+                name='Compensatory',
+
+
+                marker_color='orange',
+
+
+                opacity=0.6,
+
+
+                showlegend=False,
+
+
+                histnorm='probability'
+
+
+
+            ),
+
+
+
+            row=1, col=2
+
+
+
+        )
+
+
+
+    
+    # Row 1, Col 3: Pre-saccade velocity distributions
+
+
+
+    if len(orienting_saccades) > 0:
+
+
+        fig_class.add_trace(
+
+
+            go.Histogram(
+
+
+                x=orienting_saccades['pre_saccade_mean_velocity'],
+
+
+                nbinsx=30,
+
+
+                name='Orienting',
+
+
+                marker_color='blue',
+
+
+                opacity=0.6,
+
+
+                showlegend=False,
+
+
+                histnorm='probability'
+
+
+            ),
+
+
+            row=1, col=3
+
+
+        )
+
+
+    if len(compensatory_saccades) > 0:
+
+
+
+        fig_class.add_trace(
+
+
+            go.Histogram(
+
+
+
+                x=compensatory_saccades['pre_saccade_mean_velocity'],
+
+
+
+                nbinsx=30,
+
+
+
+                name='Compensatory',
+
+
+
+                marker_color='orange',
+
+
+
+                opacity=0.6,
+
+
+
+                showlegend=False,
+
+
+
+                histnorm='probability'
+
+
+
+            ),
+
+
+
+            row=1, col=3
+
+
+
+        )
+
+
+
+    
+    # Row 2, Col 1: Pre-saccade drift distributions
+
+
+
+    if len(orienting_saccades) > 0:
+
+
+        fig_class.add_trace(
+
+
+            go.Histogram(
+
+
+                x=orienting_saccades['pre_saccade_position_drift'],
+
+
+                nbinsx=30,
+
+
+                name='Orienting',
+
+
+                marker_color='blue',
+
+
+                opacity=0.6,
+
+
+                showlegend=False,
+
+
+                histnorm='probability'
+
+
+            ),
+
+
+            row=2, col=1
+
+
+        )
+
+
+    if len(compensatory_saccades) > 0:
+
+        fig_class.add_trace(
+
+
+            go.Histogram(
+
+
+                x=compensatory_saccades['pre_saccade_position_drift'],
+
+
+                nbinsx=30,
+
+
+                name='Compensatory',
+
+
+                marker_color='orange',
+
+
+                opacity=0.6,
+
+
+                showlegend=False,
+
+
+                histnorm='probability'
+
+
+            ),
+
+
+            row=2, col=1
+
+
+        )
+
+
+    
+    # Row 2, Col 2: Post-saccade variance distributions
+
+
+    if len(orienting_saccades) > 0:
+
+
+        fig_class.add_trace(
+
+
+            go.Histogram(
+
+
+                x=orienting_saccades['post_saccade_position_variance'],
+
+
+                nbinsx=30,
+
+
+                name='Orienting',
+
+
+                marker_color='blue',
+
+
+                opacity=0.6,
+
+
+                showlegend=False,
+
+
+                histnorm='probability'
+
+
+            ),
+
+
+            row=2, col=2
+
+
+        )
+
+
+    if len(compensatory_saccades) > 0:
+        fig_class.add_trace(
+            go.Histogram(
+                x=compensatory_saccades['post_saccade_position_variance'],
+                nbinsx=30,
+                name='Compensatory',
+                marker_color='orange',
+                opacity=0.6,
+                showlegend=False,
+                histnorm='probability'
+            ),
+            row=2, col=2
+        )
+
+
+    
+    # Row 2, Col 3: Bout size distribution (compensatory only)
+
+
+    if len(compensatory_saccades) > 0:
+
+
+        fig_class.add_trace(
+
+
+            go.Histogram(
+
+
+                x=compensatory_saccades['bout_size'],
+
+
+                nbinsx=20,
+
+
+                name='Compensatory Bout Size',
+
+
+                marker_color='orange',
+
+
+                opacity=0.6,
+
+
+                showlegend=False,
+
+
+                histnorm='probability'
+
+
+            ),
+
+
+            row=2, col=3
+
+
+        )
+
+
+    else:
+        # Add empty trace to maintain layout
+        fig_class.add_trace(
+            go.Histogram(x=[], name='No compensatory saccades'),
+            row=2, col=3
+        )
+
+
+    
+    # Update layout
+
+
+    fig_class.update_layout(
+
+
+        title_text=f'Saccade Classification Analysis: Orienting vs Compensatory ({get_eye_label(video_key)})',
+
+
+        height=800,
+
+
+        showlegend=True,
+
+
+        legend=dict(x=0.02, y=0.98)
+
+
+    )
+
+
+    
+    # Update axes labels
+    fig_class.update_xaxes(title_text="Amplitude (px)", row=1, col=1)
+    fig_class.update_xaxes(title_text="Duration (s)", row=1, col=2)
+    fig_class.update_xaxes(title_text="Velocity (px/s)", row=1, col=3)
+    fig_class.update_xaxes(title_text="Drift (px)", row=2, col=1)
+    fig_class.update_xaxes(title_text="Variance (px²)", row=2, col=2)
+    fig_class.update_xaxes(title_text="Bout Size (saccades)", row=2, col=3)
+    
+    fig_class.update_yaxes(title_text="Probability", row=1, col=1)
+    fig_class.update_yaxes(title_text="Probability", row=1, col=2)
+    fig_class.update_yaxes(title_text="Probability", row=1, col=3)
+    fig_class.update_yaxes(title_text="Probability", row=2, col=1)
+    fig_class.update_yaxes(title_text="Probability", row=2, col=2)
+    fig_class.update_yaxes(title_text="Probability", row=2, col=3)
+
+    
+    fig_class.show()
+
+    
+    # Confidence distribution visualization
+
+    if 'classification_confidence' in all_saccades_df.columns:
+        fig_conf = make_subplots(
+            rows=1, cols=2,
+            subplot_titles=(
+                'Classification Confidence Distribution',
+                'Confidence by Saccade Type'
+            ),
+            horizontal_spacing=0.15
+        )
+
+        
+        # Overall confidence distribution
+
+        fig_conf.add_trace(
+
+            go.Histogram(
+
+                x=all_saccades_df['classification_confidence'],
+
+                nbinsx=30,
+
+                name='All Saccades',
+
+                marker_color='gray',
+
+                opacity=0.7,
+
+                histnorm='probability'
+
+            ),
+
+            row=1, col=1
+
+        )
+        
+        # Add vertical lines for confidence thresholds
+        fig_conf.add_vline(
+            x=0.7, line_dash="dash", line_color="green", 
+
+            annotation_text="High (≥0.7)", row=1, col=1
+
+        )
+        fig_conf.add_vline(
+            x=0.4, line_dash="dash", line_color="orange", 
+
+            annotation_text="Medium (0.4-0.7)", row=1, col=1
+
+        )
+        
+        # Confidence by type
+        if len(orienting_saccades) > 0:
             fig_conf.add_trace(
                 go.Histogram(
-                    x=all_saccades_df['classification_confidence'],
+                    x=orienting_saccades['classification_confidence'],
                     nbinsx=30,
-                    name='All Saccades',
-                    marker_color='gray',
-                    opacity=0.7,
+                    name='Orienting',
+                    marker_color='blue',
+                    opacity=0.6,
                     histnorm='probability'
                 ),
-                row=1, col=1
+                row=1, col=2
             )
-            
-            # Add vertical lines for confidence thresholds
-            fig_conf.add_vline(
-                x=0.7, line_dash="dash", line_color="green", 
-                annotation_text="High (≥0.7)", row=1, col=1
-            )
-            fig_conf.add_vline(
-                x=0.4, line_dash="dash", line_color="orange", 
-                annotation_text="Medium (0.4-0.7)", row=1, col=1
-            )
-            
-            # Confidence by type
-            if len(orienting_saccades) > 0:
-                fig_conf.add_trace(
-                    go.Histogram(
-                        x=orienting_saccades['classification_confidence'],
-                        nbinsx=30,
-                        name='Orienting',
-                        marker_color='blue',
-                        opacity=0.6,
-                        histnorm='probability'
-                    ),
-                    row=1, col=2
-                )
-            if len(compensatory_saccades) > 0:
-                fig_conf.add_trace(
-                    go.Histogram(
-                        x=compensatory_saccades['classification_confidence'],
-                        nbinsx=30,
-                        name='Compensatory',
-                        marker_color='orange',
-                        opacity=0.6,
-                        histnorm='probability'
-                    ),
-                    row=1, col=2
-                )
-            
-            fig_conf.update_layout(
-                title_text=f'Classification Confidence Analysis ({get_eye_label(video_key)})',
-                height=400,
-                showlegend=True,
-                legend=dict(x=0.02, y=0.98)
-            )
-            
-            fig_conf.update_xaxes(title_text="Confidence Score", row=1, col=1)
-            fig_conf.update_xaxes(title_text="Confidence Score", row=1, col=2)
-            fig_conf.update_yaxes(title_text="Probability", row=1, col=1)
-            fig_conf.update_yaxes(title_text="Probability", row=1, col=2)
-            
-            fig_conf.show()
-        
-        # Time series visualization with classification
-        fig_ts = make_subplots(
-            rows=2, cols=1,
-            shared_xaxes=True,
-            vertical_spacing=0.1,
-            subplot_titles=('X Position (px)', 'Velocity (px/s) with Classified Saccades')
-        )
-        
-        # Add position trace
-        fig_ts.add_trace(
-            go.Scatter(
-                x=res['df']['Seconds'],
-                y=res['df']['X_smooth'],
-                mode='lines',
-                name='Smoothed X',
-                line=dict(color='blue', width=2)
-            ),
-            row=1, col=1
-        )
-        
-        # Add velocity trace
-        fig_ts.add_trace(
-            go.Scatter(
-                x=res['df']['Seconds'],
-                y=res['df']['vel_x_smooth'],
-                mode='lines',
-                name='Smoothed Velocity',
-                line=dict(color='red', width=2)
-            ),
-            row=2, col=1
-        )
-        
-        # Add adaptive threshold lines
-        fig_ts.add_hline(
-            y=res['vel_thresh'],
-            line_dash="dash",
-            line_color="green",
-            opacity=0.5,
-            annotation_text=f"Adaptive threshold (±{res['vel_thresh']:.0f} px/s)",
-            row=2, col=1
-        )
-        fig_ts.add_hline(
-            y=-res['vel_thresh'],
-            line_dash="dash",
-            line_color="green",
-            opacity=0.5,
-            row=2, col=1
-        )
-        
-        # Calculate position y-axis range for vertical lines
-        pos_max = res['df']['X_smooth'].max()
-        pos_min = res['df']['X_smooth'].min()
-        pos_range = pos_max - pos_min
-        # Add small padding to ensure lines span full visible range
-        pos_padding = pos_range * 0.05
-        pos_y_min = pos_min - pos_padding
-        pos_y_max = pos_max + pos_padding
-        
-        # Plot orienting saccades (blue) as rectangles on position trace
-        orienting_in_df = all_saccades_df[all_saccades_df['saccade_type'] == 'orienting']
-        if len(orienting_in_df) > 0:
-            for idx, row in orienting_in_df.iterrows():
-                start_time = row['start_time']
-                end_time = row['end_time']
-                
-                # Use rectangle with thin border to show duration span more efficiently
-                # Opacity must be set via rgba color, not in line dict
-                fig_ts.add_shape(
-                    type="rect",
-                    x0=start_time, y0=pos_y_min,
-                    x1=end_time, y1=pos_y_max,
-                    fillcolor='rgba(0,0,255,0.1)',  # Light blue fill with opacity
-                    line=dict(color='rgba(0,0,255,0.3)', width=2),  # Blue border with opacity via rgba
-                    row=1, col=1
-                )
-            
-            # Legend entry
-            fig_ts.add_trace(
-                go.Scatter(
-                    x=[None], y=[None],
-                    mode='lines',
-                    name='Orienting Saccades',
-                    line=dict(color='rgba(0,0,255,0.3)', width=3)  # Blue with opacity via rgba
+        if len(compensatory_saccades) > 0:
+            fig_conf.add_trace(
+
+                go.Histogram(
+
+                    x=compensatory_saccades['classification_confidence'],
+
+                    nbinsx=30,
+
+                    name='Compensatory',
+
+                    marker_color='orange',
+
+                    opacity=0.6,
+
+                    histnorm='probability'
+
                 ),
-                row=1, col=1
+
+                row=1, col=2
+
             )
+
         
-        # Plot compensatory saccades (orange) as rectangles on position trace
-        compensatory_in_df = all_saccades_df[all_saccades_df['saccade_type'] == 'compensatory']
-        if len(compensatory_in_df) > 0:
-            for idx, row in compensatory_in_df.iterrows():
-                start_time = row['start_time']
-                end_time = row['end_time']
-                
-                # Use rectangle with thin border to show duration span more efficiently
-                # Opacity must be set via rgba color, not in line dict
-                fig_ts.add_shape(
-                    type="rect",
-                    x0=start_time, y0=pos_y_min,
-                    x1=end_time, y1=pos_y_max,
-                    fillcolor='rgba(255,165,0,0.1)',  # Light orange fill with opacity
-                    line=dict(color='rgba(255,165,0,0.3)', width=2),  # Orange border with opacity via rgba
-                    row=1, col=1
-                )
-            
-            # Legend entry
-            fig_ts.add_trace(
-                go.Scatter(
-                    x=[None], y=[None],
-                    mode='lines',
-                    name='Compensatory Saccades',
-                    line=dict(color='rgba(255,165,0,0.3)', width=3)  # Orange with opacity via rgba
-                ),
-                row=1, col=1
-            )
-        
-        # Update layout
-        fig_ts.update_layout(
-            title=f'Time Series with Saccade Classification ({get_eye_label(video_key)})<br><sub>Blue: Orienting, Orange: Compensatory</sub>',
-            height=600,
+        fig_conf.update_layout(
+
+            title_text=f'Classification Confidence Analysis ({get_eye_label(video_key)})',
+
+            height=400,
+
             showlegend=True,
-            legend=dict(x=0.01, y=0.99)
+
+            legend=dict(x=0.02, y=0.98)
+
         )
+
         
-        # Update axes
-        fig_ts.update_xaxes(title_text="Time (s)", row=2, col=1)
-        fig_ts.update_yaxes(title_text="X Position (px)", row=1, col=1)
-        fig_ts.update_yaxes(title_text="Velocity (px/s)", row=2, col=1)
+        fig_conf.update_xaxes(title_text="Confidence Score", row=1, col=1)
+
+        fig_conf.update_xaxes(title_text="Confidence Score", row=1, col=2)
+
+        fig_conf.update_yaxes(title_text="Probability", row=1, col=1)
+
+        fig_conf.update_yaxes(title_text="Probability", row=1, col=2)
+
         
-        fig_ts.show()
+        fig_conf.show()
+
+    
+    # Time series visualization with classification
+
+    fig_ts = make_subplots(
+
+        rows=2, cols=1,
+
+        shared_xaxes=True,
+
+        vertical_spacing=0.1,
+
+        subplot_titles=('X Position (px)', 'Velocity (px/s) with Classified Saccades')
+
+    )
+
+    
+    # Add position trace
+
+    fig_ts.add_trace(
+
+        go.Scatter(
+
+            x=res['df']['Seconds'],
+
+            y=res['df']['X_smooth'],
+
+            mode='lines',
+
+            name='Smoothed X',
+
+            line=dict(color='blue', width=2)
+
+        ),
+
+        row=1, col=1
+
+    )
+
+    
+    # Add velocity trace
+
+    fig_ts.add_trace(
+
+        go.Scatter(
+
+            x=res['df']['Seconds'],
+
+            y=res['df']['vel_x_smooth'],
+
+            mode='lines',
+
+            name='Smoothed Velocity',
+
+            line=dict(color='red', width=2)
+
+        ),
+        row=2, col=1
+    )
+    
+    # Add adaptive threshold lines
+    fig_ts.add_hline(
+        y=res['vel_thresh'],
+        line_dash="dash",
+        line_color="green",
+        opacity=0.5,
+        annotation_text=f"Adaptive threshold (±{res['vel_thresh']:.0f} px/s)",
+        row=2, col=1
+    )
+    fig_ts.add_hline(
+        y=-res['vel_thresh'],
+        line_dash="dash",
+        line_color="green",
+        opacity=0.5,
+        row=2, col=1
+    )
+    
+    # Calculate position y-axis range for vertical lines
+    pos_max = res['df']['X_smooth'].max()
+    pos_min = res['df']['X_smooth'].min()
+    pos_range = pos_max - pos_min
+    # Add small padding to ensure lines span full visible range
+    pos_padding = pos_range * 0.05
+    pos_y_min = pos_min - pos_padding
+    pos_y_max = pos_max + pos_padding
+    
+    # Plot orienting saccades (blue) as rectangles on position trace
+    orienting_in_df = all_saccades_df[all_saccades_df['saccade_type'] == 'orienting']
+    if len(orienting_in_df) > 0:
+        for idx, row in orienting_in_df.iterrows():
+            start_time = row['start_time']
+
+            end_time = row['end_time']
+
+            
+            # Use rectangle with thin border to show duration span more efficiently
+
+            # Opacity must be set via rgba color, not in line dict
+
+            fig_ts.add_shape(
+
+                type="rect",
+
+                x0=start_time, y0=pos_y_min,
+
+                x1=end_time, y1=pos_y_max,
+
+                fillcolor='rgba(0,0,255,0.1)',  # Light blue fill with opacity
+
+                line=dict(color='rgba(0,0,255,0.3)', width=2),  # Blue border with opacity via rgba
+
+                row=1, col=1
+
+            )
+
+        
+        # Legend entry
+
+        fig_ts.add_trace(
+
+            go.Scatter(
+
+                x=[None], y=[None],
+
+                mode='lines',
+
+                name='Orienting Saccades',
+
+                line=dict(color='rgba(0,0,255,0.3)', width=3)  # Blue with opacity via rgba
+
+            ),
+
+            row=1, col=1
+
+        )
+
+    
+    # Plot compensatory saccades (orange) as rectangles on position trace
+
+    compensatory_in_df = all_saccades_df[all_saccades_df['saccade_type'] == 'compensatory']
+
+    if len(compensatory_in_df) > 0:
+        for idx, row in compensatory_in_df.iterrows():
+            start_time = row['start_time']
+            end_time = row['end_time']
+
+            
+            # Use rectangle with thin border to show duration span more efficiently
+
+            # Opacity must be set via rgba color, not in line dict
+
+            fig_ts.add_shape(
+
+                type="rect",
+
+                x0=start_time, y0=pos_y_min,
+
+                x1=end_time, y1=pos_y_max,
+
+                fillcolor='rgba(255,165,0,0.1)',  # Light orange fill with opacity
+
+                line=dict(color='rgba(255,165,0,0.3)', width=2),  # Orange border with opacity via rgba
+
+                row=1, col=1
+
+            )
+
+        
+        # Legend entry
+
+        fig_ts.add_trace(
+
+            go.Scatter(
+
+                x=[None], y=[None],
+
+                mode='lines',
+
+                name='Compensatory Saccades',
+
+                line=dict(color='rgba(255,165,0,0.3)', width=3)  # Orange with opacity via rgba
+            ),
+
+            row=1, col=1
+
+        )
+    
+    # Update layout
+    fig_ts.update_layout(
+        title=f'Time Series with Saccade Classification ({get_eye_label(video_key)})<br><sub>Blue: Orienting, Orange: Compensatory</sub>',
+        height=600,
+        showlegend=True,
+        legend=dict(x=0.01, y=0.99)
+    )
+    
+    # Update axes
+    fig_ts.update_xaxes(title_text="Time (s)", row=2, col=1)
+    fig_ts.update_yaxes(title_text="X Position (px)", row=1, col=1)
+    fig_ts.update_yaxes(title_text="Velocity (px/s)", row=2, col=1)
+    
+    fig_ts.show()
 
 
 # %%
@@ -3469,81 +4180,71 @@ else:
 experiment_id = extract_experiment_id(data_path)
 print(f"Experiment ID: {experiment_id}")
 
-# Choose which video to annotate (VideoData1 or VideoData2)
-# Change this to annotate a different eye
-video_key = 'VideoData1'  # Options: 'VideoData1' or 'VideoData2'
+# Launch GUI with BOTH eyes combined (VideoData1 and VideoData2)
+# The GUI will automatically combine saccades from both eyes and display them together
 
-if video_key in saccade_results:
-    # Get saccade results for this video
-    video_saccade_results = saccade_results[video_key]
-    
-    # Get features for this video (if available)
-    video_features = None
-    if features_combined is not None and len(features_combined) > 0:
-        # Filter features for this video
-        # The video_label column should contain the video key
-        if 'video_label' in features_combined.columns:
-            # Find features for this video (check if video_label contains VideoData1 or VideoData2)
-            video_num = video_key.replace('VideoData', '')
-            video_features = features_combined[
-                features_combined['video_label'].str.contains(video_num, na=False)
-            ].copy()
-        else:
-            # If no video_label column, try to split by eye
-            if video_key == 'VideoData1':
-                eye_label = 'Left' if video1_eye == 'L' else 'Right'
-            else:
-                eye_label = 'Right' if video1_eye == 'L' else 'Left'
-            
-            if 'eye' in features_combined.columns:
-                video_features = features_combined[features_combined['eye'] == eye_label].copy()
-            else:
-                # Fallback: use all features (less ideal but will work)
-                video_features = features_combined.copy()
-    
-    # Set annotations file path (save in data_path parent directory)
-    annotations_file = data_path.parent / 'saccade_annotations_master.csv'
-    # Or use a project-wide location:
-    # annotations_file = Path('/Users/rancze/Documents/Data/vestVR/saccade_annotations_master.csv')
-    
-    print(f"\n{'='*80}")
-    print(f"Launching GUI Annotation Tool")
-    print(f"{'='*80}")
-    print(f"Experiment ID: {experiment_id}")
-    print(f"Video: {video_key} ({VIDEO_LABELS.get(video_key, video_key)})")
-    print(f"Saccades: {len(video_saccade_results.get('all_saccades_df', pd.DataFrame()))}")
-    print(f"Features: {len(video_features) if video_features is not None else 0}")
-    print(f"Annotations file: {annotations_file}")
-    print(f"{'='*80}\n")
-    print("ℹ️ Instructions:")
-    print("  - Use keyboard shortcuts: 1=Compensatory, 2=Orienting, 3=Saccade-and-Fixate, 4=Non-Saccade")
-    print("  - Navigation: N=Next, P=Previous, S=Save")
-    print("  - Click on saccades in the table to select them")
-    print("  - Close the GUI window when done annotating")
-    print(f"{'='*80}\n")
-    
-    # Launch GUI (this will block until GUI is closed)
-    launch_annotation_gui(
-        saccade_results=video_saccade_results,
-        features_df=video_features,
-        experiment_id=experiment_id,
-        annotations_file_path=annotations_file
-    )
-    
-    # After GUI closes, show statistics
-    print(f"\n{'='*80}")
-    print("Annotation session complete!")
-    print(f"{'='*80}")
-    
-    # Load and display annotations
-    annotations = load_annotations(annotations_file, experiment_id=experiment_id)
-    if len(annotations) > 0:
-        print(f"\n✅ Annotated {len(annotations)} saccades for this experiment")
-        print_annotation_stats(annotations_file, experiment_id=experiment_id)
-    else:
-        print("\n⚠️ No annotations saved for this experiment")
+# Get features for BOTH eyes (since we're combining both eyes' saccades)
+# features_combined already contains features from both VideoData1 and VideoData2
+video_features = features_combined if features_combined is not None and len(features_combined) > 0 else None
+
+# Set annotations file path (save in data_path parent directory)
+annotations_file = data_path.parent / 'saccade_annotations_master.csv'
+# Or use a project-wide location:
+# annotations_file = Path('/Users/rancze/Documents/Data/vestVR/saccade_annotations_master.csv')
+
+# Count saccades from both eyes for display
+total_saccades = 0
+eye_breakdown = {}
+if isinstance(saccade_results, dict):
+    for key in ['VideoData1', 'VideoData2']:
+        if key in saccade_results:
+            eye_data = saccade_results[key]
+            if 'all_saccades_df' in eye_data:
+                count = len(eye_data['all_saccades_df'])
+                total_saccades += count
+                eye_label = VIDEO_LABELS.get(key, key)
+                eye_breakdown[eye_label] = count
+
+print(f"\n{'='*80}")
+print(f"Launching GUI Annotation Tool (BOTH EYES)")
+print(f"{'='*80}")
+print(f"Experiment ID: {experiment_id}")
+print(f"Eyes: {', '.join(eye_breakdown.keys()) if eye_breakdown else 'Unknown'}")
+print(f"Total saccades: {total_saccades}")
+if eye_breakdown:
+    for eye, count in eye_breakdown.items():
+        print(f"  - {eye}: {count} saccades")
+print(f"Features: {len(video_features) if video_features is not None else 0}")
+print(f"Annotations file: {annotations_file}")
+print(f"{'='*80}\n")
+print("ℹ️ Instructions:")
+print("  - Use keyboard shortcuts: 1=Compensatory, 2=Orienting, 3=Saccade-and-Fixate, 4=Non-Saccade")
+print("  - Navigation: . = Next, , = Previous, S = Save")
+print("  - Click on saccades in the table to select them")
+print("  - The table shows saccades from both eyes (L and R) combined")
+print("  - Close the GUI window when done annotating")
+print(f"{'='*80}\n")
+
+# Launch GUI (this will block until GUI is closed)
+# Pass the FULL saccade_results dict so both eyes are combined
+launch_annotation_gui(
+    saccade_results=saccade_results,  # Pass full dict with VideoData1 and VideoData2 keys
+    features_df=video_features,  # Pass all features (both eyes)
+    experiment_id=experiment_id,
+    annotations_file_path=annotations_file
+)
+
+# After GUI closes, show statistics
+print(f"\n{'='*80}")
+print("Annotation session complete!")
+print(f"{'='*80}")
+
+# Load and display annotations
+annotations = load_annotations(annotations_file, experiment_id=experiment_id)
+if len(annotations) > 0:
+    print(f"\n✅ Annotated {len(annotations)} saccades for this experiment")
+    print_annotation_stats(annotations_file, experiment_id=experiment_id)
 else:
-    print(f"⚠️ {video_key} not found in saccade_results")
-    print(f"Available keys: {list(saccade_results.keys())}")
+    print("\n⚠️ No annotations saved for this experiment")
 
 # %%

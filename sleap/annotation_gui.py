@@ -52,6 +52,9 @@ from sleap.annotation_storage import (
     save_annotation, load_annotations, get_annotation_stats, VALID_LABELS
 )
 
+# Global variable to track if a GUI window is already open
+_active_gui_window = None
+
 
 class TimeSeriesPlotWidget(QWidget):
     """Widget for displaying full time series with saccades highlighted."""
@@ -188,7 +191,7 @@ class TimeSeriesPlotWidget(QWidget):
             pass  # Skip plotting if data missing
         
         self.ax_position.set_ylabel('Position (px)', fontsize=10)
-        self.ax_position.set_title(f'Time Series: Position and Velocity (Window: {window_start:.1f}s - {window_end:.1f}s)', fontsize=9, fontweight='bold')
+        # Title removed per user request
         self.ax_position.grid(True, alpha=0.3)
         # Set local Y limits (autoscaling)
         self.ax_position.set_ylim(y_position_limits)
@@ -380,7 +383,7 @@ class PeriSaccadePlotWidget(QWidget):
         ax_position.axvline(0, color='red', linestyle='--', linewidth=1, alpha=0.7)
         ax_position.set_xlabel('Time relative to threshold crossing (s)', fontsize=10)
         ax_position.set_ylabel('Position (px)', fontsize=10)
-        ax_position.set_title('Peri-Saccade Segment: Position', fontsize=9, fontweight='bold')
+        # Title removed per user request
         ax_position.grid(True, alpha=0.3)
         # Set Y limits (matching time series scale) - only if provided
         if y_position_limits is not None:
@@ -397,7 +400,7 @@ class PeriSaccadePlotWidget(QWidget):
         ax_velocity.axvline(0, color='red', linestyle='--', linewidth=1, alpha=0.7)
         ax_velocity.set_xlabel('Time relative to threshold crossing (s)', fontsize=10)
         ax_velocity.set_ylabel('Velocity (px/s)', fontsize=10)
-        ax_velocity.set_title('Peri-Saccade Segment: Velocity', fontsize=9, fontweight='bold')
+        # Title removed per user request
         ax_velocity.grid(True, alpha=0.3)
         # Set Y limits (matching time series scale) - only if provided
         if y_velocity_limits is not None:
@@ -485,16 +488,30 @@ class SaccadeAnnotationGUI(QMainWindow):
         self.vel_thresh = saccade_results.get('vel_thresh', None)
         self.video_label = saccade_results.get('video_label', 'Unknown')
         
-        # Determine eye label from video_label (e.g., "VideoData1 (L: Left)" -> "L")
-        self.eye_label = 'Unknown'
+        # Eye label will be determined per-saccade from the DataFrame
+        # Store default eye label for display
+        self.default_eye_label = 'Unknown'
         if 'L:' in self.video_label or '(L:' in self.video_label:
-            self.eye_label = 'L'
+            self.default_eye_label = 'L'
         elif 'R:' in self.video_label or '(R:' in self.video_label:
-            self.eye_label = 'R'
+            self.default_eye_label = 'R'
         
         # Create combined saccades list with IDs
         self.saccades_list = []
         self._build_saccades_list()
+        
+        # Debug: Print summary of loaded data
+        print(f"\n📊 GUI Initialized:")
+        print(f"   Time series length: {len(self.df) if self.df is not None else 0}")
+        print(f"   Total saccades: {len(self.saccades_list)}")
+        print(f"   Total segments: {len(self.peri_saccades)}")
+        if len(self.saccades_list) > 0 and 'eye' in self.saccades_list[0]:
+            eye_counts = {}
+            for saccade in self.saccades_list:
+                eye = saccade.get('eye', 'Unknown')
+                eye_counts[eye] = eye_counts.get(eye, 0) + 1
+            print(f"   Saccades by eye: {dict(eye_counts)}")
+        print()
         
         # Build segment cache for fast lookups (saccade_id -> segment DataFrame)
         self._segment_cache: Dict[int, pd.DataFrame] = {}
@@ -506,6 +523,9 @@ class SaccadeAnnotationGUI(QMainWindow):
         
         # Current selection
         self.current_index = 0
+        
+        # Flag to prevent recursive updates
+        self._updating = False
         
         # Initialize UI
         self.init_ui()
@@ -536,6 +556,11 @@ class SaccadeAnnotationGUI(QMainWindow):
                 # Fallback: use current index if original_index not available
                 original_index = idx
             
+            # Get eye label from DataFrame (if available), otherwise use default
+            eye_label = row.get('eye', self.default_eye_label)
+            if pd.isna(eye_label):
+                eye_label = self.default_eye_label
+            
             self.saccades_list.append({
                 'saccade_id': saccade_id,
                 'original_index': original_index,  # Store for segment matching
@@ -547,6 +572,7 @@ class SaccadeAnnotationGUI(QMainWindow):
                 'rule_based_label': row.get('saccade_type', 'unknown'),
                 'rule_based_confidence': row.get('classification_confidence', 0.5),
                 'direction': row.get('saccade_direction', row.get('direction', 'unknown')),
+                'eye': eye_label,  # Store eye label (L or R)
                 'index': idx  # Current DataFrame index in all_saccades_df
             })
         
@@ -566,7 +592,22 @@ class SaccadeAnnotationGUI(QMainWindow):
                     seg_saccade_id_val = seg['saccade_id'].iloc[0]
                     if pd.notna(seg_saccade_id_val):
                         seg_saccade_id = int(seg_saccade_id_val)
+                        # Get eye label from segment (if available)
+                        seg_eye = seg.get('eye', None)
+                        if seg_eye is not None and len(seg) > 0:
+                            if 'eye' in seg.columns:
+                                seg_eye_val = seg['eye'].iloc[0]
+                                if pd.notna(seg_eye_val):
+                                    seg_eye = str(seg_eye_val)
+                        
                         # Cache by saccade_id (original index from upward/downward DataFrames)
+                        # Use composite key (eye, saccade_id) if eye is available to avoid collisions
+                        if seg_eye is not None:
+                            cache_key = (seg_eye, seg_saccade_id)
+                        else:
+                            cache_key = seg_saccade_id
+                        self._segment_cache[cache_key] = seg
+                        # Also cache by saccade_id alone for backward compatibility
                         self._segment_cache[seg_saccade_id] = seg
                         
                         # Also cache by time for primary matching
@@ -588,9 +629,13 @@ class SaccadeAnnotationGUI(QMainWindow):
                                 
                                 # Round to nearest 0.001s for matching (1ms precision)
                                 threshold_time_key = round(threshold_time, 3)
-                                # Store segment - if multiple segments have same time (shouldn't happen), last one wins
-                                # But we should verify this doesn't cause issues
-                                self._segment_time_cache[threshold_time_key] = seg
+                                # Use composite key (eye, time) if eye is available to avoid collisions
+                                if seg_eye is not None:
+                                    time_cache_key = (seg_eye, threshold_time_key)
+                                else:
+                                    time_cache_key = threshold_time_key
+                                # Store segment - if multiple segments have same time+eye, last one wins
+                                self._segment_time_cache[time_cache_key] = seg
             except (IndexError, KeyError, ValueError, AttributeError):
                 # Skip segments that can't be cached
                 continue
@@ -655,7 +700,9 @@ class SaccadeAnnotationGUI(QMainWindow):
         self.table = QTableWidget()
         self.table.setColumnCount(7)
         self.table.setHorizontalHeaderLabels(['ID', 'Eye', 'Time', 'Amplitude', 'Duration', 'Rule-Based', 'User Label'])
-        self.table.horizontalHeader().setStretchLastSection(True)
+        # Set all columns to auto-resize
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeToContents)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.SingleSelection)
         self.table.itemSelectionChanged.connect(self._on_table_selection_changed)
@@ -759,8 +806,8 @@ class SaccadeAnnotationGUI(QMainWindow):
         QShortcut(QKeySequence("4"), self, lambda: self._classify_saccade('non_saccade'))
         
         # Navigation shortcuts
-        QShortcut(QKeySequence("N"), self, self._next_saccade)
-        QShortcut(QKeySequence("P"), self, self._previous_saccade)
+        QShortcut(QKeySequence("."), self, self._next_saccade)  # Period for next
+        QShortcut(QKeySequence(","), self, self._previous_saccade)  # Comma for previous
         QShortcut(QKeySequence("S"), self, self._save_current_annotation)
         
         # Exit shortcuts
@@ -781,16 +828,27 @@ class SaccadeAnnotationGUI(QMainWindow):
             saccade_id = saccade['saccade_id']
             user_label = self.user_labels.get(saccade_id, '')
             
+            # Get eye label from saccade dict
+            eye_label = saccade.get('eye', self.default_eye_label)
+            
             # Only update items if they don't exist or need updating
             if self.table.item(i, 0) is None:
                 self.table.setItem(i, 0, QTableWidgetItem(str(saccade_id)))
-                self.table.setItem(i, 1, QTableWidgetItem(self.eye_label))
+                self.table.setItem(i, 1, QTableWidgetItem(str(eye_label)))
                 self.table.setItem(i, 2, QTableWidgetItem(f"{saccade['time']:.2f}"))
                 self.table.setItem(i, 3, QTableWidgetItem(f"{saccade['amplitude']:.1f}"))
                 self.table.setItem(i, 4, QTableWidgetItem(f"{saccade['duration']:.3f}"))
                 self.table.setItem(i, 5, QTableWidgetItem(saccade['rule_based_label']))
                 self.table.setItem(i, 6, QTableWidgetItem(''))
             else:
+                # Update eye label and user label columns if needed
+                eye_item = self.table.item(i, 1)
+                if eye_item is None:
+                    eye_item = QTableWidgetItem(str(eye_label))
+                    self.table.setItem(i, 1, eye_item)
+                else:
+                    eye_item.setText(str(eye_label))
+                
                 # Update only user label column (most likely to change)
                 user_label_item = self.table.item(i, 6)
                 if user_label_item is None:
@@ -802,13 +860,16 @@ class SaccadeAnnotationGUI(QMainWindow):
                 else:
                     user_label_item.setBackground(Qt.white)
         
-        # Select current row
+        # Select current row (only if not already selected to avoid unnecessary updates)
         if 0 <= self.current_index < len(self.saccades_list):
             try:
-                self.table.selectRow(self.current_index)
-                item = self.table.item(self.current_index, 0)
-                if item is not None:
-                    self.table.scrollToItem(item)
+                current_selection = self.table.selectedIndexes()
+                if not current_selection or current_selection[0].row() != self.current_index:
+                    self.table.selectRow(self.current_index)
+                    item = self.table.item(self.current_index, 0)
+                    if item is not None:
+                        # Scroll to item (use default behavior to prevent freezing)
+                        self.table.scrollToItem(item)
             except (IndexError, AttributeError):
                 # Silently handle selection errors
                 pass
@@ -824,6 +885,24 @@ class SaccadeAnnotationGUI(QMainWindow):
         
         stats_text = f"<b>Statistics:</b><br>"
         stats_text += f"Total: {total} | Annotated: {annotated} | Remaining: {remaining}"
+        
+        # Show breakdown by eye if available
+        if len(self.saccades_list) > 0 and 'eye' in self.saccades_list[0]:
+            eye_counts = {}
+            eye_annotated = {}
+            for saccade in self.saccades_list:
+                eye = saccade.get('eye', 'Unknown')
+                eye_counts[eye] = eye_counts.get(eye, 0) + 1
+                if saccade['saccade_id'] in self.user_labels:
+                    eye_annotated[eye] = eye_annotated.get(eye, 0) + 1
+            
+            stats_text += "<br><b>By Eye:</b> "
+            eye_stats = []
+            for eye in sorted(eye_counts.keys()):
+                count = eye_counts[eye]
+                ann = eye_annotated.get(eye, 0)
+                eye_stats.append(f"{eye}: {count} (annotated: {ann})")
+            stats_text += " | ".join(eye_stats)
         
         if annotated > 0:
             by_class = {}
@@ -887,55 +966,134 @@ class SaccadeAnnotationGUI(QMainWindow):
                 current_start_time = current_saccade.get('start_time', current_saccade.get('time', None))
             
             if current_start_time is not None and hasattr(self, '_segment_time_cache'):
+                # Get current saccade's eye label for matching
+                current_eye = current_saccade.get('eye', None)
+                
                 # Try exact match first (rounded to 1ms precision)
                 time_key = round(current_start_time, 3)
-                if time_key in self._segment_time_cache:
-                    segment = self._segment_time_cache[time_key]
-                    # Verify the match by checking the segment's saccade_id matches expected
-                    # This helps catch cases where time collisions occur
-                    if segment is not None and len(segment) > 0 and 'saccade_id' in segment.columns:
-                        seg_saccade_id = int(segment['saccade_id'].iloc[0])
-                        # If original_index is available, verify it matches
-                        if original_index is not None and seg_saccade_id != original_index:
-                            # Time match found but saccade_id doesn't match - might be a collision
-                            # Try to find a better match
-                            segment = None  # Reset to try tolerance matching
+                
+                # Try composite key (eye, time) first if eye is available
+                if current_eye is not None:
+                    composite_key = (current_eye, time_key)
+                    if composite_key in self._segment_time_cache:
+                        candidate_seg = self._segment_time_cache[composite_key]
+                        # Verify the match
+                        if candidate_seg is not None and len(candidate_seg) > 0 and 'saccade_id' in candidate_seg.columns:
+                            seg_saccade_id = int(candidate_seg['saccade_id'].iloc[0])
+                            # If original_index matches, this is a perfect match - use it immediately
+                            if original_index is not None and seg_saccade_id == original_index:
+                                segment = candidate_seg
+                            elif original_index is None:
+                                # No original_index to verify - use the time match
+                                segment = candidate_seg
+                
+                # Fallback to time-only key if composite key didn't work
+                if segment is None and time_key in self._segment_time_cache:
+                    candidate_seg = self._segment_time_cache[time_key]
+                    # Verify the match by checking the segment's saccade_id and eye match expected
+                    if candidate_seg is not None and len(candidate_seg) > 0 and 'saccade_id' in candidate_seg.columns:
+                        seg_saccade_id = int(candidate_seg['saccade_id'].iloc[0])
+                        # Check if eye matches (if available)
+                        seg_eye = None
+                        if 'eye' in candidate_seg.columns:
+                            seg_eye_val = candidate_seg['eye'].iloc[0]
+                            if pd.notna(seg_eye_val):
+                                seg_eye = str(seg_eye_val)
+                        
+                        eye_matches = (current_eye is None or seg_eye is None or current_eye == seg_eye)
+                        
+                        # If original_index matches and eye matches, this is a perfect match
+                        if original_index is not None and seg_saccade_id == original_index and eye_matches:
+                            segment = candidate_seg
+                        # If no original_index but eye matches, use the time match
+                        elif original_index is None and eye_matches:
+                            segment = candidate_seg
                 
                 # If exact match failed or was invalid, try tolerance-based matching
-                if segment is None:
+                # Only do this if we don't have a segment yet
+                if segment is None and len(self._segment_time_cache) > 0:
                     time_tolerance = 0.005  # 5ms tolerance (tighter than before)
                     best_match = None
                     best_time_diff = float('inf')
                     best_saccade_id_match = False
                     
+                    # Limit search to reasonable number of candidates to prevent freezing
+                    # Sort by time difference first to check closest matches first
+                    candidates = []
                     for cached_time_key, seg in self._segment_time_cache.items():
-                        time_diff = abs(cached_time_key - current_start_time)
+                        # Handle composite keys (eye, time) or simple time keys
+                        if isinstance(cached_time_key, tuple):
+                            cached_eye, cached_time = cached_time_key
+                            time_diff = abs(cached_time - current_start_time)
+                            # Prefer candidates from same eye
+                            eye_match = (current_eye is not None and cached_eye == current_eye)
+                        else:
+                            time_diff = abs(cached_time_key - current_start_time)
+                            eye_match = False  # Unknown eye match
+                        
                         if time_diff < time_tolerance:
-                            # Check if saccade_id matches original_index (preferred)
-                            seg_saccade_id = None
-                            if len(seg) > 0 and 'saccade_id' in seg.columns:
-                                seg_saccade_id = int(seg['saccade_id'].iloc[0])
-                            
-                            # Prefer matches where saccade_id matches original_index
-                            saccade_id_matches = (original_index is not None and 
-                                                 seg_saccade_id is not None and 
-                                                 seg_saccade_id == original_index)
-                            
-                            # Choose best match: prefer saccade_id match, then closest time
-                            if saccade_id_matches and (not best_saccade_id_match or time_diff < best_time_diff):
+                            candidates.append((time_diff, cached_time_key, seg, eye_match))
+                    
+                    # Sort by time difference (closest first), but prioritize eye matches
+                    candidates.sort(key=lambda x: (not x[3], x[0]))  # eye_match first (True before False), then time_diff
+                    
+                    # Check candidates, prioritizing saccade_id and eye matches
+                    for time_diff, cached_time_key, seg, eye_match in candidates:
+                        # Check if saccade_id matches original_index (preferred)
+                        seg_saccade_id = None
+                        if len(seg) > 0 and 'saccade_id' in seg.columns:
+                            seg_saccade_id = int(seg['saccade_id'].iloc[0])
+                        
+                        # Get segment eye
+                        seg_eye = None
+                        if len(seg) > 0 and 'eye' in seg.columns:
+                            seg_eye_val = seg['eye'].iloc[0]
+                            if pd.notna(seg_eye_val):
+                                seg_eye = str(seg_eye_val)
+                        
+                        # Check eye match
+                        eye_matches = (current_eye is None or seg_eye is None or current_eye == seg_eye)
+                        
+                        # Prefer matches where saccade_id matches original_index AND eye matches
+                        saccade_id_matches = (original_index is not None and 
+                                             seg_saccade_id is not None and 
+                                             seg_saccade_id == original_index)
+                        
+                        # If we find a perfect match (saccade_id + eye + time), use it immediately
+                        if saccade_id_matches and eye_matches:
+                            best_match = seg
+                            best_time_diff = time_diff
+                            best_saccade_id_match = True
+                            break  # Early exit - found perfect match
+                        
+                        # Otherwise, track best match (prefer eye match + saccade_id match)
+                        if not best_saccade_id_match:
+                            if eye_matches and saccade_id_matches:
+                                # Eye + saccade_id match (but not both perfect)
                                 best_match = seg
                                 best_time_diff = time_diff
-                                best_saccade_id_match = True
-                            elif not best_saccade_id_match and time_diff < best_time_diff:
+                            elif eye_matches and time_diff < best_time_diff:
+                                # Eye match, better time
+                                best_match = seg
+                                best_time_diff = time_diff
+                            elif not eye_matches and time_diff < best_time_diff:
+                                # No eye match but better time (fallback)
                                 best_match = seg
                                 best_time_diff = time_diff
                     
                     if best_match is not None:
                         segment = best_match
             
-            # FALLBACK: Try matching by original_index (should match segment's saccade_id)
+            # FALLBACK: Try matching by original_index with eye (should match segment's saccade_id)
             if segment is None and original_index is not None:
-                segment = self._segment_cache.get(original_index)
+                current_eye = current_saccade.get('eye', None)
+                # Try composite key first
+                if current_eye is not None:
+                    composite_key = (current_eye, original_index)
+                    segment = self._segment_cache.get(composite_key)
+                # Fallback to original_index alone
+                if segment is None:
+                    segment = self._segment_cache.get(original_index)
             
             # FALLBACK: Try matching by current saccade_id (current DataFrame index)
             if segment is None:
@@ -983,9 +1141,16 @@ class SaccadeAnnotationGUI(QMainWindow):
     
     def update_display(self):
         """Update all displays."""
-        self._update_table()
-        self._update_statistics()
-        self._update_plots()
+        # Prevent recursive updates
+        if self._updating:
+            return
+        self._updating = True
+        try:
+            self._update_table()
+            self._update_statistics()
+            self._update_plots()
+        finally:
+            self._updating = False
     
     def _on_table_selection_changed(self):
         """Handle table selection change."""
@@ -1060,10 +1225,20 @@ class SaccadeAnnotationGUI(QMainWindow):
         # Save any unsaved annotations before closing?
         # For now, just close the window
         self.close()
+    
+    def closeEvent(self, event):
+        """Handle window close event."""
+        global _active_gui_window
+        # Clear the active window reference when closing
+        if _active_gui_window is self:
+            _active_gui_window = None
+        # Save any unsaved annotations before closing?
+        # For now, just close the window
+        event.accept()
 
 
 def launch_annotation_gui(
-    saccade_results: Dict,
+    saccade_results: Union[Dict, Dict[str, Dict]],
     features_df: Optional[pd.DataFrame] = None,
     experiment_id: str = 'unknown',
     annotations_file_path: Union[str, Path] = 'saccade_annotations_master.csv'
@@ -1073,11 +1248,15 @@ def launch_annotation_gui(
     
     Parameters
     ----------
-    saccade_results : dict
-        Dictionary from analyze_eye_video_saccades() containing:
-        - 'df': Full time series DataFrame
-        - 'all_saccades_df': DataFrame with all saccades
-        - 'peri_saccades': List of peri-saccade segment DataFrames
+    saccade_results : dict or dict of dicts
+        Either:
+        - Single eye: Dictionary from analyze_eye_video_saccades() containing:
+          - 'df': Full time series DataFrame
+          - 'all_saccades_df': DataFrame with all saccades
+          - 'peri_saccades': List of peri-saccade segment DataFrames
+          - 'video_label': Label for the video/eye
+        - Both eyes: Dictionary with keys 'VideoData1' and/or 'VideoData2', each containing
+          the above structure
     features_df : pd.DataFrame, optional
         Features DataFrame from extract_ml_features() (for future use)
     experiment_id : str
@@ -1085,22 +1264,214 @@ def launch_annotation_gui(
     annotations_file_path : str or Path
         Path to master annotations CSV file
     """
+    global _active_gui_window
+    
     if not PYQT5_AVAILABLE:
         raise ImportError("PyQt5 not available. Install with: pip install PyQt5")
     
-    app = QApplication(sys.argv)
+    # Check if a GUI window is already open
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication(sys.argv)
+    
+    # Check if there's an active window and if it's still valid
+    if _active_gui_window is not None:
+        # Check if the window still exists and is visible
+        try:
+            if _active_gui_window.isVisible():
+                # Show prominent warning dialog
+                msg = QMessageBox()
+                msg.setIcon(QMessageBox.Warning)
+                msg.setWindowTitle("⚠️ GUI Already Open")
+                msg.setText("⚠️ WARNING: A Saccade Annotation GUI window is already open!")
+                msg.setInformativeText(
+                    "Please save your progress and close the existing GUI window before opening a new one.\n\n"
+                    "Opening multiple GUI windows can cause conflicts and data loss."
+                )
+                msg.setStandardButtons(QMessageBox.Ok)
+                msg.setDefaultButton(QMessageBox.Ok)
+                
+                # Make the dialog more prominent and ensure it's on top
+                msg.setWindowFlags(msg.windowFlags() | Qt.WindowStaysOnTopHint)
+                msg.setStyleSheet("""
+                    QMessageBox {
+                        font-size: 14px;
+                        min-width: 500px;
+                        background-color: #fff3cd;
+                    }
+                    QMessageBox QLabel {
+                        font-size: 14px;
+                        font-weight: bold;
+                        color: #856404;
+                    }
+                    QPushButton {
+                        font-size: 12px;
+                        font-weight: bold;
+                        min-width: 80px;
+                        min-height: 30px;
+                        background-color: #ffc107;
+                        color: #000;
+                    }
+                    QPushButton:hover {
+                        background-color: #ffca2c;
+                    }
+                """)
+                
+                # Bring existing window to front as well
+                try:
+                    _active_gui_window.raise_()
+                    _active_gui_window.activateWindow()
+                except (RuntimeError, AttributeError):
+                    pass
+                
+                msg.exec_()
+                return  # Don't open a new window
+        except (RuntimeError, AttributeError):
+            # Window was closed or invalid, clear the reference
+            _active_gui_window = None
+    
+    # Debug: Check what structure we received
+    print(f"\n🔍 Checking saccade_results structure...")
+    print(f"   Type: {type(saccade_results)}")
+    print(f"   Keys in saccade_results: {list(saccade_results.keys()) if isinstance(saccade_results, dict) else 'Not a dict'}")
+    
+    # Check if saccade_results contains multiple eyes (VideoData1/VideoData2 keys)
+    # or is a single eye's results
+    if isinstance(saccade_results, dict) and ('VideoData1' in saccade_results or 'VideoData2' in saccade_results):
+        # Multiple eyes - combine them
+        print(f"   ✅ Detected multiple eyes structure - combining...")
+        combined_results = _combine_eyes_saccade_results(saccade_results)
+    elif isinstance(saccade_results, dict) and 'df' in saccade_results and 'all_saccades_df' in saccade_results:
+        # Single eye's results structure
+        print(f"   ⚠️  Detected single eye structure")
+        print(f"   ℹ️  To combine both eyes, pass the full saccade_results dict with 'VideoData1' and 'VideoData2' keys")
+        print(f"   ℹ️  Example: launch_annotation_gui(saccade_results=saccade_results, ...) where saccade_results = {{'VideoData1': {...}, 'VideoData2': {...}}}")
+        combined_results = saccade_results
+    else:
+        # Unknown structure - use as is
+        print(f"   ⚠️  Unknown structure - using as is")
+        combined_results = saccade_results
     
     window = SaccadeAnnotationGUI(
-        saccade_results=saccade_results,
+        saccade_results=combined_results,
         features_df=features_df,
         experiment_id=experiment_id,
         annotations_file_path=annotations_file_path
     )
     
+    # Store reference to active window
+    _active_gui_window = window
+    
     window._setup_keyboard_shortcuts()
     window.show()
     
     sys.exit(app.exec_())
+
+
+def _combine_eyes_saccade_results(saccade_results_dict: Dict[str, Dict]) -> Dict:
+    """
+    Combine saccade results from multiple eyes (VideoData1 and VideoData2).
+    
+    Parameters
+    ----------
+    saccade_results_dict : dict
+        Dictionary with keys 'VideoData1' and/or 'VideoData2', each containing
+        saccade results from analyze_eye_video_saccades()
+    
+    Returns
+    -------
+    dict
+        Combined saccade results with:
+        - 'df': Combined time series (if both eyes have same timebase, use first)
+        - 'all_saccades_df': Combined DataFrame with all saccades from both eyes
+        - 'peri_saccades': Combined list of peri-saccade segments
+        - 'vel_thresh': Average threshold (or first available)
+        - 'video_label': Combined label
+    """
+    combined = {
+        'df': None,
+        'all_saccades_df': pd.DataFrame(),
+        'peri_saccades': [],
+        'vel_thresh': None,
+        'video_label': 'Combined'
+    }
+    
+    eye_results = []
+    if 'VideoData1' in saccade_results_dict:
+        eye_results.append(('VideoData1', saccade_results_dict['VideoData1']))
+    if 'VideoData2' in saccade_results_dict:
+        eye_results.append(('VideoData2', saccade_results_dict['VideoData2']))
+    
+    if len(eye_results) == 0:
+        raise ValueError("No valid eye data found in saccade_results_dict")
+    
+    # Combine DataFrames and segments
+    all_saccades_dfs = []
+    all_peri_saccades = []
+    
+    for eye_key, eye_data in eye_results:
+        # Get eye label
+        video_label = eye_data.get('video_label', eye_key)
+        eye_label = 'Unknown'
+        if 'L:' in video_label or '(L:' in video_label:
+            eye_label = 'L'
+        elif 'R:' in video_label or '(R:' in video_label:
+            eye_label = 'R'
+        
+        # Add eye label column to saccades DataFrame
+        # IMPORTANT: Preserve original_index for segment matching
+        if 'all_saccades_df' in eye_data and len(eye_data['all_saccades_df']) > 0:
+            saccades_df = eye_data['all_saccades_df'].copy()
+            saccades_df['eye'] = eye_label
+            saccades_df['eye_source'] = eye_key
+            # Ensure original_index exists (for segment matching)
+            if 'original_index' not in saccades_df.columns:
+                # Use current index as original_index if not present
+                saccades_df['original_index'] = saccades_df.index
+            all_saccades_dfs.append(saccades_df)
+        
+        # Add segments with eye tracking
+        if 'peri_saccades' in eye_data:
+            for seg in eye_data['peri_saccades']:
+                if len(seg) > 0:
+                    seg_copy = seg.copy()
+                    # Add eye label to segment as a column (DataFrame, not dict)
+                    seg_copy['eye'] = eye_label
+                    seg_copy['eye_source'] = eye_key
+                    all_peri_saccades.append(seg_copy)
+        
+        # Use first eye's time series and threshold (assuming same timebase)
+        if combined['df'] is None:
+            combined['df'] = eye_data.get('df')
+        if combined['vel_thresh'] is None:
+            combined['vel_thresh'] = eye_data.get('vel_thresh')
+    
+    # Combine all saccades DataFrames
+    if len(all_saccades_dfs) > 0:
+        # Concatenate but preserve original_index for segment matching
+        combined['all_saccades_df'] = pd.concat(all_saccades_dfs, ignore_index=True)
+        # Sort by time first
+        if 'time' in combined['all_saccades_df'].columns:
+            combined['all_saccades_df'] = combined['all_saccades_df'].sort_values('time').reset_index(drop=True)
+        # Now reset index to create new sequential IDs (this becomes the new saccade_id)
+        # But keep original_index for segment matching
+        # The original_index should match the segment's saccade_id from the original eye's DataFrame
+    
+    combined['peri_saccades'] = all_peri_saccades
+    
+    # Create combined label
+    eye_labels = [eye_data.get('video_label', eye_key) for eye_key, eye_data in eye_results]
+    combined['video_label'] = ' | '.join(eye_labels)
+    
+    # Debug output
+    print(f"✅ Combined {len(eye_results)} eye(s): {[eye_key for eye_key, _ in eye_results]}")
+    print(f"   Total saccades: {len(combined['all_saccades_df'])}")
+    print(f"   Total segments: {len(combined['peri_saccades'])}")
+    if 'eye' in combined['all_saccades_df'].columns:
+        eye_counts = combined['all_saccades_df']['eye'].value_counts()
+        print(f"   By eye: {dict(eye_counts)}")
+    
+    return combined
 
 
 if __name__ == '__main__':
