@@ -13,8 +13,6 @@
 #     name: python3
 # ---
 
-# %%
-
 # %% [markdown]
 # ## Setup
 
