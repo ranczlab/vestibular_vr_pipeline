@@ -8,7 +8,7 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.18.1
 #   kernelspec:
-#     display_name: aeon2
+#     display_name: aeon
 #     language: python
 #     name: python3
 # ---
@@ -66,8 +66,6 @@ except ImportError:
 # 5. Use interactive dropdowns for plotting
 #
 # **Output:**
-# - Individual animal CSV files: Saved in `animal_averaged_data/` directory with mean and SEM for each animal
-# - Cohort-level CSV file: Saved at cohort level with all animals (can be merged across cohorts)
 # - Grand averages CSV: Saved with grand averages and SEM across all selected animals
 
 # %%
@@ -88,14 +86,14 @@ COHORT_OPTIONS = {
 }
 
 # Select cohort
-cohort_identifier = "Cohort3"  # Options: "Cohort1" or "Cohort31
+cohort_identifier = "Cohort1"  # Options: "Cohort1" or "Cohort31
 
 # Select which animals to process (subset of the cohort's available mice)
 # Leave empty list [] to process all mice in the cohort
-selected_mice = []  # Example: ['B6J2717', 'B6J2718'] or [] for all
+selected_mice = ['B6J2717', 'B6J2718', 'B6J2719', 'B6J2721', 'B6J2722']  # Example: ['B6J2717', 'B6J2718'] or [] for all
 
 # Event name for CSV file loading
-event_name = '_Apply halt_2s_right_turns_baselined_data.csv'  # Options: '_Apply halt_2s_baselined_data.csv','_Apply halt_2s_right_turns_baselined_data', '_Apply halt_2s_left_turns_baselined_data', '_No halt_right_turns_baselined_data.csv', '_No halt_left_turns_baselined_data.csv'
+event_name = '_No halt_baselined_data.csv'  # Options: '_Apply halt_2s_baselined_data.csv','_Apply halt_2s_right_turns_baselined_data', '_Apply halt_2s_left_turns_baselined_data', '_No halt_right_turns_baselined_data.csv', '_No halt_left_turns_baselined_data.csv'
 
 # Data columns to analyze
 selected_columns = [
@@ -112,21 +110,21 @@ columns_to_plot = [
 
 # Save options
 SAVE_PICKLE = False  # Save results as pickle file (deprecated - use SAVE_ANIMAL_CSV instead)
-SAVE_ANIMAL_CSV = False  # Save averaged mismatch aligned data for each animal as CSV
-SAVE_CSV = False      # Save grand averages with SEM as CSV file
+#FIXME THIS IS REGENERATING SOMETHING BUT IT DOES NOT MAKE SENSE! SAVE_ANIMAL_CSV = False  # Save averaged mismatch aligned data for each animal as CSV
+SAVE_CSV = True      # Save grand averages with SEM as CSV file
 
-GENERATE_PLOTS = True  # Generate plots
+#FIXME WE WILL NOT USE THESE PLOTS FOR NOW!!! GENERATE_PLOTS = True  # Generate plots
 
 # Pre/post comparison plotting options
-PLOT_PREPOST_FROM_RESULTS = False  # Generate pre/post plots from freshly computed results
-LOAD_EXISTING_PREPOST_CSV = True  # Load a previously created cohort_aligned_data_analysis.csv
-EXISTING_PREPOST_CSV_PATH = Path('/Users/nora/Desktop/for_poster/cohort_3/cohort_aligned_data_analysis.csv').expanduser()
-PREPOST_SAVE_DIR = None  # Optional custom directory to save pre/post plots
+# FIXME WE WILL NOT USE THESE PLOTS FOR NOW!!! PLOT_PREPOST_FROM_RESULTS = True  # Generate pre/post plots from freshly computed results
+# FIXME NEED TO VERIFY WHAT IS GOING ON LOAD_EXISTING_PREPOST_CSV = False  # Load a previously created cohort_aligned_data_analysis.csv
+# FIXME VERIFY WHAT IS GOING ONEXISTING_PREPOST_CSV_PATH = Path('/Users/nora/Desktop/for_poster/cohort_3/cohort_aligned_data_analysis.csv').expanduser()
+# PREPOST_SAVE_DIR = None  # Optional custom directory to save pre/post plots
 
 # Data directories (add your paths here)
 DATA_DIRS = [
     # Path('/home/ikharitonov/RANCZLAB-NAS/data/ONIX/20241125_Cohort1_rotation/Visual_mismatch_day4').expanduser(),
-    Path('/home/ikharitonov/RANCZLAB-NAS/data/ONIX/20250409_Cohort3_rotation/Visual_mismatch_day3').expanduser(),
+    Path('/Volumes/sambashare/data/ONIX/20241125_Cohort1_rotation/Visual_mismatch_day3').expanduser(),
     # Path('/Volumes/RanczLab2/20250409_Cohort3_rotation/Vestibular_mismatch_day1').expanduser(),
     # Add more directories as needed
 ]
@@ -388,256 +386,256 @@ def analyze_mice_data(loaded_data, selected_columns, main_data_dir):
     
     return results
 
-
 # %%
-# RUN ANALYSIS
-#---------------------------------------------------------------------------------------------------#
+# FIXME why this?# RUN ANALYSIS
+# #---------------------------------------------------------------------------------------------------#
 
-def save_animal_csv_files(mean_data_per_mouse, sem_data_per_mouse, mouse_to_data_path, event_name, experiment_day):
-    """
-    Save averaged mismatch aligned data for each animal as individual CSV files.
-    Files are saved in each animal's aligned_data folder (same location as SANDBOX 2 output).
+# def save_animal_csv_files(mean_data_per_mouse, sem_data_per_mouse, mouse_to_data_path, event_name, experiment_day):
+#     """
+#     Save averaged mismatch aligned data for each animal as individual CSV files.
+#     Files are saved in each animal's aligned_data folder (same location as SANDBOX 2 output).
     
-    Parameters:
-    -----------
-    mean_data_per_mouse : dict
-        Dictionary with mouse names as keys and DataFrames with mean data as values
-    sem_data_per_mouse : dict
-        Dictionary with mouse names as keys and DataFrames with SEM data as values
-    mouse_to_data_path : dict
-        Dictionary mapping mouse names to their data_path (aligned_data folder)
-    event_name : str
-        Event name for the analysis (used in filename)
-    experiment_day : str
-        Experiment day identifier (e.g., "Visual_mismatch_day3")
-    """
-    print(f"\n{'='*60}")
-    print(f"SAVING ANIMAL CSV FILES")
-    print(f"{'='*60}")
+#     Parameters:
+#     -----------
+#     mean_data_per_mouse : dict
+#         Dictionary with mouse names as keys and DataFrames with mean data as values
+#     sem_data_per_mouse : dict
+#         Dictionary with mouse names as keys and DataFrames with SEM data as values
+#     mouse_to_data_path : dict
+#         Dictionary mapping mouse names to their data_path (aligned_data folder)
+#     event_name : str
+#         Event name for the analysis (used in filename)
+#     experiment_day : str
+#         Experiment day identifier (e.g., "Visual_mismatch_day3")
+#     """
+#     print(f"\n{'='*60}")
+#     print(f"SAVING ANIMAL CSV FILES")
+#     print(f"{'='*60}")
     
-    for mouse_name, mean_df in mean_data_per_mouse.items():
-        if mouse_name not in sem_data_per_mouse:
-            print(f"⚠️  No SEM data for {mouse_name}, skipping...")
-            continue
+#     for mouse_name, mean_df in mean_data_per_mouse.items():
+#         if mouse_name not in sem_data_per_mouse:
+#             print(f"⚠️  No SEM data for {mouse_name}, skipping...")
+#             continue
         
-        if mouse_name not in mouse_to_data_path:
-            print(f"⚠️  No data_path found for {mouse_name}, skipping...")
-            continue
+#         if mouse_name not in mouse_to_data_path:
+#             print(f"⚠️  No data_path found for {mouse_name}, skipping...")
+#             continue
         
-        # Get the aligned_data folder for this mouse (same as SANDBOX 2)
-        animal_aligned_data_dir = mouse_to_data_path[mouse_name]
+#         # Get the aligned_data folder for this mouse (same as SANDBOX 2)
+#         animal_aligned_data_dir = mouse_to_data_path[mouse_name]
         
-        # Ensure the directory exists
-        animal_aligned_data_dir.mkdir(parents=True, exist_ok=True)
+#         # Ensure the directory exists
+#         animal_aligned_data_dir.mkdir(parents=True, exist_ok=True)
         
-        sem_df = sem_data_per_mouse[mouse_name]
+#         sem_df = sem_data_per_mouse[mouse_name]
         
-        # Create a combined DataFrame with mean and SEM
-        combined_df = mean_df.copy()
-        combined_df.index.name = 'Time (s)'
-        combined_df = combined_df.reset_index()
+#         # Create a combined DataFrame with mean and SEM
+#         combined_df = mean_df.copy()
+#         combined_df.index.name = 'Time (s)'
+#         combined_df = combined_df.reset_index()
         
-        # Add SEM columns
-        for col in sem_df.columns:
-            if col in combined_df.columns:
-                combined_df[f'{col}_SEM'] = sem_df[col].values
+#         # Add SEM columns
+#         for col in sem_df.columns:
+#             if col in combined_df.columns:
+#                 combined_df[f'{col}_SEM'] = sem_df[col].values
         
-        # Generate filename - use naming convention that distinguishes from SANDBOX 2
-        # SANDBOX 2 uses: {mouse_name}_{event_name}_baselined_data.csv
-        # We use: {mouse_name}_{event_name}_mean_sem_averaged.csv
-        # Remove .csv extension and _baselined_data suffix if present
-        event_name_clean = event_name.replace('.csv', '')
-        if event_name_clean.endswith('_baselined_data'):
-            event_name_clean = event_name_clean[:-len('_baselined_data')]
-        csv_filename = animal_aligned_data_dir / f"{mouse_name}{event_name_clean}_mean_sem_averaged.csv"
+#         # Generate filename - use naming convention that distinguishes from SANDBOX 2
+#         # SANDBOX 2 uses: {mouse_name}_{event_name}_baselined_data.csv
+#         # We use: {mouse_name}_{event_name}_mean_sem_averaged.csv
+#         # Remove .csv extension and _baselined_data suffix if present
+#         event_name_clean = event_name.replace('.csv', '')
+#         if event_name_clean.endswith('_baselined_data'):
+#             event_name_clean = event_name_clean[:-len('_baselined_data')]
+#         csv_filename = animal_aligned_data_dir / f"{mouse_name}{event_name_clean}_mean_sem_averaged.csv"
         
-        # Save to CSV
-        combined_df.to_csv(csv_filename, index=False)
-        print(f"✅ Saved: {csv_filename} ({len(combined_df)} rows, {len(combined_df.columns)} columns)")
+#         # Save to CSV
+#         combined_df.to_csv(csv_filename, index=False)
+#         print(f"✅ Saved: {csv_filename} ({len(combined_df)} rows, {len(combined_df.columns)} columns)")
     
-    print(f"\n✅ Saved {len(mean_data_per_mouse)} animal CSV files to their respective aligned_data folders")
-
-
-def save_cohort_csv_file(mean_data_per_mouse, sem_data_per_mouse, selected_columns, main_data_dir, 
-                         event_name, experiment_day, cohort_identifier):
-    """
-    Save cohort-level CSV file with pre/post averages and SEMs for each animal (similar to cohort behavioral analysis format).
-    This creates a single CSV file that can be merged across cohorts.
-    
-    Parameters:
-    -----------
-    mean_data_per_mouse : dict
-        Dictionary with mouse names as keys and DataFrames with mean data as values
-    sem_data_per_mouse : dict
-        Dictionary with mouse names as keys and DataFrames with SEM data as values
-    selected_columns : list
-        List of column names to analyze (excluding 'Time (s)')
-    main_data_dir : Path
-        Main data directory (experiment day level)
-    event_name : str
-        Event name for the analysis
-    experiment_day : str
-        Experiment day identifier (e.g., "Visual_mismatch_day3")
-    cohort_identifier : str
-        Cohort identifier (e.g., "Cohort1", "Cohort3")
-    """
-    # Navigate to cohort level (2 levels above _processedData if needed)
-    # The main_data_dir should already be at the experiment day level
-    # We need to go up to the cohort level
-    cohort_dir = main_data_dir.parent if ('_processedData' in str(main_data_dir) or 
-                                          'Visual_mismatch' in str(main_data_dir) or 
-                                          'Vestibular_mismatch' in str(main_data_dir)) else main_data_dir
-    
-    # Create cohort CSV path (similar to cohort_behavioral_analysis.csv)
-    cohort_csv_path = cohort_dir / "cohort_aligned_data_analysis.csv"
-    
-    print(f"\n{'='*60}")
-    print(f"SAVING COHORT-LEVEL CSV")
-    print(f"{'='*60}")
-    print(f"Cohort CSV path: {cohort_csv_path}")
-    
-    # Define pre and post time windows
-    pre_time = (-2, 0)
-    post_time = (0, 2)
-    
-    # Collect data for each mouse
-    cohort_data = []
-    
-    for mouse_name, mean_df in mean_data_per_mouse.items():
-        if mouse_name not in sem_data_per_mouse:
-            print(f"⚠️  No SEM data for {mouse_name}, skipping...")
-            continue
-        
-        sem_df = sem_data_per_mouse[mouse_name]
-        
-        # Create row data with Animal_ID and Experiment_Day as first columns
-        row_data = {
-            'Animal_ID': mouse_name,
-            'Experiment_Day': experiment_day
-        }
-        
-        # For each selected column, calculate pre and post averages and SEMs
-        for col in selected_columns:
-            if col == 'Time (s)':
-                continue
-            
-            if col not in mean_df.columns or col not in sem_df.columns:
-                print(f"⚠️  Column {col} not found for {mouse_name}, skipping...")
-                continue
-            
-            # Get pre-time window data
-            pre_mask = (mean_df.index >= pre_time[0]) & (mean_df.index < pre_time[1])
-            if pre_mask.any():
-                pre_mean = mean_df.loc[pre_mask, col].mean()
-                pre_sem = sem_df.loc[pre_mask, col].mean()  # Average SEM across pre window
-            else:
-                pre_mean = np.nan
-                pre_sem = np.nan
-            
-            # Get post-time window data
-            post_mask = (mean_df.index >= post_time[0]) & (mean_df.index <= post_time[1])
-            if post_mask.any():
-                post_mean = mean_df.loc[post_mask, col].mean()
-                post_sem = sem_df.loc[post_mask, col].mean()  # Average SEM across post window
-            else:
-                post_mean = np.nan
-                post_sem = np.nan
-            
-            # Convert velocity to cm/s if column is a velocity column
-            if 'Velocity' in col or 'velocity' in col.lower():
-                if not pd.isna(pre_mean):
-                    pre_mean = pre_mean * 100  # Convert m/s to cm/s
-                if not pd.isna(pre_sem):
-                    pre_sem = pre_sem * 100
-                if not pd.isna(post_mean):
-                    post_mean = post_mean * 100
-                if not pd.isna(post_sem):
-                    post_sem = post_sem * 100
-            
-            # Add columns for this metric: pre_mean, pre_sem, post_mean, post_sem
-            row_data[f'{col}_pre_mean'] = pre_mean
-            row_data[f'{col}_pre_sem'] = pre_sem
-            row_data[f'{col}_post_mean'] = post_mean
-            row_data[f'{col}_post_sem'] = post_sem
-        
-        cohort_data.append(row_data)
-    
-    # Convert to DataFrame
-    cohort_df = pd.DataFrame(cohort_data)
-    
-    # Ensure Animal_ID and Experiment_Day are first columns
-    if len(cohort_df) > 0:
-        cols = ['Animal_ID', 'Experiment_Day'] + [col for col in cohort_df.columns 
-                                                   if col not in ['Animal_ID', 'Experiment_Day']]
-        cohort_df = cohort_df[cols]
-    
-    # Check if file exists and append or create new (similar to behavioral analyzer)
-    if cohort_csv_path.exists():
-        print(f"📄 Existing cohort CSV found, loading...")
-        existing_df = pd.read_csv(cohort_csv_path)
-        
-        # Check if columns match
-        existing_cols = set(existing_df.columns)
-        new_cols = set(cohort_df.columns)
-        
-        if existing_cols != new_cols:
-            print(f"⚠️  Column mismatch detected:")
-            print(f"   Columns in existing file: {sorted(existing_cols)}")
-            print(f"   Columns in new data: {sorted(new_cols)}")
-            
-            # Add missing columns to existing data
-            for col in new_cols - existing_cols:
-                existing_df[col] = np.nan
-                print(f"   ➕ Added missing column: {col}")
-            
-            # Add missing columns to new data
-            for col in existing_cols - new_cols:
-                cohort_df[col] = np.nan
-                print(f"   ➕ Added missing column to new data: {col}")
-        
-        # Remove rows with matching Animal_ID and Experiment_Day (to avoid duplicates)
-        for _, row in cohort_df.iterrows():
-            animal_id = row['Animal_ID']
-            exp_day = row['Experiment_Day']
-            
-            mask = (existing_df['Animal_ID'] == animal_id) & (existing_df['Experiment_Day'] == exp_day)
-            if mask.any():
-                print(f"   🔄 Overwriting existing data for {animal_id} - {exp_day}")
-                existing_df = existing_df[~mask]
-        
-        # Append new data
-        combined_df = pd.concat([existing_df, cohort_df], ignore_index=True)
-        
-        # Sort by Animal_ID and Experiment_Day
-        combined_df = combined_df.sort_values(['Animal_ID', 'Experiment_Day']).reset_index(drop=True)
-        
-        print(f"   ✅ Appended {len(cohort_df)} rows to existing data")
-        print(f"   📊 Total rows in cohort CSV: {len(combined_df)}")
-        
-    else:
-        print(f"📄 Creating new cohort CSV file...")
-        combined_df = cohort_df
-        print(f"   ✅ Created new file with {len(combined_df)} rows")
-    
-    # Save to CSV
-    combined_df.to_csv(cohort_csv_path, index=False)
-    print(f"✅ Saved cohort CSV: {cohort_csv_path}")
-    print(f"   Columns: {list(combined_df.columns)}")
-    if len(combined_df) > 0:
-        print(f"   Animals: {combined_df['Animal_ID'].unique().tolist()}")
-    print(f"{'='*60}\n")
+#     print(f"\n✅ Saved {len(mean_data_per_mouse)} animal CSV files to their respective aligned_data folders")
 
 
-def save_results(results, filename='results.pkl'):
-    """Save results to a pickle file (deprecated - use CSV functions instead)."""
-    with open(filename, 'wb') as f:
-        pickle.dump(results, f)
-    print(f"✅ Results saved to {filename}")
+# def save_cohort_csv_file(mean_data_per_mouse, sem_data_per_mouse, selected_columns, main_data_dir, 
+#                          event_name, experiment_day, cohort_identifier):
+#     """
+#     Save cohort-level CSV file with pre/post averages and SEMs for each animal (similar to cohort behavioral analysis format).
+#     This creates a single CSV file that can be merged across cohorts.
+    
+#     Parameters:
+#     -----------
+#     mean_data_per_mouse : dict
+#         Dictionary with mouse names as keys and DataFrames with mean data as values
+#     sem_data_per_mouse : dict
+#         Dictionary with mouse names as keys and DataFrames with SEM data as values
+#     selected_columns : list
+#         List of column names to analyze (excluding 'Time (s)')
+#     main_data_dir : Path
+#         Main data directory (experiment day level)
+#     event_name : str
+#         Event name for the analysis
+#     experiment_day : str
+#         Experiment day identifier (e.g., "Visual_mismatch_day3")
+#     cohort_identifier : str
+#         Cohort identifier (e.g., "Cohort1", "Cohort3")
+#     """
+#     # Navigate to cohort level (2 levels above _processedData if needed)
+#     # The main_data_dir should already be at the experiment day level
+#     # We need to go up to the cohort level
+#     cohort_dir = main_data_dir.parent if ('_processedData' in str(main_data_dir) or 
+#                                           'Visual_mismatch' in str(main_data_dir) or 
+#                                           'Vestibular_mismatch' in str(main_data_dir)) else main_data_dir
+    
+#     # Create cohort CSV path (similar to cohort_behavioral_analysis.csv)
+#     cohort_csv_path = cohort_dir / "cohort_aligned_data_analysis.csv"
+    
+#     print(f"\n{'='*60}")
+#     print(f"SAVING COHORT-LEVEL CSV")
+#     print(f"{'='*60}")
+#     print(f"Cohort CSV path: {cohort_csv_path}")
+    
+#     # Define pre and post time windows
+#     pre_time = (-2, 0)
+#     post_time = (0, 2)
+    
+#     # Collect data for each mouse
+#     cohort_data = []
+    
+#     for mouse_name, mean_df in mean_data_per_mouse.items():
+#         if mouse_name not in sem_data_per_mouse:
+#             print(f"⚠️  No SEM data for {mouse_name}, skipping...")
+#             continue
+        
+#         sem_df = sem_data_per_mouse[mouse_name]
+        
+#         # Create row data with Animal_ID and Experiment_Day as first columns
+#         row_data = {
+#             'Animal_ID': mouse_name,
+#             'Experiment_Day': experiment_day
+#         }
+        
+#         # For each selected column, calculate pre and post averages and SEMs
+#         for col in selected_columns:
+#             if col == 'Time (s)':
+#                 continue
+            
+#             if col not in mean_df.columns or col not in sem_df.columns:
+#                 print(f"⚠️  Column {col} not found for {mouse_name}, skipping...")
+#                 continue
+            
+#             # Get pre-time window data
+#             pre_mask = (mean_df.index >= pre_time[0]) & (mean_df.index < pre_time[1])
+#             if pre_mask.any():
+#                 pre_mean = mean_df.loc[pre_mask, col].mean()
+#                 pre_sem = sem_df.loc[pre_mask, col].mean()  # Average SEM across pre window
+#             else:
+#                 pre_mean = np.nan
+#                 pre_sem = np.nan
+            
+#             # Get post-time window data
+#             post_mask = (mean_df.index >= post_time[0]) & (mean_df.index <= post_time[1])
+#             if post_mask.any():
+#                 post_mean = mean_df.loc[post_mask, col].mean()
+#                 post_sem = sem_df.loc[post_mask, col].mean()  # Average SEM across post window
+#             else:
+#                 post_mean = np.nan
+#                 post_sem = np.nan
+            
+#             # Convert velocity to cm/s if column is a velocity column
+#             if 'Velocity' in col or 'velocity' in col.lower():
+#                 if not pd.isna(pre_mean):
+#                     pre_mean = pre_mean * 100  # Convert m/s to cm/s
+#                 if not pd.isna(pre_sem):
+#                     pre_sem = pre_sem * 100
+#                 if not pd.isna(post_mean):
+#                     post_mean = post_mean * 100
+#                 if not pd.isna(post_sem):
+#                     post_sem = post_sem * 100
+            
+#             # Add columns for this metric: pre_mean, pre_sem, post_mean, post_sem
+#             row_data[f'{col}_pre_mean'] = pre_mean
+#             row_data[f'{col}_pre_sem'] = pre_sem
+#             row_data[f'{col}_post_mean'] = post_mean
+#             row_data[f'{col}_post_sem'] = post_sem
+        
+#         cohort_data.append(row_data)
+    
+#     # Convert to DataFrame
+#     cohort_df = pd.DataFrame(cohort_data)
+    
+#     # Ensure Animal_ID and Experiment_Day are first columns
+#     if len(cohort_df) > 0:
+#         cols = ['Animal_ID', 'Experiment_Day'] + [col for col in cohort_df.columns 
+#                                                    if col not in ['Animal_ID', 'Experiment_Day']]
+#         cohort_df = cohort_df[cols]
+    
+#     # Check if file exists and append or create new (similar to behavioral analyzer)
+#     if cohort_csv_path.exists():
+#         print(f"📄 Existing cohort CSV found, loading...")
+#         existing_df = pd.read_csv(cohort_csv_path)
+        
+#         # Check if columns match
+#         existing_cols = set(existing_df.columns)
+#         new_cols = set(cohort_df.columns)
+        
+#         if existing_cols != new_cols:
+#             print(f"⚠️  Column mismatch detected:")
+#             print(f"   Columns in existing file: {sorted(existing_cols)}")
+#             print(f"   Columns in new data: {sorted(new_cols)}")
+            
+#             # Add missing columns to existing data
+#             for col in new_cols - existing_cols:
+#                 existing_df[col] = np.nan
+#                 print(f"   ➕ Added missing column: {col}")
+            
+#             # Add missing columns to new data
+#             for col in existing_cols - new_cols:
+#                 cohort_df[col] = np.nan
+#                 print(f"   ➕ Added missing column to new data: {col}")
+        
+#         # Remove rows with matching Animal_ID and Experiment_Day (to avoid duplicates)
+#         for _, row in cohort_df.iterrows():
+#             animal_id = row['Animal_ID']
+#             exp_day = row['Experiment_Day']
+            
+#             mask = (existing_df['Animal_ID'] == animal_id) & (existing_df['Experiment_Day'] == exp_day)
+#             if mask.any():
+#                 print(f"   🔄 Overwriting existing data for {animal_id} - {exp_day}")
+#                 existing_df = existing_df[~mask]
+        
+#         # Append new data
+#         combined_df = pd.concat([existing_df, cohort_df], ignore_index=True)
+        
+#         # Sort by Animal_ID and Experiment_Day
+#         combined_df = combined_df.sort_values(['Animal_ID', 'Experiment_Day']).reset_index(drop=True)
+        
+#         print(f"   ✅ Appended {len(cohort_df)} rows to existing data")
+#         print(f"   📊 Total rows in cohort CSV: {len(combined_df)}")
+        
+#     else:
+#         print(f"📄 Creating new cohort CSV file...")
+#         combined_df = cohort_df
+#         print(f"   ✅ Created new file with {len(combined_df)} rows")
+    
+#     # Save to CSV
+#     combined_df.to_csv(cohort_csv_path, index=False)
+#     print(f"✅ Saved cohort CSV: {cohort_csv_path}")
+#     print(f"   Columns: {list(combined_df.columns)}")
+#     if len(combined_df) > 0:
+#         print(f"   Animals: {combined_df['Animal_ID'].unique().tolist()}")
+#     print(f"{'='*60}\n")
 
-# Determine main data directory
-main_data_dir = DATA_DIRS[0] if DATA_DIRS else Path.cwd()
 
-# Run analysis
+# def save_results(results, filename='results.pkl'):
+#     """Save results to a pickle file (deprecated - use CSV functions instead)."""
+#     with open(filename, 'wb') as f:
+#         pickle.dump(results, f)
+#     print(f"✅ Results saved to {filename}")
+
+# Determine main data directory (first existing entry in DATA_DIRS, otherwise current working dir)
+_existing_data_dirs = [Path(p) for p in DATA_DIRS if Path(p).exists()]
+main_data_dir = _existing_data_dirs[0] if _existing_data_dirs else Path.cwd()
+
+# Run analysis and keep results available for later cells/plots
 if loaded_data:
     results = analyze_mice_data(loaded_data, selected_columns, main_data_dir)
 else:
@@ -645,726 +643,724 @@ else:
     results = None
 
 # %%
-# SAVE RESULTS
-#---------------------------------------------------------------------------------------------------#
+# # FIXME why this? SAVE RESULTS
+# #---------------------------------------------------------------------------------------------------#
 
-# Extract experiment day from main_data_dir path
-# The experiment day is typically the directory name (e.g., "Visual_mismatch_day3")
-experiment_day = main_data_dir.name
+# # Extract experiment day from main_data_dir path
+# # The experiment day is typically the directory name (e.g., "Visual_mismatch_day3")
+# experiment_day = main_data_dir.name
 
-if results and SAVE_ANIMAL_CSV:
-    # Save individual animal CSV files
-    save_animal_csv_files(
-        results['mean_data_per_mouse'],
-        results['sem_data_per_mouse'],
-        results['mouse_to_data_path'],
-        event_name,
-        experiment_day
-    )
+# if results and SAVE_ANIMAL_CSV:
+#     # Save individual animal CSV files
+#     save_animal_csv_files(
+#         results['mean_data_per_mouse'],
+#         results['sem_data_per_mouse'],
+#         results['mouse_to_data_path'],
+#         event_name,
+#         experiment_day
+#     )
     
-    # Save cohort-level CSV file with pre/post averages and SEMs
-    save_cohort_csv_file(
-        results['mean_data_per_mouse'],
-        results['sem_data_per_mouse'],
-        selected_columns,
-        main_data_dir,
-        event_name,
-        experiment_day,
-        cohort_identifier
-    )
-else:
-    print("⏭️  Skipping animal CSV save (SAVE_ANIMAL_CSV=False or no results)")
+#     # Save cohort-level CSV file with pre/post averages and SEMs
+#     save_cohort_csv_file(
+#         results['mean_data_per_mouse'],
+#         results['sem_data_per_mouse'],
+#         selected_columns,
+#         main_data_dir,
+#         event_name,
+#         experiment_day,
+#         cohort_identifier
+#     )
+# else:
+#     print("⏭️  Skipping animal CSV save (SAVE_ANIMAL_CSV=False or no results)")
 
-# Legacy pickle save (deprecated)
-if results and SAVE_PICKLE:
-    # Generate unique filename
-    vmm_event_name = main_data_dir.name
-    pickle_filename = f"{cohort_identifier}_{vmm_event_name}{event_name.replace('.csv', '')}.pkl"
-    save_results(results, pickle_filename)
-    print("⚠️  Note: Pickle saving is deprecated. Use SAVE_ANIMAL_CSV instead.")
-
+# # Legacy pickle save (deprecated)
+# if results and SAVE_PICKLE:
+#     # Generate unique filename
+#     vmm_event_name = main_data_dir.name
+#     pickle_filename = f"{cohort_identifier}_{vmm_event_name}{event_name.replace('.csv', '')}.pkl"
+#     save_results(results, pickle_filename)
+#     print("⚠️  Note: Pickle saving is deprecated. Use SAVE_ANIMAL_CSV instead.")
 
 # %%
-# PLOTTING FUNCTIONS
-#---------------------------------------------------------------------------------------------------#
+# FIXME not needed # PLOTTING FUNCTIONS
+# #---------------------------------------------------------------------------------------------------#
 
-def plot_time_series_and_scatter(results, columns_to_plot, selected_mice, main_data_dir, event_name):
-    """
-    Plot time series and pre/post comparison plots for each column.
-    Includes paired t-test and converts velocity to cm/s.
-    Uses gnuplot2 color palette for consistent mouse colors.
-    """
-    # Plot properties
-    plt.rcParams.update({
-        'font.size': 10,
-        'font.family': 'sans-serif',
-        'font.sans-serif': ['DejaVu Sans'],
-        'axes.titlesize': 10,
-        'axes.labelsize': 10,
-        'legend.fontsize': 8,
-        'xtick.labelsize': 10,
-        'ytick.labelsize': 10
-    })
+# def plot_time_series_and_scatter(results, columns_to_plot, selected_mice, main_data_dir, event_name):
+#     """
+#     Plot time series and pre/post comparison plots for each column.
+#     Includes paired t-test and converts velocity to cm/s.
+#     Uses gnuplot2 color palette for consistent mouse colors.
+#     """
+#     # Plot properties
+#     plt.rcParams.update({
+#         'font.size': 10,
+#         'font.family': 'sans-serif',
+#         'font.sans-serif': ['DejaVu Sans'],
+#         'axes.titlesize': 10,
+#         'axes.labelsize': 10,
+#         'legend.fontsize': 8,
+#         'xtick.labelsize': 10,
+#         'ytick.labelsize': 10
+#     })
     
-    # Generate color palette using gnuplot2 (same as cohort running analysis)
-    # Get ALL unique mice from results (not just selected) to ensure consistent color assignment
-    # This matches the approach in cohort running analysis which uses all mice from the dataframe
-    all_mice_in_results = sorted(results.get('mean_data_per_mouse', {}).keys())
-    if not all_mice_in_results:
-        # Fallback: use selected_mice if no results yet
-        all_mice_in_results = sorted(selected_mice)
-    n_colors = len(all_mice_in_results) if all_mice_in_results else len(selected_mice)
-    # Use gnuplot2 color palette (similar to gnuplot's default palette)
-    # Avoid the white end (value 1.0) by using 0 to 0.95 instead of 0 to 1
-    if n_colors > 0:
-        colors = plt.cm.gnuplot2(np.linspace(0, 0.95, n_colors))
-        mouse_colors = {mouse: colors[i] for i, mouse in enumerate(all_mice_in_results)}
-    else:
-        mouse_colors = {}
-    # Add any missing mice from selected_mice with a default color
-    for mouse in selected_mice:
-        if mouse not in mouse_colors:
-            # Use a default color if mouse not in results
-            mouse_colors[mouse] = 'gray'
+#     # Generate color palette using gnuplot2 (same as cohort running analysis)
+#     # Get ALL unique mice from results (not just selected) to ensure consistent color assignment
+#     # This matches the approach in cohort running analysis which uses all mice from the dataframe
+#     all_mice_in_results = sorted(results.get('mean_data_per_mouse', {}).keys())
+#     if not all_mice_in_results:
+#         # Fallback: use selected_mice if no results yet
+#         all_mice_in_results = sorted(selected_mice)
+#     n_colors = len(all_mice_in_results) if all_mice_in_results else len(selected_mice)
+#     # Use gnuplot2 color palette (similar to gnuplot's default palette)
+#     # Avoid the white end (value 1.0) by using 0 to 0.95 instead of 0 to 1
+#     if n_colors > 0:
+#         colors = plt.cm.gnuplot2(np.linspace(0, 0.95, n_colors))
+#         mouse_colors = {mouse: colors[i] for i, mouse in enumerate(all_mice_in_results)}
+#     else:
+#         mouse_colors = {}
+#     # Add any missing mice from selected_mice with a default color
+#     for mouse in selected_mice:
+#         if mouse not in mouse_colors:
+#             # Use a default color if mouse not in results
+#             mouse_colors[mouse] = 'gray'
     
-    # Helper function to check if column is velocity and convert to cm/s
-    def convert_velocity_if_needed(column_name, value):
-        """Convert velocity from m/s to cm/s if column is a velocity column.
-        Handles both scalars and pandas Series/arrays.
-        """
-        if 'Velocity' in column_name or 'velocity' in column_name.lower():
-            if isinstance(value, (pd.Series, np.ndarray)):
-                return value * 100  # Convert m/s to cm/s for arrays/Series
-            else:
-                return value * 100  # Convert m/s to cm/s for scalars
-        return value
+#     # Helper function to check if column is velocity and convert to cm/s
+#     def convert_velocity_if_needed(column_name, value):
+#         """Convert velocity from m/s to cm/s if column is a velocity column.
+#         Handles both scalars and pandas Series/arrays.
+#         """
+#         if 'Velocity' in column_name or 'velocity' in column_name.lower():
+#             if isinstance(value, (pd.Series, np.ndarray)):
+#                 return value * 100  # Convert m/s to cm/s for arrays/Series
+#             else:
+#                 return value * 100  # Convert m/s to cm/s for scalars
+#         return value
     
-    # Helper function to get ylabel with correct units
-    def get_ylabel(column_name):
-        """Get ylabel with correct units."""
-        if 'Velocity' in column_name or 'velocity' in column_name.lower():
-            return column_name.replace('_', ' ') + ' (cm/s)'
-        return column_name.replace('_', ' ')
+#     # Helper function to get ylabel with correct units
+#     def get_ylabel(column_name):
+#         """Get ylabel with correct units."""
+#         if 'Velocity' in column_name or 'velocity' in column_name.lower():
+#             return column_name.replace('_', ' ') + ' (cm/s)'
+#         return column_name.replace('_', ' ')
     
-    for column_to_plot in columns_to_plot:
-        if column_to_plot not in results['grand_averages'].columns:
-            print(f"⚠️ Column {column_to_plot} not found in results, skipping...")
-            continue
+#     for column_to_plot in columns_to_plot:
+#         if column_to_plot not in results['grand_averages'].columns:
+#             print(f"⚠️ Column {column_to_plot} not found in results, skipping...")
+#             continue
         
-        print(f"\n📊 Plotting: {column_to_plot}")
+#         print(f"\n📊 Plotting: {column_to_plot}")
         
-        # Time series plot
-        plt.figure(figsize=(8, 4))
-        mice_plotted = []
+#         # Time series plot
+#         plt.figure(figsize=(8, 4))
+#         mice_plotted = []
         
-        for mouse in selected_mice:
-            if mouse in results['mean_data_per_mouse']:
-                mice_plotted.append(mouse)
-                mean_data = results['mean_data_per_mouse'][mouse][column_to_plot]
-                sem_data = results['sem_data_per_mouse'][mouse][column_to_plot]
+#         for mouse in selected_mice:
+#             if mouse in results['mean_data_per_mouse']:
+#                 mice_plotted.append(mouse)
+#                 mean_data = results['mean_data_per_mouse'][mouse][column_to_plot]
+#                 sem_data = results['sem_data_per_mouse'][mouse][column_to_plot]
                 
-                mean_data = pd.to_numeric(mean_data, errors='coerce')
-                sem_data = pd.to_numeric(sem_data, errors='coerce')
-                time_points = pd.to_numeric(mean_data.index, errors='coerce')
+#                 mean_data = pd.to_numeric(mean_data, errors='coerce')
+#                 sem_data = pd.to_numeric(sem_data, errors='coerce')
+#                 time_points = pd.to_numeric(mean_data.index, errors='coerce')
                 
-                valid_mask = ~(pd.isna(mean_data) | pd.isna(sem_data) | pd.isna(time_points))
-                mean_data_clean = mean_data[valid_mask]
-                sem_data_clean = sem_data[valid_mask]
-                time_points_clean = time_points[valid_mask]
+#                 valid_mask = ~(pd.isna(mean_data) | pd.isna(sem_data) | pd.isna(time_points))
+#                 mean_data_clean = mean_data[valid_mask]
+#                 sem_data_clean = sem_data[valid_mask]
+#                 time_points_clean = time_points[valid_mask]
                 
-                # Convert velocity to cm/s
-                mean_data_clean = convert_velocity_if_needed(column_to_plot, mean_data_clean)
-                sem_data_clean = convert_velocity_if_needed(column_to_plot, sem_data_clean)
+#                 # Convert velocity to cm/s
+#                 mean_data_clean = convert_velocity_if_needed(column_to_plot, mean_data_clean)
+#                 sem_data_clean = convert_velocity_if_needed(column_to_plot, sem_data_clean)
                 
-                # Get color for this mouse, with fallback
-                mouse_color = mouse_colors.get(mouse, 'gray')
-                plt.plot(time_points_clean, mean_data_clean, label=f'{mouse} Mean', color=mouse_color)
-                plt.fill_between(time_points_clean, mean_data_clean - sem_data_clean, 
-                                mean_data_clean + sem_data_clean, color=mouse_color, alpha=0.2)
+#                 # Get color for this mouse, with fallback
+#                 mouse_color = mouse_colors.get(mouse, 'gray')
+#                 plt.plot(time_points_clean, mean_data_clean, label=f'{mouse} Mean', color=mouse_color)
+#                 plt.fill_between(time_points_clean, mean_data_clean - sem_data_clean, 
+#                                 mean_data_clean + sem_data_clean, color=mouse_color, alpha=0.2)
         
-        # Grand average
-        grand_mean = results['grand_averages'][column_to_plot]
-        grand_sem = results['grand_sems'][column_to_plot]
-        grand_mean = pd.to_numeric(grand_mean, errors='coerce')
-        grand_sem = pd.to_numeric(grand_sem, errors='coerce')
-        time_points = pd.to_numeric(grand_mean.index, errors='coerce')
+#         # Grand average
+#         grand_mean = results['grand_averages'][column_to_plot]
+#         grand_sem = results['grand_sems'][column_to_plot]
+#         grand_mean = pd.to_numeric(grand_mean, errors='coerce')
+#         grand_sem = pd.to_numeric(grand_sem, errors='coerce')
+#         time_points = pd.to_numeric(grand_mean.index, errors='coerce')
         
-        valid_mask = ~(pd.isna(grand_mean) | pd.isna(grand_sem) | pd.isna(time_points))
-        grand_mean_clean = grand_mean[valid_mask]
-        grand_sem_clean = grand_sem[valid_mask]
-        time_points_clean = time_points[valid_mask]
+#         valid_mask = ~(pd.isna(grand_mean) | pd.isna(grand_sem) | pd.isna(time_points))
+#         grand_mean_clean = grand_mean[valid_mask]
+#         grand_sem_clean = grand_sem[valid_mask]
+#         time_points_clean = time_points[valid_mask]
         
-        # Convert velocity to cm/s
-        grand_mean_clean = convert_velocity_if_needed(column_to_plot, grand_mean_clean)
-        grand_sem_clean = convert_velocity_if_needed(column_to_plot, grand_sem_clean)
+#         # Convert velocity to cm/s
+#         grand_mean_clean = convert_velocity_if_needed(column_to_plot, grand_mean_clean)
+#         grand_sem_clean = convert_velocity_if_needed(column_to_plot, grand_sem_clean)
         
-        plt.plot(time_points_clean, grand_mean_clean, label='Grand Average', color='black', linewidth=2)
-        plt.fill_between(time_points_clean, grand_mean_clean - grand_sem_clean, 
-                        grand_mean_clean + grand_sem_clean, color='gray', alpha=0.3)
+#         plt.plot(time_points_clean, grand_mean_clean, label='Grand Average', color='black', linewidth=2)
+#         plt.fill_between(time_points_clean, grand_mean_clean - grand_sem_clean, 
+#                         grand_mean_clean + grand_sem_clean, color='gray', alpha=0.3)
         
-        plt.xlabel('Time (s)')
-        plt.ylabel(get_ylabel(column_to_plot))
-        plt.title(f'Mean and SEM of {column_to_plot} Over Time')
-        plt.legend()
-        plt.grid(True)
-        plt.tight_layout()
+#         plt.xlabel('Time (s)')
+#         plt.ylabel(get_ylabel(column_to_plot))
+#         plt.title(f'Mean and SEM of {column_to_plot} Over Time')
+#         plt.legend()
+#         plt.grid(True)
+#         plt.tight_layout()
         
-        # Save plot
-        try:
-            baselined_dir = main_data_dir / "baselined"
-            baselined_dir.mkdir(exist_ok=True)
-            plot_filename = baselined_dir / f"{column_to_plot}{event_name.replace('.csv', '')}.pdf"
-            plt.savefig(plot_filename, dpi=150, bbox_inches='tight')
-            print(f"   ✅ Saved: {plot_filename}")
-        except Exception as e:
-            print(f"   ⚠️ Error saving plot: {e}")
+#         # Save plot
+#         try:
+#             baselined_dir = main_data_dir / "baselined"
+#             baselined_dir.mkdir(exist_ok=True)
+#             plot_filename = baselined_dir / f"{column_to_plot}{event_name.replace('.csv', '')}.pdf"
+#             plt.savefig(plot_filename, dpi=150, bbox_inches='tight')
+#             print(f"   ✅ Saved: {plot_filename}")
+#         except Exception as e:
+#             print(f"   ⚠️ Error saving plot: {e}")
         
-        plt.show()
+#         plt.show()
         
-        # Pre/post comparison plot with paired t-test
-        pre_time = (-2, 0)
-        post_time = (0, 2)
+#         # Pre/post comparison plot with paired t-test
+#         pre_time = (-2, 0)
+#         post_time = (0, 2)
         
-        pre_values, post_values, mouse_labels = [], [], []
+#         pre_values, post_values, mouse_labels = [], [], []
         
-        for mouse in selected_mice:
-            if mouse in results['mean_data_per_mouse']:
-                mean_data = results['mean_data_per_mouse'][mouse][column_to_plot]
-                # Get pre and post means
-                pre_mask = (mean_data.index >= pre_time[0]) & (mean_data.index < pre_time[1])
-                post_mask = (mean_data.index >= post_time[0]) & (mean_data.index <= post_time[1])
+#         for mouse in selected_mice:
+#             if mouse in results['mean_data_per_mouse']:
+#                 mean_data = results['mean_data_per_mouse'][mouse][column_to_plot]
+#                 # Get pre and post means
+#                 pre_mask = (mean_data.index >= pre_time[0]) & (mean_data.index < pre_time[1])
+#                 post_mask = (mean_data.index >= post_time[0]) & (mean_data.index <= post_time[1])
                 
-                if pre_mask.any() and post_mask.any():
-                    pre_mean = mean_data.loc[pre_mask].mean()
-                    post_mean = mean_data.loc[post_mask].mean()
+#                 if pre_mask.any() and post_mask.any():
+#                     pre_mean = mean_data.loc[pre_mask].mean()
+#                     post_mean = mean_data.loc[post_mask].mean()
                     
-                    # Convert velocity to cm/s
-                    pre_mean = convert_velocity_if_needed(column_to_plot, pre_mean)
-                    post_mean = convert_velocity_if_needed(column_to_plot, post_mean)
+#                     # Convert velocity to cm/s
+#                     pre_mean = convert_velocity_if_needed(column_to_plot, pre_mean)
+#                     post_mean = convert_velocity_if_needed(column_to_plot, post_mean)
                     
-                    # Only add if both values are valid
-                    if not (pd.isna(pre_mean) or pd.isna(post_mean)):
-                        pre_values.append(pre_mean)
-                        post_values.append(post_mean)
-                        mouse_labels.append(mouse)
+#                     # Only add if both values are valid
+#                     if not (pd.isna(pre_mean) or pd.isna(post_mean)):
+#                         pre_values.append(pre_mean)
+#                         post_values.append(post_mean)
+#                         mouse_labels.append(mouse)
         
-        # Calculate grand averages
-        grand_mean = results['grand_averages'][column_to_plot]
-        grand_sem = results['grand_sems'][column_to_plot]
+#         # Calculate grand averages
+#         grand_mean = results['grand_averages'][column_to_plot]
+#         grand_sem = results['grand_sems'][column_to_plot]
         
-        # Get pre and post grand means
-        pre_mask = (grand_mean.index >= pre_time[0]) & (grand_mean.index < pre_time[1])
-        post_mask = (grand_mean.index >= post_time[0]) & (grand_mean.index <= post_time[1])
+#         # Get pre and post grand means
+#         pre_mask = (grand_mean.index >= pre_time[0]) & (grand_mean.index < pre_time[1])
+#         post_mask = (grand_mean.index >= post_time[0]) & (grand_mean.index <= post_time[1])
         
-        if not (pre_mask.any() and post_mask.any()):
-            print(f"   ⚠️ No data in pre/post time windows for grand average, skipping pre/post plot")
-            continue
+#         if not (pre_mask.any() and post_mask.any()):
+#             print(f"   ⚠️ No data in pre/post time windows for grand average, skipping pre/post plot")
+#             continue
         
-        pre_grand_mean = grand_mean.loc[pre_mask].mean()
-        post_grand_mean = grand_mean.loc[post_mask].mean()
-        pre_grand_sem = grand_sem.loc[pre_mask].mean()
-        post_grand_sem = grand_sem.loc[post_mask].mean()
+#         pre_grand_mean = grand_mean.loc[pre_mask].mean()
+#         post_grand_mean = grand_mean.loc[post_mask].mean()
+#         pre_grand_sem = grand_sem.loc[pre_mask].mean()
+#         post_grand_sem = grand_sem.loc[post_mask].mean()
         
-        # Check for NaN values
-        if pd.isna(pre_grand_mean) or pd.isna(post_grand_mean):
-            print(f"   ⚠️ Grand average contains NaN values, skipping pre/post plot")
-            continue
+#         # Check for NaN values
+#         if pd.isna(pre_grand_mean) or pd.isna(post_grand_mean):
+#             print(f"   ⚠️ Grand average contains NaN values, skipping pre/post plot")
+#             continue
         
-        # Convert velocity to cm/s
-        pre_grand_mean = convert_velocity_if_needed(column_to_plot, pre_grand_mean)
-        post_grand_mean = convert_velocity_if_needed(column_to_plot, post_grand_mean)
-        pre_grand_sem = convert_velocity_if_needed(column_to_plot, pre_grand_sem)
-        post_grand_sem = convert_velocity_if_needed(column_to_plot, post_grand_sem)
+#         # Convert velocity to cm/s
+#         pre_grand_mean = convert_velocity_if_needed(column_to_plot, pre_grand_mean)
+#         post_grand_mean = convert_velocity_if_needed(column_to_plot, post_grand_mean)
+#         pre_grand_sem = convert_velocity_if_needed(column_to_plot, pre_grand_sem)
+#         post_grand_sem = convert_velocity_if_needed(column_to_plot, post_grand_sem)
         
-        # Check if we have data to plot
-        if len(pre_values) == 0 or len(post_values) == 0:
-            print(f"   ⚠️ No valid pre/post data found for {column_to_plot}, skipping pre/post plot")
-            continue
+#         # Check if we have data to plot
+#         if len(pre_values) == 0 or len(post_values) == 0:
+#             print(f"   ⚠️ No valid pre/post data found for {column_to_plot}, skipping pre/post plot")
+#             continue
         
-        # Perform paired t-test
-        if len(pre_values) > 1 and len(post_values) > 1:
-            pre_array = np.array(pre_values)
-            post_array = np.array(post_values)
-            # Remove any NaN values for t-test
-            valid_mask = ~(np.isnan(pre_array) | np.isnan(post_array))
-            if np.sum(valid_mask) > 1:
-                t_stat, p_value = ttest_rel(pre_array[valid_mask], post_array[valid_mask])
-                print(f"   📊 Paired t-test (pre vs post): t={t_stat:.4f}, p={p_value:.4f}, n={np.sum(valid_mask)}")
-            else:
-                t_stat, p_value = np.nan, np.nan
-                print(f"   ⚠️ Not enough valid data for paired t-test")
-        else:
-            t_stat, p_value = np.nan, np.nan
-            print(f"   ⚠️ Not enough data for paired t-test (n={len(pre_values)})")
+#         # Perform paired t-test
+#         if len(pre_values) > 1 and len(post_values) > 1:
+#             pre_array = np.array(pre_values)
+#             post_array = np.array(post_values)
+#             # Remove any NaN values for t-test
+#             valid_mask = ~(np.isnan(pre_array) | np.isnan(post_array))
+#             if np.sum(valid_mask) > 1:
+#                 t_stat, p_value = ttest_rel(pre_array[valid_mask], post_array[valid_mask])
+#                 print(f"   📊 Paired t-test (pre vs post): t={t_stat:.4f}, p={p_value:.4f}, n={np.sum(valid_mask)}")
+#             else:
+#                 t_stat, p_value = np.nan, np.nan
+#                 print(f"   ⚠️ Not enough valid data for paired t-test")
+#         else:
+#             t_stat, p_value = np.nan, np.nan
+#             print(f"   ⚠️ Not enough data for paired t-test (n={len(pre_values)})")
         
-        # Create pre/post comparison plot
-        fig, ax = plt.subplots(figsize=(6, 5))
+#         # Create pre/post comparison plot
+#         fig, ax = plt.subplots(figsize=(6, 5))
         
-        # Plot individual mouse lines
-        for i, mouse in enumerate(mouse_labels):
-            # Get color for this mouse, with fallback
-            mouse_color = mouse_colors.get(mouse, 'gray')
-            ax.plot([0, 1], [pre_values[i], post_values[i]], color=mouse_color, 
-                    marker='o', linewidth=1.5, markersize=6, alpha=0.7, label=mouse)
+#         # Plot individual mouse lines
+#         for i, mouse in enumerate(mouse_labels):
+#             # Get color for this mouse, with fallback
+#             mouse_color = mouse_colors.get(mouse, 'gray')
+#             ax.plot([0, 1], [pre_values[i], post_values[i]], color=mouse_color, 
+#                     marker='o', linewidth=1.5, markersize=6, alpha=0.7, label=mouse)
         
-        # Plot grand average with error bars
-        ax.errorbar([0, 1], [pre_grand_mean, post_grand_mean], 
-                    yerr=[pre_grand_sem, post_grand_sem], fmt='o-', color='black', 
-                    linewidth=2.5, markersize=10, capsize=8, capthick=2, 
-                    label='Grand Average ± SEM', zorder=10)
+#         # Plot grand average with error bars
+#         ax.errorbar([0, 1], [pre_grand_mean, post_grand_mean], 
+#                     yerr=[pre_grand_sem, post_grand_sem], fmt='o-', color='black', 
+#                     linewidth=2.5, markersize=10, capsize=8, capthick=2, 
+#                     label='Grand Average ± SEM', zorder=10)
         
-        ax.set_xticks([0, 1])
-        ax.set_xticklabels([f'Pre\n({pre_time[0]} to {pre_time[1]}s)', 
-                           f'Post\n({post_time[0]} to {post_time[1]}s)'], fontsize=11)
-        ax.set_ylabel(get_ylabel(column_to_plot), fontsize=12, fontweight='bold')
-        ax.set_title(f'{column_to_plot.replace("_", " ")}: Pre vs Post Comparison', 
-                    fontsize=12, fontweight='bold')
-        ax.grid(True, alpha=0.3)
+#         ax.set_xticks([0, 1])
+#         ax.set_xticklabels([f'Pre\n({pre_time[0]} to {pre_time[1]}s)', 
+#                            f'Post\n({post_time[0]} to {post_time[1]}s)'], fontsize=11)
+#         ax.set_ylabel(get_ylabel(column_to_plot), fontsize=12, fontweight='bold')
+#         ax.set_title(f'{column_to_plot.replace("_", " ")}: Pre vs Post Comparison', 
+#                     fontsize=12, fontweight='bold')
+#         ax.grid(True, alpha=0.3)
         
-        # Set y-axis limits for velocity if needed
-        if 'Velocity' in column_to_plot or 'velocity' in column_to_plot.lower():
-            # Collect all values, filtering out NaN
-            all_values = [v for v in pre_values + post_values if not np.isnan(v)]
-            all_values.extend([pre_grand_mean - pre_grand_sem, pre_grand_mean + pre_grand_sem,
-                              post_grand_mean - post_grand_sem, post_grand_mean + post_grand_sem])
-            all_values = [v for v in all_values if not np.isnan(v)]
-            if all_values:
-                y_min = min(all_values) * 0.9
-                y_max = max(all_values) * 1.1
-                ax.set_ylim(y_min, y_max)
+#         # Set y-axis limits for velocity if needed
+#         if 'Velocity' in column_to_plot or 'velocity' in column_to_plot.lower():
+#             # Collect all values, filtering out NaN
+#             all_values = [v for v in pre_values + post_values if not np.isnan(v)]
+#             all_values.extend([pre_grand_mean - pre_grand_sem, pre_grand_mean + pre_grand_sem,
+#                               post_grand_mean - post_grand_sem, post_grand_mean + post_grand_sem])
+#             all_values = [v for v in all_values if not np.isnan(v)]
+#             if all_values:
+#                 y_min = min(all_values) * 0.9
+#                 y_max = max(all_values) * 1.1
+#                 ax.set_ylim(y_min, y_max)
         
-        # Add t-test result to plot (after ylim is set)
-        if not np.isnan(p_value):
-            significance = '***' if p_value < 0.001 else '**' if p_value < 0.01 else '*' if p_value < 0.05 else 'ns'
-            y_lim = ax.get_ylim()
-            y_pos = y_lim[0] + (y_lim[1] - y_lim[0]) * 0.95
-            ax.text(0.5, y_pos, f'p = {p_value:.4f} {significance}', 
-                   ha='center', va='top', fontsize=11, fontweight='bold',
-                   bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+#         # Add t-test result to plot (after ylim is set)
+#         if not np.isnan(p_value):
+#             significance = '***' if p_value < 0.001 else '**' if p_value < 0.01 else '*' if p_value < 0.05 else 'ns'
+#             y_lim = ax.get_ylim()
+#             y_pos = y_lim[0] + (y_lim[1] - y_lim[0]) * 0.95
+#             ax.text(0.5, y_pos, f'p = {p_value:.4f} {significance}', 
+#                    ha='center', va='top', fontsize=11, fontweight='bold',
+#                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
         
-        # Legend
-        handles, labels = ax.get_legend_handles_labels()
-        unique_labels = {}
-        for h, l in zip(handles, labels):
-            if l not in unique_labels:
-                unique_labels[l] = h
-        ax.legend(unique_labels.values(), unique_labels.keys(), loc='best', fontsize=8, ncol=2)
+#         # Legend
+#         handles, labels = ax.get_legend_handles_labels()
+#         unique_labels = {}
+#         for h, l in zip(handles, labels):
+#             if l not in unique_labels:
+#                 unique_labels[l] = h
+#         ax.legend(unique_labels.values(), unique_labels.keys(), loc='best', fontsize=8, ncol=2)
         
-        plt.tight_layout()
+#         plt.tight_layout()
         
-        try:
-            plot_filename = baselined_dir / f"{column_to_plot}{event_name.replace('.csv', '')}_prepost_comparison.pdf"
-            plt.savefig(plot_filename, dpi=150, bbox_inches='tight')
-            print(f"   ✅ Saved pre/post comparison: {plot_filename}")
-        except Exception as e:
-            print(f"   ⚠️ Error saving pre/post comparison plot: {e}")
+#         try:
+#             plot_filename = baselined_dir / f"{column_to_plot}{event_name.replace('.csv', '')}_prepost_comparison.pdf"
+#             plt.savefig(plot_filename, dpi=150, bbox_inches='tight')
+#             print(f"   ✅ Saved pre/post comparison: {plot_filename}")
+#         except Exception as e:
+#             print(f"   ⚠️ Error saving pre/post comparison plot: {e}")
         
-        plt.show()
-        plt.clf()
-        plt.close()
+#         plt.show()
+#         plt.clf()
+#         plt.close()
 
 
-#---------------------------------------------------------------------------------------------------#
-# PRE/POST COMPARISON PLOTTING UTILITIES
-#---------------------------------------------------------------------------------------------------#
+# #---------------------------------------------------------------------------------------------------#
+# # PRE/POST COMPARISON PLOTTING UTILITIES
+# #---------------------------------------------------------------------------------------------------#
 
-def _compute_sem(values: np.ndarray) -> float:
-    """Compute the standard error of the mean for an array, ignoring NaNs."""
-    arr = np.asarray(values, dtype=float)
-    arr = arr[np.isfinite(arr)]
-    if arr.size <= 1:
-        return 0.0 if arr.size == 1 else np.nan
-    return np.nanstd(arr, ddof=1) / np.sqrt(arr.size)
-
-
-def _convert_cm_to_inches(cm: float) -> float:
-    """Convert centimeters to inches for matplotlib figsize."""
-    return cm / 2.54
+# def _compute_sem(values: np.ndarray) -> float:
+#     """Compute the standard error of the mean for an array, ignoring NaNs."""
+#     arr = np.asarray(values, dtype=float)
+#     arr = arr[np.isfinite(arr)]
+#     if arr.size <= 1:
+#         return 0.0 if arr.size == 1 else np.nan
+#     return np.nanstd(arr, ddof=1) / np.sqrt(arr.size)
 
 
-def _build_mouse_color_map(mouse_labels):
-    """Assign consistent colors to each mouse using the gnuplot2 palette."""
-    unique_mice = sorted(set(mouse_labels))
-    if not unique_mice:
-        return {}
-    colors = plt.cm.gnuplot2(np.linspace(0, 0.95, len(unique_mice)))
-    return {mouse: colors[idx] for idx, mouse in enumerate(unique_mice)}
+# def _convert_cm_to_inches(cm: float) -> float:
+#     """Convert centimeters to inches for matplotlib figsize."""
+#     return cm / 2.54
 
 
-def _format_ylabel(column_name: str) -> str:
-    """Return a nicely formatted y-label, including units for relevant columns."""
-    if 'Motor' in column_name and ('Velocity' in column_name or 'velocity' in column_name.lower()):
-        return column_name.replace('_', ' ') + ' (deg/s)'
-    if 'Velocity' in column_name or 'velocity' in column_name.lower():
-        return column_name.replace('_', ' ') + ' (cm/s)'
-    return column_name.replace('_', ' ')
+# def _build_mouse_color_map(mouse_labels):
+#     """Assign consistent colors to each mouse using the gnuplot2 palette."""
+#     unique_mice = sorted(set(mouse_labels))
+#     if not unique_mice:
+#         return {}
+#     colors = plt.cm.gnuplot2(np.linspace(0, 0.95, len(unique_mice)))
+#     return {mouse: colors[idx] for idx, mouse in enumerate(unique_mice)}
 
 
-def _convert_velocity_values(column_name: str, values):
-    """Convert velocity data from m/s to cm/s when necessary."""
-    if ('Velocity' in column_name or 'velocity' in column_name.lower()) and 'Motor' not in column_name:
-        return np.asarray(values, dtype=float) * 100.0
-    return np.asarray(values, dtype=float)
+# def _format_ylabel(column_name: str) -> str:
+#     """Return a nicely formatted y-label, including units for relevant columns."""
+#     if 'Motor' in column_name and ('Velocity' in column_name or 'velocity' in column_name.lower()):
+#         return column_name.replace('_', ' ') + ' (deg/s)'
+#     if 'Velocity' in column_name or 'velocity' in column_name.lower():
+#         return column_name.replace('_', ' ') + ' (cm/s)'
+#     return column_name.replace('_', ' ')
 
 
-def _render_prepost_plot(
-    column_to_plot: str,
-    pre_values: np.ndarray,
-    post_values: np.ndarray,
-    mouse_labels,
-    mouse_colors,
-    p_value: float,
-    save_path: Optional[Path] = None,
-) -> None:
-    """Render a pre/post plot with individual mice and grand average."""
-    pre_values = np.asarray(pre_values, dtype=float)
-    post_values = np.asarray(post_values, dtype=float)
-
-    # Compute summary statistics
-    pre_mean = np.nanmean(pre_values)
-    post_mean = np.nanmean(post_values)
-    pre_sem = _compute_sem(pre_values)
-    post_sem = _compute_sem(post_values)
-
-    # Update plotting style
-    plt.rcParams.update({
-        'font.size': 15,
-        'font.family': 'sans-serif',
-        'font.sans-serif': ['Arial'],
-        'axes.titlesize': 15,
-        'axes.labelsize': 15,
-        'legend.fontsize': 12,
-        'xtick.labelsize': 15,
-        'ytick.labelsize': 15
-    })
-
-    fig, ax = plt.subplots(
-        figsize=(
-            _convert_cm_to_inches(7.0),
-            _convert_cm_to_inches(7.0),
-        )
-    )
-
-    # Plot individual mice
-    for label, pre_val, post_val in zip(mouse_labels, pre_values, post_values):
-        color = mouse_colors.get(label, 'gray')
-        ax.plot(
-            [0, 1],
-            [pre_val, post_val],
-            color=color,
-            marker='o',
-            linewidth=1.5,
-            markersize=6,
-            alpha=0.7,
-            zorder=1,
-        )
-
-    # Add SEM shading along the grand mean line
-    x_band = np.linspace(0, 1, 100)
-    upper_band = np.interp(x_band, [0, 1], [pre_mean + pre_sem, post_mean + post_sem])
-    lower_band = np.interp(x_band, [0, 1], [pre_mean - pre_sem, post_mean - post_sem])
-    ax.fill_between(
-        x_band,
-        lower_band,
-        upper_band,
-        color='gray',
-        alpha=0.3,
-        zorder=2,
-    )
-
-    # Plot grand average line
-    ax.plot(
-        [0, 1],
-        [pre_mean, post_mean],
-        color='black',
-        marker='o',
-        linewidth=2.5,
-        markersize=10,
-        alpha=1,
-        zorder=3,
-        label='Grand Average',
-    )
-
-    ax.set_xticks([0, 1])
-    ax.set_xticklabels(['Pre', 'Post'], fontsize=15, fontfamily='Arial')
-    ax.set_xlim(-0.4, 1.4)
-
-    ax.set_ylabel(_format_ylabel(column_to_plot), fontsize=15, fontfamily='Arial')
-    ax.grid(False)
-
-    # Determine y-limits with padding
-    finite_values = np.concatenate([pre_values, post_values])
-    finite_values = finite_values[np.isfinite(finite_values)]
-    if finite_values.size:
-        data_min = finite_values.min()
-        data_max = finite_values.max()
-        span = data_max - data_min
-        if span == 0:
-            span = max(abs(data_max), 1.0) * 0.1
-        lower = data_min - 0.1 * span
-        upper = data_max + 0.25 * span
-        ax.set_ylim(lower, upper)
-    else:
-        lower, upper = -1, 1.2
-        span = upper - lower
-        ax.set_ylim(lower, upper)
-
-    # Annotate significance
-    if not np.isnan(p_value):
-        significance = '***' if p_value < 0.001 else '**' if p_value < 0.01 else '*' if p_value < 0.05 else 'ns'
-        y_lim = ax.get_ylim()
-        span = y_lim[1] - y_lim[0]
-        y_pos = y_lim[1] - 0.01 * span
-        ax.text(
-            0.5,
-            y_pos,
-            f'p = {p_value:.3f} {significance}',
-            ha='center',
-            va='top',
-            fontsize=12,
-            fontfamily='Arial',
-        )
-
-    plt.tight_layout()
-
-    if save_path:
-        save_path = Path(save_path)
-        save_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            fig.savefig(save_path, dpi=300, bbox_inches='tight')
-            print(f"   ✅ Saved: {save_path}")
-        except Exception as exc:
-            print(f"   ⚠️ Error saving plot: {exc}")
-
-    plt.show()
-    plt.close(fig)
+# def _convert_velocity_values(column_name: str, values):
+#     """Convert velocity data from m/s to cm/s when necessary."""
+#     if ('Velocity' in column_name or 'velocity' in column_name.lower()) and 'Motor' not in column_name:
+#         return np.asarray(values, dtype=float) * 100.0
+#     return np.asarray(values, dtype=float)
 
 
-def plot_prepost_from_results(
-    results: dict,
-    columns_to_plot,
-    selected_mice,
-    pre_time=(-2, 0),
-    post_time=(0, 2),
-    save_dir: Optional[Path] = None,
-    main_data_dir: Optional[Path] = None,
-) -> None:
-    """Generate pre/post comparison plots using freshly computed results."""
-    if not results:
-        print("⚠️ No results available for pre/post plotting.")
-        return
+# def _render_prepost_plot(
+#     column_to_plot: str,
+#     pre_values: np.ndarray,
+#     post_values: np.ndarray,
+#     mouse_labels,
+#     mouse_colors,
+#     p_value: float,
+#     save_path: Optional[Path] = None,
+# ) -> None:
+#     """Render a pre/post plot with individual mice and grand average."""
+#     pre_values = np.asarray(pre_values, dtype=float)
+#     post_values = np.asarray(post_values, dtype=float)
 
-    target_dir: Optional[Path]
-    if save_dir is not None:
-        target_dir = Path(save_dir)
-    elif main_data_dir is not None:
-        target_dir = Path(main_data_dir) / "baselined"
-    else:
-        target_dir = None
+#     # Compute summary statistics
+#     pre_mean = np.nanmean(pre_values)
+#     post_mean = np.nanmean(post_values)
+#     pre_sem = _compute_sem(pre_values)
+#     post_sem = _compute_sem(post_values)
 
-    if target_dir is not None:
-        target_dir.mkdir(parents=True, exist_ok=True)
+#     # Update plotting style
+#     plt.rcParams.update({
+#         'font.size': 15,
+#         'font.family': 'sans-serif',
+#         'font.sans-serif': ['Arial'],
+#         'axes.titlesize': 15,
+#         'axes.labelsize': 15,
+#         'legend.fontsize': 12,
+#         'xtick.labelsize': 15,
+#         'ytick.labelsize': 15
+#     })
 
-    mouse_colors = _build_mouse_color_map(selected_mice or results.get('mean_data_per_mouse', {}).keys())
+#     fig, ax = plt.subplots(
+#         figsize=(
+#             _convert_cm_to_inches(7.0),
+#             _convert_cm_to_inches(7.0),
+#         )
+#     )
 
-    for column_to_plot in columns_to_plot:
-        if column_to_plot not in results['grand_averages'].columns:
-            print(f"⚠️ Column {column_to_plot} not found in results, skipping...")
-            continue
+#     # Plot individual mice
+#     for label, pre_val, post_val in zip(mouse_labels, pre_values, post_values):
+#         color = mouse_colors.get(label, 'gray')
+#         ax.plot(
+#             [0, 1],
+#             [pre_val, post_val],
+#             color=color,
+#             marker='o',
+#             linewidth=1.5,
+#             markersize=6,
+#             alpha=0.7,
+#             zorder=1,
+#         )
 
-        pre_values = []
-        post_values = []
-        mouse_labels = []
+#     # Add SEM shading along the grand mean line
+#     x_band = np.linspace(0, 1, 100)
+#     upper_band = np.interp(x_band, [0, 1], [pre_mean + pre_sem, post_mean + post_sem])
+#     lower_band = np.interp(x_band, [0, 1], [pre_mean - pre_sem, post_mean - post_sem])
+#     ax.fill_between(
+#         x_band,
+#         lower_band,
+#         upper_band,
+#         color='gray',
+#         alpha=0.3,
+#         zorder=2,
+#     )
 
-        for mouse in selected_mice:
-            if mouse not in results['mean_data_per_mouse']:
-                continue
+#     # Plot grand average line
+#     ax.plot(
+#         [0, 1],
+#         [pre_mean, post_mean],
+#         color='black',
+#         marker='o',
+#         linewidth=2.5,
+#         markersize=10,
+#         alpha=1,
+#         zorder=3,
+#         label='Grand Average',
+#     )
 
-            mean_data = results['mean_data_per_mouse'][mouse][column_to_plot]
-            pre_mask = (mean_data.index >= pre_time[0]) & (mean_data.index < pre_time[1])
-            post_mask = (mean_data.index >= post_time[0]) & (mean_data.index <= post_time[1])
+#     ax.set_xticks([0, 1])
+#     ax.set_xticklabels(['Pre', 'Post'], fontsize=15, fontfamily='Arial')
+#     ax.set_xlim(-0.4, 1.4)
 
-            if not (pre_mask.any() and post_mask.any()):
-                continue
+#     ax.set_ylabel(_format_ylabel(column_to_plot), fontsize=15, fontfamily='Arial')
+#     ax.grid(False)
 
-            pre_mean = mean_data.loc[pre_mask].mean()
-            post_mean = mean_data.loc[post_mask].mean()
+#     # Determine y-limits with padding
+#     finite_values = np.concatenate([pre_values, post_values])
+#     finite_values = finite_values[np.isfinite(finite_values)]
+#     if finite_values.size:
+#         data_min = finite_values.min()
+#         data_max = finite_values.max()
+#         span = data_max - data_min
+#         if span == 0:
+#             span = max(abs(data_max), 1.0) * 0.1
+#         lower = data_min - 0.1 * span
+#         upper = data_max + 0.25 * span
+#         ax.set_ylim(lower, upper)
+#     else:
+#         lower, upper = -1, 1.2
+#         span = upper - lower
+#         ax.set_ylim(lower, upper)
 
-            pre_mean = _convert_velocity_values(column_to_plot, [pre_mean])[0]
-            post_mean = _convert_velocity_values(column_to_plot, [post_mean])[0]
+#     # Annotate significance
+#     if not np.isnan(p_value):
+#         significance = '***' if p_value < 0.001 else '**' if p_value < 0.01 else '*' if p_value < 0.05 else 'ns'
+#         y_lim = ax.get_ylim()
+#         span = y_lim[1] - y_lim[0]
+#         y_pos = y_lim[1] - 0.01 * span
+#         ax.text(
+#             0.5,
+#             y_pos,
+#             f'p = {p_value:.3f} {significance}',
+#             ha='center',
+#             va='top',
+#             fontsize=12,
+#             fontfamily='Arial',
+#         )
 
-            if pd.isna(pre_mean) or pd.isna(post_mean):
-                continue
+#     plt.tight_layout()
 
-            pre_values.append(pre_mean)
-            post_values.append(post_mean)
-            mouse_labels.append(mouse)
+#     if save_path:
+#         save_path = Path(save_path)
+#         save_path.parent.mkdir(parents=True, exist_ok=True)
+#         try:
+#             fig.savefig(save_path, dpi=300, bbox_inches='tight')
+#             print(f"   ✅ Saved: {save_path}")
+#         except Exception as exc:
+#             print(f"   ⚠️ Error saving plot: {exc}")
 
-        if not pre_values:
-            print(f"   ⚠️ No valid data found for {column_to_plot}, skipping...")
-            continue
-
-        pre_array = np.asarray(pre_values, dtype=float)
-        post_array = np.asarray(post_values, dtype=float)
-
-        if pre_array.size > 1:
-            t_stat, p_value = ttest_rel(pre_array, post_array)
-            print(f"   📊 Paired t-test ({column_to_plot}): t={t_stat:.4f}, p={p_value:.4f}, n={pre_array.size}")
-        else:
-            p_value = np.nan
-            print(f"   ⚠️ Not enough data for paired t-test ({column_to_plot}); n={pre_array.size}")
-
-        save_path = None
-        if target_dir is not None:
-            safe_name = column_to_plot.replace('/', '_')
-            save_path = target_dir / f"{safe_name}_prepost_comparison.pdf"
-
-        _render_prepost_plot(
-            column_to_plot=column_to_plot,
-            pre_values=pre_array,
-            post_values=post_array,
-            mouse_labels=mouse_labels,
-            mouse_colors=mouse_colors,
-            p_value=p_value,
-            save_path=save_path,
-        )
+#     plt.show()
+#     plt.close(fig)
 
 
-def plot_prepost_from_cohort_csv(
-    cohort_csv_path: Path,
-    columns_to_plot,
-    selected_mice=None,
-    pre_time=(-2, 0),
-    post_time=(0, 2),
-    save_dir: Optional[Path] = None,
-) -> None:
-    """Generate pre/post comparison plots from an existing cohort_aligned_data_analysis.csv."""
-    cohort_csv_path = Path(cohort_csv_path)
-    if not cohort_csv_path.exists():
-        print(f"⚠️ Cohort CSV not found: {cohort_csv_path}")
-        return
+# def plot_prepost_from_results(
+#     results: dict,
+#     columns_to_plot,
+#     selected_mice,
+#     pre_time=(-2, 0),
+#     post_time=(0, 2),
+#     save_dir: Optional[Path] = None,
+#     main_data_dir: Optional[Path] = None,
+# ) -> None:
+#     """Generate pre/post comparison plots using freshly computed results."""
+#     if not results:
+#         print("⚠️ No results available for pre/post plotting.")
+#         return
 
-    df = pd.read_csv(cohort_csv_path)
-    if df.empty:
-        print(f"⚠️ Cohort CSV is empty: {cohort_csv_path}")
-        return
+#     target_dir: Optional[Path]
+#     if save_dir is not None:
+#         target_dir = Path(save_dir)
+#     elif main_data_dir is not None:
+#         target_dir = Path(main_data_dir) / "baselined"
+#     else:
+#         target_dir = None
 
-    if selected_mice:
-        df = df[df['Animal_ID'].astype(str).isin(selected_mice)]
-        if df.empty:
-            print(f"⚠️ No matching animals found in cohort CSV for {selected_mice}")
-            return
+#     if target_dir is not None:
+#         target_dir.mkdir(parents=True, exist_ok=True)
 
-    if save_dir is not None:
-        target_dir = Path(save_dir)
-    else:
-        target_dir = cohort_csv_path.parent / "prepost_plots"
-    target_dir.mkdir(parents=True, exist_ok=True)
+#     mouse_colors = _build_mouse_color_map(selected_mice or results.get('mean_data_per_mouse', {}).keys())
 
-    mouse_labels_all = df['Animal_ID'].astype(str).tolist()
-    mouse_colors = _build_mouse_color_map(mouse_labels_all)
+#     for column_to_plot in columns_to_plot:
+#         if column_to_plot not in results['grand_averages'].columns:
+#             print(f"⚠️ Column {column_to_plot} not found in results, skipping...")
+#             continue
 
-    for column_to_plot in columns_to_plot:
-        pre_col = f"{column_to_plot}_pre_mean"
-        post_col = f"{column_to_plot}_post_mean"
+#         pre_values = []
+#         post_values = []
+#         mouse_labels = []
 
-        if pre_col not in df.columns or post_col not in df.columns:
-            print(f"⚠️ Required columns not found for {column_to_plot}, skipping...")
-            continue
+#         for mouse in selected_mice:
+#             if mouse not in results['mean_data_per_mouse']:
+#                 continue
 
-        pre_values = df[pre_col].astype(float).to_numpy()
-        post_values = df[post_col].astype(float).to_numpy()
-        mouse_labels = df['Animal_ID'].astype(str).tolist()
+#             mean_data = results['mean_data_per_mouse'][mouse][column_to_plot]
+#             pre_mask = (mean_data.index >= pre_time[0]) & (mean_data.index < pre_time[1])
+#             post_mask = (mean_data.index >= post_time[0]) & (mean_data.index <= post_time[1])
 
-        valid_mask = ~(pd.isna(pre_values) | pd.isna(post_values))
-        if valid_mask.sum() == 0:
-            print(f"   ⚠️ No valid data found for {column_to_plot} in cohort CSV, skipping...")
-            continue
+#             if not (pre_mask.any() and post_mask.any()):
+#                 continue
 
-        pre_values = _convert_velocity_values(column_to_plot, pre_values[valid_mask])
-        post_values = _convert_velocity_values(column_to_plot, post_values[valid_mask])
-        filtered_labels = [mouse_labels[idx] for idx, keep in enumerate(valid_mask) if keep]
+#             pre_mean = mean_data.loc[pre_mask].mean()
+#             post_mean = mean_data.loc[post_mask].mean()
 
-        if pre_values.size > 1:
-            t_stat, p_value = ttest_rel(pre_values, post_values)
-            print(f"   📊 Cohort CSV paired t-test ({column_to_plot}): t={t_stat:.4f}, p={p_value:.4f}, n={pre_values.size}")
-        else:
-            p_value = np.nan
-            print(f"   ⚠️ Not enough data in cohort CSV for paired t-test ({column_to_plot}); n={pre_values.size}")
+#             pre_mean = _convert_velocity_values(column_to_plot, [pre_mean])[0]
+#             post_mean = _convert_velocity_values(column_to_plot, [post_mean])[0]
 
-        safe_name = column_to_plot.replace('/', '_')
-        save_path = target_dir / f"{safe_name}_prepost_from_csv.pdf"
+#             if pd.isna(pre_mean) or pd.isna(post_mean):
+#                 continue
 
-        # Build color map specific to filtered labels
-        filtered_colors = {label: mouse_colors.get(label, 'gray') for label in filtered_labels}
+#             pre_values.append(pre_mean)
+#             post_values.append(post_mean)
+#             mouse_labels.append(mouse)
 
-        _render_prepost_plot(
-            column_to_plot=column_to_plot,
-            pre_values=pre_values,
-            post_values=post_values,
-            mouse_labels=filtered_labels,
-            mouse_colors=filtered_colors,
-            p_value=p_value,
-            save_path=save_path,
-        )
+#         if not pre_values:
+#             print(f"   ⚠️ No valid data found for {column_to_plot}, skipping...")
+#             continue
 
+#         pre_array = np.asarray(pre_values, dtype=float)
+#         post_array = np.asarray(post_values, dtype=float)
+
+#         if pre_array.size > 1:
+#             t_stat, p_value = ttest_rel(pre_array, post_array)
+#             print(f"   📊 Paired t-test ({column_to_plot}): t={t_stat:.4f}, p={p_value:.4f}, n={pre_array.size}")
+#         else:
+#             p_value = np.nan
+#             print(f"   ⚠️ Not enough data for paired t-test ({column_to_plot}); n={pre_array.size}")
+
+#         save_path = None
+#         if target_dir is not None:
+#             safe_name = column_to_plot.replace('/', '_')
+#             save_path = target_dir / f"{safe_name}_prepost_comparison.pdf"
+
+#         _render_prepost_plot(
+#             column_to_plot=column_to_plot,
+#             pre_values=pre_array,
+#             post_values=post_array,
+#             mouse_labels=mouse_labels,
+#             mouse_colors=mouse_colors,
+#             p_value=p_value,
+#             save_path=save_path,
+#         )
+
+
+# def plot_prepost_from_cohort_csv(
+#     cohort_csv_path: Path,
+#     columns_to_plot,
+#     selected_mice=None,
+#     pre_time=(-2, 0),
+#     post_time=(0, 2),
+#     save_dir: Optional[Path] = None,
+# ) -> None:
+#     """Generate pre/post comparison plots from an existing cohort_aligned_data_analysis.csv."""
+#     cohort_csv_path = Path(cohort_csv_path)
+#     if not cohort_csv_path.exists():
+#         print(f"⚠️ Cohort CSV not found: {cohort_csv_path}")
+#         return
+
+#     df = pd.read_csv(cohort_csv_path)
+#     if df.empty:
+#         print(f"⚠️ Cohort CSV is empty: {cohort_csv_path}")
+#         return
+
+#     if selected_mice:
+#         df = df[df['Animal_ID'].astype(str).isin(selected_mice)]
+#         if df.empty:
+#             print(f"⚠️ No matching animals found in cohort CSV for {selected_mice}")
+#             return
+
+#     if save_dir is not None:
+#         target_dir = Path(save_dir)
+#     else:
+#         target_dir = cohort_csv_path.parent / "prepost_plots"
+#     target_dir.mkdir(parents=True, exist_ok=True)
+
+#     mouse_labels_all = df['Animal_ID'].astype(str).tolist()
+#     mouse_colors = _build_mouse_color_map(mouse_labels_all)
+
+#     for column_to_plot in columns_to_plot:
+#         pre_col = f"{column_to_plot}_pre_mean"
+#         post_col = f"{column_to_plot}_post_mean"
+
+#         if pre_col not in df.columns or post_col not in df.columns:
+#             print(f"⚠️ Required columns not found for {column_to_plot}, skipping...")
+#             continue
+
+#         pre_values = df[pre_col].astype(float).to_numpy()
+#         post_values = df[post_col].astype(float).to_numpy()
+#         mouse_labels = df['Animal_ID'].astype(str).tolist()
+
+#         valid_mask = ~(pd.isna(pre_values) | pd.isna(post_values))
+#         if valid_mask.sum() == 0:
+#             print(f"   ⚠️ No valid data found for {column_to_plot} in cohort CSV, skipping...")
+#             continue
+
+#         pre_values = _convert_velocity_values(column_to_plot, pre_values[valid_mask])
+#         post_values = _convert_velocity_values(column_to_plot, post_values[valid_mask])
+#         filtered_labels = [mouse_labels[idx] for idx, keep in enumerate(valid_mask) if keep]
+
+#         if pre_values.size > 1:
+#             t_stat, p_value = ttest_rel(pre_values, post_values)
+#             print(f"   📊 Cohort CSV paired t-test ({column_to_plot}): t={t_stat:.4f}, p={p_value:.4f}, n={pre_values.size}")
+#         else:
+#             p_value = np.nan
+#             print(f"   ⚠️ Not enough data in cohort CSV for paired t-test ({column_to_plot}); n={pre_values.size}")
+
+#         safe_name = column_to_plot.replace('/', '_')
+#         save_path = target_dir / f"{safe_name}_prepost_from_csv.pdf"
+
+#         # Build color map specific to filtered labels
+#         filtered_colors = {label: mouse_colors.get(label, 'gray') for label in filtered_labels}
+
+#         _render_prepost_plot(
+#             column_to_plot=column_to_plot,
+#             pre_values=pre_values,
+#             post_values=post_values,
+#             mouse_labels=filtered_labels,
+#             mouse_colors=filtered_colors,
+#             p_value=p_value,
+#             save_path=save_path,
+#         )
 
 # %%
-# GENERATE PLOTS
-#---------------------------------------------------------------------------------------------------#
+# FIXME not needed# GENERATE PLOTS
+# #---------------------------------------------------------------------------------------------------#
 
-if results and GENERATE_PLOTS:
-    print(f"📊 Generating plots for {len(columns_to_plot)} columns...")
-    print(f"📊 Selected mice: {selected_mice}")
-    print(f"📊 Available mice in results: {list(results['mean_data_per_mouse'].keys())}")
+# if results and GENERATE_PLOTS:
+#     print(f"📊 Generating plots for {len(columns_to_plot)} columns...")
+#     print(f"📊 Selected mice: {selected_mice}")
+#     print(f"📊 Available mice in results: {list(results['mean_data_per_mouse'].keys())}")
     
-    missing_mice = [mouse for mouse in selected_mice if mouse not in results['mean_data_per_mouse']]
-    if missing_mice:
-        print(f"⚠️ WARNING: These mice are in selected_mice but not in results: {missing_mice}")
+#     missing_mice = [mouse for mouse in selected_mice if mouse not in results['mean_data_per_mouse']]
+#     if missing_mice:
+#         print(f"⚠️ WARNING: These mice are in selected_mice but not in results: {missing_mice}")
     
-    plot_time_series_and_scatter(results, columns_to_plot, selected_mice, main_data_dir, event_name)
-else:
-    print("⏭️  Skipping plot generation (GENERATE_PLOTS=False or no results)")
+#     plot_time_series_and_scatter(results, columns_to_plot, selected_mice, main_data_dir, event_name)
+# else:
+#     print("⏭️  Skipping plot generation (GENERATE_PLOTS=False or no results)")
 
 # %%
-# PRE/POST COMPARISON PLOTS
-#---------------------------------------------------------------------------------------------------#
+# FIXME not needed # PRE/POST COMPARISON PLOTS
+# #---------------------------------------------------------------------------------------------------#
 
-prepost_output_dir = Path(PREPOST_SAVE_DIR).expanduser() if PREPOST_SAVE_DIR else None
+# prepost_output_dir = Path(PREPOST_SAVE_DIR).expanduser() if PREPOST_SAVE_DIR else None
 
-if PLOT_PREPOST_FROM_RESULTS and results:
-    print(f"\n{'='*60}")
-    print("PRE/POST COMPARISON FROM CURRENT RESULTS")
-    print(f"{'='*60}")
-    plot_prepost_from_results(
-        results=results,
-        columns_to_plot=columns_to_plot,
-        selected_mice=selected_mice,
-        pre_time=(-2, 0),
-        post_time=(0, 2),
-        save_dir=prepost_output_dir,
-        main_data_dir=main_data_dir,
-    )
-else:
-    print("⏭️  Skipping pre/post plots from results (flag disabled or no results)")
+# if PLOT_PREPOST_FROM_RESULTS and results:
+#     print(f"\n{'='*60}")
+#     print("PRE/POST COMPARISON FROM CURRENT RESULTS")
+#     print(f"{'='*60}")
+#     plot_prepost_from_results(
+#         results=results,
+#         columns_to_plot=columns_to_plot,
+#         selected_mice=selected_mice,
+#         pre_time=(-2, 0),
+#         post_time=(0, 2),
+#         save_dir=prepost_output_dir,
+#         main_data_dir=main_data_dir,
+#     )
+# else:
+#     print("⏭️  Skipping pre/post plots from results (flag disabled or no results)")
 
-if LOAD_EXISTING_PREPOST_CSV and EXISTING_PREPOST_CSV_PATH:
-    print(f"\n{'='*60}")
-    print("PRE/POST COMPARISON FROM EXISTING COHORT CSV")
-    print(f"{'='*60}")
-    try:
-        plot_prepost_from_cohort_csv(
-            cohort_csv_path=EXISTING_PREPOST_CSV_PATH,
-            columns_to_plot=columns_to_plot,
-            selected_mice=selected_mice if selected_mice else None,
-            pre_time=(-2, 0),
-            post_time=(0, 2),
-            save_dir=prepost_output_dir,
-        )
-    except Exception as exc:
-        print(f"⚠️ Error plotting pre/post from existing cohort CSV: {exc}")
-else:
-    print("⏭️  Skipping pre/post plots from existing CSV (flag disabled or path not set)")
+# if LOAD_EXISTING_PREPOST_CSV and EXISTING_PREPOST_CSV_PATH:
+#     print(f"\n{'='*60}")
+#     print("PRE/POST COMPARISON FROM EXISTING COHORT CSV")
+#     print(f"{'='*60}")
+#     try:
+#         plot_prepost_from_cohort_csv(
+#             cohort_csv_path=EXISTING_PREPOST_CSV_PATH,
+#             columns_to_plot=columns_to_plot,
+#             selected_mice=selected_mice if selected_mice else None,
+#             pre_time=(-2, 0),
+#             post_time=(0, 2),
+#             save_dir=prepost_output_dir,
+#         )
+#     except Exception as exc:
+#         print(f"⚠️ Error plotting pre/post from existing cohort CSV: {exc}")
+# else:
+#     print("⏭️  Skipping pre/post plots from existing CSV (flag disabled or path not set)")
 
 # %%
 # SAVE GRAND AVERAGES CSV
