@@ -493,164 +493,6 @@ def baseline_saccade_segments(segments, baseline_window_start_time, baseline_win
     return segments
 
 
-def filter_outlier_saccades(segments, direction_name):
-    """
-    Filter out outlier segments using IQR method on amplitude and extreme values.
-    
-    Parameters:
-    -----------
-    segments : list of pd.DataFrame
-        List of saccade segment DataFrames
-    direction_name : str
-        Direction label (e.g., 'upward', 'downward')
-        
-    Returns:
-    --------
-    tuple : (filtered_segments, outliers_metadata, outlier_segments)
-    """
-    if len(segments) == 0:
-        return [], [], []
-    
-    # Calculate statistics on amplitudes
-    amplitudes = [seg['saccade_amplitude'].iloc[0] for seg in segments]
-    q1_amp = np.percentile(amplitudes, 25)
-    q3_amp = np.percentile(amplitudes, 75)
-    iqr_amp = q3_amp - q1_amp
-    lower_bound_amp = q1_amp - 3 * iqr_amp  # Using 3*IQR for more lenient filtering
-    upper_bound_amp = q3_amp + 3 * iqr_amp
-    
-    # Calculate statistics on max absolute position values
-    max_pos_values = []
-    max_vel_values = []
-    for seg in segments:
-        max_pos_values.append(np.abs(seg['X_smooth_baselined']).max())
-        max_vel_values.append(np.abs(seg['vel_x_smooth']).max())
-    
-    q1_pos = np.percentile(max_pos_values, 25)
-    q3_pos = np.percentile(max_pos_values, 75)
-    iqr_pos = q3_pos - q1_pos
-    upper_bound_pos = q3_pos + 3 * iqr_pos
-    
-    q1_vel = np.percentile(max_vel_values, 25)
-    q3_vel = np.percentile(max_vel_values, 75)
-    iqr_vel = q3_vel - q1_vel
-    upper_bound_vel = q3_vel + 3 * iqr_vel
-    
-    filtered = []
-    outliers_metadata = []
-    outlier_segments = []
-    
-    for seg in segments:
-        amp = seg['saccade_amplitude'].iloc[0]
-        max_pos = np.abs(seg['X_smooth_baselined']).max()
-        max_vel = np.abs(seg['vel_x_smooth']).max()
-        seg_id = seg['saccade_id'].iloc[0]
-        
-        # Get signed displacement from raw position (for reference)
-        displacement_raw = seg['saccade_displacement'].iloc[0] if 'saccade_displacement' in seg.columns else np.nan
-        
-        # Get peak velocity (most reliable indicator of direction)
-        peak_vel = seg['saccade_peak_velocity'].iloc[0] if 'saccade_peak_velocity' in seg.columns else np.nan
-        
-        # Calculate baselined displacement from the segment (removes pre-saccade offset)
-        # This better reflects the saccadic movement itself, independent of drift
-        if 'X_smooth_baselined' in seg.columns and len(seg) > 0:
-            # Find the saccade period within the segment
-            if 'is_saccade_period' in seg.columns:
-                is_saccade_period = seg['is_saccade_period']
-                if isinstance(is_saccade_period, pd.Series):
-                    saccade_mask = is_saccade_period.values
-                else:
-                    saccade_mask = np.array([bool(is_saccade_period.iloc[0])] * len(seg))
-            else:
-                saccade_mask = np.array([False] * len(seg))
-            
-            if saccade_mask.sum() > 0:
-                # Use position at start and end of saccade period
-                saccade_positions = seg.loc[saccade_mask, 'X_smooth_baselined'].values
-                if len(saccade_positions) > 0:
-                    displacement_baselined = saccade_positions[-1] - saccade_positions[0]
-                else:
-                    displacement_baselined = np.nan
-            else:
-                # Fallback: use first and last baselined positions in segment
-                baselined_positions = seg['X_smooth_baselined'].dropna().values
-                if len(baselined_positions) > 1:
-                    displacement_baselined = baselined_positions[-1] - baselined_positions[0]
-                else:
-                    displacement_baselined = np.nan
-        else:
-            displacement_baselined = np.nan
-        
-        # Combined direction validation: check both peak velocity (primary) and displacement (secondary)
-        # Peak velocity is the most reliable since it's what was used for initial classification
-        wrong_direction = False
-        wrong_direction_reasons = []
-        
-        # Primary check: Peak velocity sign must match expected direction
-        if not np.isnan(peak_vel):
-            if direction_name == 'upward' and peak_vel < 0:
-                wrong_direction = True
-                wrong_direction_reasons.append('peak_velocity_negative')
-            elif direction_name == 'downward' and peak_vel > 0:
-                wrong_direction = True
-                wrong_direction_reasons.append('peak_velocity_positive')
-        
-        # Secondary check: Displacement should also match (using baselined displacement if available)
-        displacement_to_check = displacement_baselined if not np.isnan(displacement_baselined) else displacement_raw
-        if not np.isnan(displacement_to_check):
-            if direction_name == 'upward' and displacement_to_check < 0:
-                if not wrong_direction:
-                    wrong_direction = True
-                wrong_direction_reasons.append('displacement_negative')
-            elif direction_name == 'downward' and displacement_to_check > 0:
-                if not wrong_direction:
-                    wrong_direction = True
-                wrong_direction_reasons.append('displacement_positive')
-        
-        # If peak velocity and displacement disagree, this is a strong indicator of misclassification
-        if not np.isnan(peak_vel) and not np.isnan(displacement_to_check):
-            if (peak_vel > 0 and displacement_to_check < 0) or (peak_vel < 0 and displacement_to_check > 0):
-                wrong_direction = True
-                wrong_direction_reasons.append('peak_vel_displacement_disagree')
-        
-        # Check if outlier (including wrong direction)
-        is_outlier = (amp < lower_bound_amp or amp > upper_bound_amp or
-                     max_pos > upper_bound_pos or
-                     max_vel > upper_bound_vel or
-                     wrong_direction)
-        
-        if is_outlier:
-            outlier_reason = []
-            if amp < lower_bound_amp or amp > upper_bound_amp:
-                outlier_reason.append('amplitude')
-            if max_pos > upper_bound_pos:
-                outlier_reason.append('position')
-            if max_vel > upper_bound_vel:
-                outlier_reason.append('velocity')
-            if wrong_direction:
-                outlier_reason.append('wrong_direction')
-                if wrong_direction_reasons:
-                    outlier_reason.append(f"({', '.join(wrong_direction_reasons)})")
-            
-            outliers_metadata.append({
-                'saccade_id': seg_id,
-                'amplitude': amp,
-                'displacement_raw': displacement_raw,
-                'displacement_baselined': displacement_baselined,
-                'peak_velocity': peak_vel,
-                'max_abs_position': max_pos,
-                'max_abs_velocity': max_vel,
-                'direction': direction_name,
-                'outlier_reason': ', '.join(outlier_reason)
-            })
-            outlier_segments.append(seg)  # Keep the segment for plotting
-        else:
-            filtered.append(seg)
-    
-    return filtered, outliers_metadata, outlier_segments
-
-
 def get_color_mapping(amplitudes):
     """
     Create color mapping from min to max amplitude using plasma colormap.
@@ -1483,22 +1325,11 @@ def analyze_eye_video_saccades(
         position_col='X_raw'
     )
 
-    # Filter outliers
-    # COMMENTED OUT: Outlier filtering removed per user request
-    # upward_segments_all = [seg for seg in peri_saccades if seg['saccade_direction'].iloc[0] == 'upward']
-    # downward_segments_all = [seg for seg in peri_saccades if seg['saccade_direction'].iloc[0] == 'downward']
-    # upward_segments, upward_outliers_meta, upward_outlier_segments = filter_outlier_saccades(upward_segments_all, 'upward')
-    # downward_segments, downward_outliers_meta, downward_outlier_segments = filter_outlier_saccades(downward_segments_all, 'downward')
-    
-    # Use all segments without filtering
+    # Use all segments (outlier filtering removed per user request)
     upward_segments_all = [seg for seg in peri_saccades if seg['saccade_direction'].iloc[0] == 'upward']
     downward_segments_all = [seg for seg in peri_saccades if seg['saccade_direction'].iloc[0] == 'downward']
     upward_segments = upward_segments_all
     downward_segments = downward_segments_all
-    upward_outliers_meta = []
-    upward_outlier_segments = []
-    downward_outliers_meta = []
-    downward_outlier_segments = []
 
     # Update amplitude in DataFrames to match baselined amplitude from segments
     # This ensures consistency between segment amplitude and DataFrame amplitude
@@ -1660,11 +1491,7 @@ def analyze_eye_video_saccades(
         'all_saccades_df': all_saccades_df,  # Combined DataFrame with classification
         'peri_saccades': peri_saccades,
         'upward_segments': upward_segments,
-        'upward_outliers_meta': upward_outliers_meta,
-        'upward_outlier_segments': upward_outlier_segments,
         'downward_segments': downward_segments,
-        'downward_outliers_meta': downward_outliers_meta,
-        'downward_outlier_segments': downward_outlier_segments,
         'vel_thresh': vel_thresh,
         'video_label': video_label,
         'all_excluded': all_excluded,
