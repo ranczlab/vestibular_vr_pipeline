@@ -38,6 +38,7 @@ import gc  # garbage collector for removing large variables from memory instantl
 import importlib  # for force updating changed packages 
 import seaborn as sns
 import warnings
+from typing import Optional
 warnings.filterwarnings('ignore')
 
 # Interactive widgets for dropdowns
@@ -111,9 +112,16 @@ columns_to_plot = [
 
 # Save options
 SAVE_PICKLE = False  # Save results as pickle file (deprecated - use SAVE_ANIMAL_CSV instead)
-SAVE_ANIMAL_CSV = True  # Save averaged mismatch aligned data for each animal as CSV
-SAVE_CSV = True      # Save grand averages with SEM as CSV file
+SAVE_ANIMAL_CSV = False  # Save averaged mismatch aligned data for each animal as CSV
+SAVE_CSV = False      # Save grand averages with SEM as CSV file
+
 GENERATE_PLOTS = True  # Generate plots
+
+# Pre/post comparison plotting options
+PLOT_PREPOST_FROM_RESULTS = False  # Generate pre/post plots from freshly computed results
+LOAD_EXISTING_PREPOST_CSV = True  # Load a previously created cohort_aligned_data_analysis.csv
+EXISTING_PREPOST_CSV_PATH = Path('/Users/nora/Desktop/for_poster/cohort_3/cohort_aligned_data_analysis.csv').expanduser()
+PREPOST_SAVE_DIR = None  # Optional custom directory to save pre/post plots
 
 # Data directories (add your paths here)
 DATA_DIRS = [
@@ -956,6 +964,351 @@ def plot_time_series_and_scatter(results, columns_to_plot, selected_mice, main_d
         plt.close()
 
 
+#---------------------------------------------------------------------------------------------------#
+# PRE/POST COMPARISON PLOTTING UTILITIES
+#---------------------------------------------------------------------------------------------------#
+
+def _compute_sem(values: np.ndarray) -> float:
+    """Compute the standard error of the mean for an array, ignoring NaNs."""
+    arr = np.asarray(values, dtype=float)
+    arr = arr[np.isfinite(arr)]
+    if arr.size <= 1:
+        return 0.0 if arr.size == 1 else np.nan
+    return np.nanstd(arr, ddof=1) / np.sqrt(arr.size)
+
+
+def _convert_cm_to_inches(cm: float) -> float:
+    """Convert centimeters to inches for matplotlib figsize."""
+    return cm / 2.54
+
+
+def _build_mouse_color_map(mouse_labels):
+    """Assign consistent colors to each mouse using the gnuplot2 palette."""
+    unique_mice = sorted(set(mouse_labels))
+    if not unique_mice:
+        return {}
+    colors = plt.cm.gnuplot2(np.linspace(0, 0.95, len(unique_mice)))
+    return {mouse: colors[idx] for idx, mouse in enumerate(unique_mice)}
+
+
+def _format_ylabel(column_name: str) -> str:
+    """Return a nicely formatted y-label, including units for relevant columns."""
+    if 'Motor' in column_name and ('Velocity' in column_name or 'velocity' in column_name.lower()):
+        return column_name.replace('_', ' ') + ' (deg/s)'
+    if 'Velocity' in column_name or 'velocity' in column_name.lower():
+        return column_name.replace('_', ' ') + ' (cm/s)'
+    return column_name.replace('_', ' ')
+
+
+def _convert_velocity_values(column_name: str, values):
+    """Convert velocity data from m/s to cm/s when necessary."""
+    if ('Velocity' in column_name or 'velocity' in column_name.lower()) and 'Motor' not in column_name:
+        return np.asarray(values, dtype=float) * 100.0
+    return np.asarray(values, dtype=float)
+
+
+def _render_prepost_plot(
+    column_to_plot: str,
+    pre_values: np.ndarray,
+    post_values: np.ndarray,
+    mouse_labels,
+    mouse_colors,
+    p_value: float,
+    save_path: Optional[Path] = None,
+) -> None:
+    """Render a pre/post plot with individual mice and grand average."""
+    pre_values = np.asarray(pre_values, dtype=float)
+    post_values = np.asarray(post_values, dtype=float)
+
+    # Compute summary statistics
+    pre_mean = np.nanmean(pre_values)
+    post_mean = np.nanmean(post_values)
+    pre_sem = _compute_sem(pre_values)
+    post_sem = _compute_sem(post_values)
+
+    # Update plotting style
+    plt.rcParams.update({
+        'font.size': 15,
+        'font.family': 'sans-serif',
+        'font.sans-serif': ['Arial'],
+        'axes.titlesize': 15,
+        'axes.labelsize': 15,
+        'legend.fontsize': 12,
+        'xtick.labelsize': 15,
+        'ytick.labelsize': 15
+    })
+
+    fig, ax = plt.subplots(
+        figsize=(
+            _convert_cm_to_inches(7.0),
+            _convert_cm_to_inches(7.0),
+        )
+    )
+
+    # Plot individual mice
+    for label, pre_val, post_val in zip(mouse_labels, pre_values, post_values):
+        color = mouse_colors.get(label, 'gray')
+        ax.plot(
+            [0, 1],
+            [pre_val, post_val],
+            color=color,
+            marker='o',
+            linewidth=1.5,
+            markersize=6,
+            alpha=0.7,
+            zorder=1,
+        )
+
+    # Add SEM shading along the grand mean line
+    x_band = np.linspace(0, 1, 100)
+    upper_band = np.interp(x_band, [0, 1], [pre_mean + pre_sem, post_mean + post_sem])
+    lower_band = np.interp(x_band, [0, 1], [pre_mean - pre_sem, post_mean - post_sem])
+    ax.fill_between(
+        x_band,
+        lower_band,
+        upper_band,
+        color='gray',
+        alpha=0.3,
+        zorder=2,
+    )
+
+    # Plot grand average line
+    ax.plot(
+        [0, 1],
+        [pre_mean, post_mean],
+        color='black',
+        marker='o',
+        linewidth=2.5,
+        markersize=10,
+        alpha=1,
+        zorder=3,
+        label='Grand Average',
+    )
+
+    ax.set_xticks([0, 1])
+    ax.set_xticklabels(['Pre', 'Post'], fontsize=15, fontfamily='Arial')
+    ax.set_xlim(-0.4, 1.4)
+
+    ax.set_ylabel(_format_ylabel(column_to_plot), fontsize=15, fontfamily='Arial')
+    ax.grid(False)
+
+    # Determine y-limits with padding
+    finite_values = np.concatenate([pre_values, post_values])
+    finite_values = finite_values[np.isfinite(finite_values)]
+    if finite_values.size:
+        data_min = finite_values.min()
+        data_max = finite_values.max()
+        span = data_max - data_min
+        if span == 0:
+            span = max(abs(data_max), 1.0) * 0.1
+        lower = data_min - 0.1 * span
+        upper = data_max + 0.25 * span
+        ax.set_ylim(lower, upper)
+    else:
+        lower, upper = -1, 1.2
+        span = upper - lower
+        ax.set_ylim(lower, upper)
+
+    # Annotate significance
+    if not np.isnan(p_value):
+        significance = '***' if p_value < 0.001 else '**' if p_value < 0.01 else '*' if p_value < 0.05 else 'ns'
+        y_lim = ax.get_ylim()
+        span = y_lim[1] - y_lim[0]
+        y_pos = y_lim[1] - 0.01 * span
+        ax.text(
+            0.5,
+            y_pos,
+            f'p = {p_value:.3f} {significance}',
+            ha='center',
+            va='top',
+            fontsize=12,
+            fontfamily='Arial',
+        )
+
+    plt.tight_layout()
+
+    if save_path:
+        save_path = Path(save_path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            fig.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"   ✅ Saved: {save_path}")
+        except Exception as exc:
+            print(f"   ⚠️ Error saving plot: {exc}")
+
+    plt.show()
+    plt.close(fig)
+
+
+def plot_prepost_from_results(
+    results: dict,
+    columns_to_plot,
+    selected_mice,
+    pre_time=(-2, 0),
+    post_time=(0, 2),
+    save_dir: Optional[Path] = None,
+    main_data_dir: Optional[Path] = None,
+) -> None:
+    """Generate pre/post comparison plots using freshly computed results."""
+    if not results:
+        print("⚠️ No results available for pre/post plotting.")
+        return
+
+    target_dir: Optional[Path]
+    if save_dir is not None:
+        target_dir = Path(save_dir)
+    elif main_data_dir is not None:
+        target_dir = Path(main_data_dir) / "baselined"
+    else:
+        target_dir = None
+
+    if target_dir is not None:
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+    mouse_colors = _build_mouse_color_map(selected_mice or results.get('mean_data_per_mouse', {}).keys())
+
+    for column_to_plot in columns_to_plot:
+        if column_to_plot not in results['grand_averages'].columns:
+            print(f"⚠️ Column {column_to_plot} not found in results, skipping...")
+            continue
+
+        pre_values = []
+        post_values = []
+        mouse_labels = []
+
+        for mouse in selected_mice:
+            if mouse not in results['mean_data_per_mouse']:
+                continue
+
+            mean_data = results['mean_data_per_mouse'][mouse][column_to_plot]
+            pre_mask = (mean_data.index >= pre_time[0]) & (mean_data.index < pre_time[1])
+            post_mask = (mean_data.index >= post_time[0]) & (mean_data.index <= post_time[1])
+
+            if not (pre_mask.any() and post_mask.any()):
+                continue
+
+            pre_mean = mean_data.loc[pre_mask].mean()
+            post_mean = mean_data.loc[post_mask].mean()
+
+            pre_mean = _convert_velocity_values(column_to_plot, [pre_mean])[0]
+            post_mean = _convert_velocity_values(column_to_plot, [post_mean])[0]
+
+            if pd.isna(pre_mean) or pd.isna(post_mean):
+                continue
+
+            pre_values.append(pre_mean)
+            post_values.append(post_mean)
+            mouse_labels.append(mouse)
+
+        if not pre_values:
+            print(f"   ⚠️ No valid data found for {column_to_plot}, skipping...")
+            continue
+
+        pre_array = np.asarray(pre_values, dtype=float)
+        post_array = np.asarray(post_values, dtype=float)
+
+        if pre_array.size > 1:
+            t_stat, p_value = ttest_rel(pre_array, post_array)
+            print(f"   📊 Paired t-test ({column_to_plot}): t={t_stat:.4f}, p={p_value:.4f}, n={pre_array.size}")
+        else:
+            p_value = np.nan
+            print(f"   ⚠️ Not enough data for paired t-test ({column_to_plot}); n={pre_array.size}")
+
+        save_path = None
+        if target_dir is not None:
+            safe_name = column_to_plot.replace('/', '_')
+            save_path = target_dir / f"{safe_name}_prepost_comparison.pdf"
+
+        _render_prepost_plot(
+            column_to_plot=column_to_plot,
+            pre_values=pre_array,
+            post_values=post_array,
+            mouse_labels=mouse_labels,
+            mouse_colors=mouse_colors,
+            p_value=p_value,
+            save_path=save_path,
+        )
+
+
+def plot_prepost_from_cohort_csv(
+    cohort_csv_path: Path,
+    columns_to_plot,
+    selected_mice=None,
+    pre_time=(-2, 0),
+    post_time=(0, 2),
+    save_dir: Optional[Path] = None,
+) -> None:
+    """Generate pre/post comparison plots from an existing cohort_aligned_data_analysis.csv."""
+    cohort_csv_path = Path(cohort_csv_path)
+    if not cohort_csv_path.exists():
+        print(f"⚠️ Cohort CSV not found: {cohort_csv_path}")
+        return
+
+    df = pd.read_csv(cohort_csv_path)
+    if df.empty:
+        print(f"⚠️ Cohort CSV is empty: {cohort_csv_path}")
+        return
+
+    if selected_mice:
+        df = df[df['Animal_ID'].astype(str).isin(selected_mice)]
+        if df.empty:
+            print(f"⚠️ No matching animals found in cohort CSV for {selected_mice}")
+            return
+
+    if save_dir is not None:
+        target_dir = Path(save_dir)
+    else:
+        target_dir = cohort_csv_path.parent / "prepost_plots"
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    mouse_labels_all = df['Animal_ID'].astype(str).tolist()
+    mouse_colors = _build_mouse_color_map(mouse_labels_all)
+
+    for column_to_plot in columns_to_plot:
+        pre_col = f"{column_to_plot}_pre_mean"
+        post_col = f"{column_to_plot}_post_mean"
+
+        if pre_col not in df.columns or post_col not in df.columns:
+            print(f"⚠️ Required columns not found for {column_to_plot}, skipping...")
+            continue
+
+        pre_values = df[pre_col].astype(float).to_numpy()
+        post_values = df[post_col].astype(float).to_numpy()
+        mouse_labels = df['Animal_ID'].astype(str).tolist()
+
+        valid_mask = ~(pd.isna(pre_values) | pd.isna(post_values))
+        if valid_mask.sum() == 0:
+            print(f"   ⚠️ No valid data found for {column_to_plot} in cohort CSV, skipping...")
+            continue
+
+        pre_values = _convert_velocity_values(column_to_plot, pre_values[valid_mask])
+        post_values = _convert_velocity_values(column_to_plot, post_values[valid_mask])
+        filtered_labels = [mouse_labels[idx] for idx, keep in enumerate(valid_mask) if keep]
+
+        if pre_values.size > 1:
+            t_stat, p_value = ttest_rel(pre_values, post_values)
+            print(f"   📊 Cohort CSV paired t-test ({column_to_plot}): t={t_stat:.4f}, p={p_value:.4f}, n={pre_values.size}")
+        else:
+            p_value = np.nan
+            print(f"   ⚠️ Not enough data in cohort CSV for paired t-test ({column_to_plot}); n={pre_values.size}")
+
+        safe_name = column_to_plot.replace('/', '_')
+        save_path = target_dir / f"{safe_name}_prepost_from_csv.pdf"
+
+        # Build color map specific to filtered labels
+        filtered_colors = {label: mouse_colors.get(label, 'gray') for label in filtered_labels}
+
+        _render_prepost_plot(
+            column_to_plot=column_to_plot,
+            pre_values=pre_values,
+            post_values=post_values,
+            mouse_labels=filtered_labels,
+            mouse_colors=filtered_colors,
+            p_value=p_value,
+            save_path=save_path,
+        )
+
+
 # %%
 # GENERATE PLOTS
 #---------------------------------------------------------------------------------------------------#
@@ -974,8 +1327,47 @@ else:
     print("⏭️  Skipping plot generation (GENERATE_PLOTS=False or no results)")
 
 # %%
-# SAVE GRAND AVERAGES CSV
+# PRE/POST COMPARISON PLOTS
 #---------------------------------------------------------------------------------------------------#
+
+prepost_output_dir = Path(PREPOST_SAVE_DIR).expanduser() if PREPOST_SAVE_DIR else None
+
+if PLOT_PREPOST_FROM_RESULTS and results:
+    print(f"\n{'='*60}")
+    print("PRE/POST COMPARISON FROM CURRENT RESULTS")
+    print(f"{'='*60}")
+    plot_prepost_from_results(
+        results=results,
+        columns_to_plot=columns_to_plot,
+        selected_mice=selected_mice,
+        pre_time=(-2, 0),
+        post_time=(0, 2),
+        save_dir=prepost_output_dir,
+        main_data_dir=main_data_dir,
+    )
+else:
+    print("⏭️  Skipping pre/post plots from results (flag disabled or no results)")
+
+if LOAD_EXISTING_PREPOST_CSV and EXISTING_PREPOST_CSV_PATH:
+    print(f"\n{'='*60}")
+    print("PRE/POST COMPARISON FROM EXISTING COHORT CSV")
+    print(f"{'='*60}")
+    try:
+        plot_prepost_from_cohort_csv(
+            cohort_csv_path=EXISTING_PREPOST_CSV_PATH,
+            columns_to_plot=columns_to_plot,
+            selected_mice=selected_mice if selected_mice else None,
+            pre_time=(-2, 0),
+            post_time=(0, 2),
+            save_dir=prepost_output_dir,
+        )
+    except Exception as exc:
+        print(f"⚠️ Error plotting pre/post from existing cohort CSV: {exc}")
+else:
+    print("⏭️  Skipping pre/post plots from existing CSV (flag disabled or path not set)")
+
+# %%
+# SAVE GRAND AVERAGES CSV
 
 if results and SAVE_CSV:
     # Create a DataFrame combining grand averages and SEMs
@@ -994,191 +1386,6 @@ else:
 
 
 # %%
-# INTERACTIVE GRAND AVERAGE PLOTTING
-#---------------------------------------------------------------------------------------------------#
-
-def find_csv_files(base_paths):
-    """Find all grand_averages CSV files in the given paths."""
-    csv_files = []
-    for base_path in base_paths:
-        path = Path(base_path)
-        if path.exists():
-            # Search in the directory and subdirectories
-            for csv_file in path.rglob('grand_averages_with_sem*.csv'):
-                csv_files.append(str(csv_file))
-    return sorted(csv_files)
-
-def get_available_columns(df):
-    """Get available data columns (excluding Time and SEM columns)."""
-    # Filter out Time column and SEM columns
-    data_cols = [col for col in df.columns 
-                 if col != 'Time (s)' and not col.endswith('_SEM')]
-    return sorted(data_cols)
-
-def get_column_label(column_name):
-    """Generate a readable label for a column."""
-    # Map common column names to readable labels
-    label_map = {
-        'z_470': 'GRAB-5HT3.0 (z-score)',
-        'z_470_Baseline': 'GRAB-5HT3.0 (z-score)',
-        'z_560': 'RGeco1a (z-score)',
-        'z_560_Baseline': 'RGeco1a (z-score)',
-        'Velocity_0X': 'Running spped',
-        'Velocity_0X_Baseline': 'Running speed',
-        'Motor_Velocity': 'Motor Velocity',
-        'Motor_Velocity_Baseline': 'Motor Velocity',
-    }
-    return label_map.get(column_name, column_name)
-
-def get_axis_label(column_name):
-    """Generate axis label based on column name."""
-    if 'z_' in column_name or 'z-score' in column_name.lower():
-        return 'z-score'
-    elif 'Velocity' in column_name or 'velocity' in column_name.lower():
-        return 'Running speed (m/s)'
-    elif 'Motor' in column_name:
-        return 'Motor velocity (m/s)'
-    else:
-        return column_name
-
-def plot_grand_averages_single(df, label, y1_col=None, y2_col=None):
-    """Plot grand averages from a single CSV file with selected columns."""
-    plt.rcParams.update({
-        'font.size': 10,
-        'font.family': 'sans-serif',
-        'font.sans-serif': ['DejaVu Sans'],
-        'axes.titlesize': 10,
-        'axes.labelsize': 10,
-        'legend.fontsize': 8,
-        'xtick.labelsize': 10,
-        'ytick.labelsize': 10
-    })
-    
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax2 = None
-    
-    # Plot y1 column on left axis
-    if y1_col and y1_col in df.columns:
-        ax.plot(df['Time (s)'], df[y1_col], label=get_column_label(y1_col), 
-                color='green', alpha=1)
-        if f'{y1_col}_SEM' in df.columns:
-            ax.fill_between(df['Time (s)'],
-                           df[y1_col] - df[f'{y1_col}_SEM'],
-                           df[y1_col] + df[f'{y1_col}_SEM'],
-                           color='green', alpha=0.1)
-        ax.set_ylabel(get_axis_label(y1_col), fontname='DejaVu Sans', fontsize=10, color='black')
-        ax.tick_params(axis='y', labelcolor='black')
-    
-    # Plot y2 column on right axis (if different from y1)
-    if y2_col and y2_col in df.columns and y2_col != y1_col:
-        ax2 = ax.twinx()
-        ax2.plot(df['Time (s)'], df[y2_col], label=get_column_label(y2_col), 
-                color='slategray', alpha=1)
-        if f'{y2_col}_SEM' in df.columns:
-            ax2.fill_between(df['Time (s)'],
-                            df[y2_col] - df[f'{y2_col}_SEM'],
-                            df[y2_col] + df[f'{y2_col}_SEM'],
-                            color='slategray', alpha=0.2)
-        ax2.set_ylabel(get_axis_label(y2_col), fontname='DejaVu Sans', fontsize=10, color='slategray')
-        ax2.tick_params(axis='y', labelcolor='slategray')
-    
-    ax.axvspan(0, 2, color='gray', alpha=0.2, label='Visual mismatch (0-2s)')
-    ax.set_title(f'Grand Averages: {label}', fontname='DejaVu Sans', fontsize=12)
-    ax.set_xlabel('Time (s)', fontname='DejaVu Sans', fontsize=10)
-    
-    # Combine legends
-    lines, labels = ax.get_legend_handles_labels()
-    if ax2:
-        lines2, labels2 = ax2.get_legend_handles_labels()
-        ax.legend(lines + lines2, labels + labels2, loc='upper right', 
-                 prop={'family': 'DejaVu Sans', 'size': 10})
-    else:
-        ax.legend(lines, labels, loc='upper right', prop={'family': 'DejaVu Sans', 'size': 10})
-    
-    plt.tight_layout()
-    plt.show()
-
-def plot_grand_averages_comparison(df1, df2, label1, label2, y1_col=None, y2_col=None):
-    """Plot grand averages comparing two CSV files with selected columns."""
-    plt.rcParams.update({
-        'font.size': 10,
-        'font.family': 'sans-serif',
-        'font.sans-serif': ['DejaVu Sans'],
-        'axes.titlesize': 10,
-        'axes.labelsize': 10,
-        'legend.fontsize': 8,
-        'xtick.labelsize': 10,
-        'ytick.labelsize': 10
-    })
-    
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax2 = None
-    
-    # Plot y1 column on left axis
-    if y1_col:
-        if y1_col in df1.columns:
-            ax.plot(df1['Time (s)'], df1[y1_col], label=f"{get_column_label(y1_col)} ({label1})", 
-                    color='green', alpha=1)
-            if f'{y1_col}_SEM' in df1.columns:
-                ax.fill_between(df1['Time (s)'],
-                               df1[y1_col] - df1[f'{y1_col}_SEM'],
-                               df1[y1_col] + df1[f'{y1_col}_SEM'],
-                               color='green', alpha=0.1)
-        
-        if y1_col in df2.columns:
-            ax.plot(df2['Time (s)'], df2[y1_col], label=f"{get_column_label(y1_col)} ({label2})", 
-                    color='orange', alpha=1, linestyle='--')
-            if f'{y1_col}_SEM' in df2.columns:
-                ax.fill_between(df2['Time (s)'],
-                               df2[y1_col] - df2[f'{y1_col}_SEM'],
-                               df2[y1_col] + df2[f'{y1_col}_SEM'],
-                               color='orange', alpha=0.1)
-        
-        ax.set_ylabel(get_axis_label(y1_col), fontname='DejaVu Sans', fontsize=10, color='black')
-        ax.tick_params(axis='y', labelcolor='black')
-    
-    # Plot y2 column on right axis (if different from y1)
-    if y2_col and y2_col != y1_col:
-        ax2 = ax.twinx()
-        
-        if y2_col in df1.columns:
-            ax2.plot(df1['Time (s)'], df1[y2_col], label=f"{get_column_label(y2_col)} ({label1})", 
-                    color='slategray', alpha=1)
-            if f'{y2_col}_SEM' in df1.columns:
-                ax2.fill_between(df1['Time (s)'],
-                                df1[y2_col] - df1[f'{y2_col}_SEM'],
-                                df1[y2_col] + df1[f'{y2_col}_SEM'],
-                                color='slategray', alpha=0.2)
-        
-        if y2_col in df2.columns:
-            ax2.plot(df2['Time (s)'], df2[y2_col], label=f"{get_column_label(y2_col)} ({label2})", 
-                    color='slategray', alpha=1, linestyle='--')
-            if f'{y2_col}_SEM' in df2.columns:
-                ax2.fill_between(df2['Time (s)'],
-                                df2[y2_col] - df2[f'{y2_col}_SEM'],
-                                df2[y2_col] + df2[f'{y2_col}_SEM'],
-                                color='slategray', alpha=0.2)
-        
-        ax2.set_ylabel(get_axis_label(y2_col), fontname='DejaVu Sans', fontsize=10, color='slategray')
-        ax2.tick_params(axis='y', labelcolor='slategray')
-    
-    ax.axvspan(0, 2, color='gray', alpha=0.2, label='Visual mismatch (0-2s)')
-    ax.set_title('Grand Averages with SEM', fontname='DejaVu Sans', fontsize=12)
-    ax.set_xlabel('Time (s)', fontname='DejaVu Sans', fontsize=10)
-    
-    # Combine legends
-    lines, labels = ax.get_legend_handles_labels()
-    if ax2:
-        lines2, labels2 = ax2.get_legend_handles_labels()
-        ax.legend(lines + lines2, labels + labels2, loc='upper right', 
-                 prop={'family': 'DejaVu Sans', 'size': 10})
-    else:
-        ax.legend(lines, labels, loc='upper right', prop={'family': 'DejaVu Sans', 'size': 10})
-    
-    plt.tight_layout()
-    plt.show()
-
-#---------------------------------------------------------------------------------------------------#
 # INTERACTIVE GRAND AVERAGE PLOTTING
 #---------------------------------------------------------------------------------------------------#
 
