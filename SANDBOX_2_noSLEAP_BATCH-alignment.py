@@ -60,15 +60,43 @@ import harp_resources.utils
 from harp_resources import process, utils # Reassign to maintain direct references for force updating 
 #from sleap import load_and_process as lp
 
+# %% [markdown]
+#
+
+# %% [markdown]
+# ## Notebook Overview
+# This sandbox notebook loads downsampled ONIX behavioral datasets, slices them by experiment intervals, and runs the full `BehavioralAnalyzer` workflow. The process:
+#
+# - Configure input directories, event labels, baseline windows, and plotting flags.
+# - Load parquet files for photometry, tracking, encoder, and event metadata for each session.
+# - Instantiate `BehavioralAnalyzer` objects to compute running, turning, and platform metrics, saving per-animal figures/CSVs plus a cohort summary.
+#
+# ### Key Parameters
+# - `data_dirs`, `cohort_data_dir`: select which sessions are processed.
+# - `event_name`, `vestibular_mismatch`: govern halt detection and slicing logic.
+# - `time_window_start/end`, `baseline_window`, `common_resampled_rate`, `plot_fig1`: plotting and preprocessing controls.
+# - `run_behavioral_analysis` arguments expose `encoder_column`, `min_bout_duration_s`, `running_percentile`, `turning_percentile`, and `turning_velocity_column` before launching the batch run.
+#
+# ### Behavioral Analyzer Options
+# When constructing `BehavioralAnalyzer`, you can adjust:
+# - `threshold_plot_bins`: histogram resolution for threshold estimation.
+# - `min_bout_duration_s`: minimum bout length for running/turning detection.
+# - `running_percentile`: percentile-based threshold for running bouts.
+# - `turning_percentile`: optional percentile for turning (falls back to median when `None`).
+# - `turning_velocity_column`: choose the turning signal (`Motor_Velocity`, `Velocity_0Y`, etc.).
+#
+# Each call to `analyze_turning` also lets you override the column via the `column` argument, enabling quick comparisons between motor encoder- and flow-based turning metrics.
+#
+
 # %%
 # data paths setup
 #-------------------------------
 data_dirs = [  # Add your data directories here
     # Path('~/RANCZLAB-NAS/data/ONIX/20250409_Cohort3_rotation/Vestibular_mismatch_day1').expanduser(),
     # Path('/home/ikharitonov/RANCZLAB-NAS/data/ONIX/20250923_Cohort6_rotation/EXP_1_fluoxetine_1').expanduser()
-    Path('/Volumes/RanczLab2/20250409_Cohort3_rotation/Visual_mismatch_day4').expanduser()
+    Path('/Volumes/RanczLab2/Cohort1_rotation/Visual_mismatch_day4').expanduser()
 ]
-cohort_data_dir = Path('/Volumes/sambashare/data/ONIX/20250409_Cohort3_rotation').expanduser()
+cohort_data_dir = Path('/Volumes/RanczLab2/Cohort1_rotation/').expanduser()
 # Collect raw data paths (excluding '_processedData' dirs)
 rawdata_paths = []
 for data_dir in data_dirs:
@@ -171,7 +199,8 @@ class BehavioralAnalyzer:
                  threshold_plot_bins: int = 50,
                  min_bout_duration_s: float = 0.2,
                  running_percentile: float = 10,
-                 turning_percentile: Optional[float] = None):
+                 turning_percentile: Optional[float] = None,
+                 turning_velocity_column: str = "Motor_Velocity"):
         """
         Initialize analyzer with loaded data.
         
@@ -191,6 +220,8 @@ class BehavioralAnalyzer:
         turning_percentile : Optional[float]
             Percentile to use on values below median for turning threshold (default: 25).
             If None, uses 25th percentile.
+        turning_velocity_column : str
+            Column name to use for turning analysis (e.g., "Motor_Velocity" or "Velocity_0Y").
         """
         self.data_path = data_path
         self.mouse_name = loaded_data.get("mouse_name", "Unknown")
@@ -206,6 +237,17 @@ class BehavioralAnalyzer:
         self.min_bout_duration_s = min_bout_duration_s
         self.running_percentile = running_percentile
         self.turning_percentile = turning_percentile
+        
+        # Turning configuration
+        self.turning_velocity_column = turning_velocity_column
+        self.turning_source_label = self._format_turning_source_label(turning_velocity_column)
+        if turning_velocity_column not in self.photometry_tracking_encoder_data.columns:
+            print(f"⚠️ Warning: Column '{turning_velocity_column}' not found in data. Available columns: {self.photometry_tracking_encoder_data.columns.tolist()}")
+        
+    def _format_turning_source_label(self, column_name: str) -> str:
+        if column_name == "Motor_Velocity":
+            return "motor"
+        return column_name.lower().replace(" ", "_")
         
     def _is_visual_mismatch_experiment(self) -> bool:
         """
@@ -813,9 +855,9 @@ class BehavioralAnalyzer:
         # )
         # self.figures['running_velocity_hist'] = hist_path
         
-    def analyze_turning(self, save_dir: Path, plot: bool = True, suffix: str = ""):
+    def analyze_turning(self, save_dir: Path, plot: bool = True, suffix: str = "", column: Optional[str] = None):
         """
-        Analyze turning behavior from Motor_Velocity column (platform/encoder velocity).
+        Analyze turning behavior from the configured turning velocity column.
         
         Parameters:
         -----------
@@ -825,36 +867,41 @@ class BehavioralAnalyzer:
             Whether to create plots
         suffix : str
             Suffix to append to filenames (e.g., "_first_block", "_last_block")
+        column : Optional[str]
+            Override the configured turning column for this analysis call.
         """
-        print("ANALYZING TURNING BEHAVIOR")
+        selected_column = column or self.turning_velocity_column
+        column_label = self._format_turning_source_label(selected_column)
+        print(f"ANALYZING TURNING BEHAVIOR (column: {selected_column})")
         
-        # Check if Motor_Velocity column exists
-        if "Motor_Velocity" not in self.sliced_data.columns:
-            print(f"⚠️ Warning: Column 'Motor_Velocity' not found in data.")
+        # Check if selected column exists
+        if selected_column not in self.sliced_data.columns:
+            print(f"⚠️ Warning: Column '{selected_column}' not found in data.")
             print(f"   Available columns: {self.sliced_data.columns.tolist()}")
             return
         
-        motor_velocities = self.sliced_data["Motor_Velocity"].values
+        turning_values = self.sliced_data[selected_column].values
         
         # Use median as threshold
-        abs_velocities = np.abs(motor_velocities)
+        abs_velocities = np.abs(turning_values)
         threshold, fig = self.find_threshold_turning(
             abs_velocities,
-            plot=True,
-            title=f"Turning Velocity Distribution - {self.mouse_name}{suffix}",
+            plot=plot,
+            title=f"Turning Velocity Distribution ({selected_column}) - {self.mouse_name}{suffix}",
             plot_bins=self.threshold_plot_bins
         )
         
         # Save threshold plot
         if fig is not None:
-            fig_path = save_dir / f"{self.mouse_name}_turning_distribution{suffix}.png"
+            label_suffix = f"_{column_label}" if column_label != "motor" else ""
+            fig_path = save_dir / f"{self.mouse_name}_turning_distribution{label_suffix}{suffix}.png"
             self._save_figure(fig, fig_path, "turning distribution plot")
             self.figures[f'turning_distribution{suffix}'] = fig_path
         
         # Identify turning bouts with threshold and min duration
         sampling_interval = pd.Timedelta(self.sliced_data.index.to_series().diff().median()).total_seconds()
         min_bout_samples = self._calculate_min_bout_samples(sampling_interval)
-        abs_turn = np.abs(motor_velocities)
+        abs_turn = np.abs(turning_values)
         is_turning = self._detect_bouts_above_threshold(
             abs_turn,
             threshold=threshold,
@@ -862,7 +909,7 @@ class BehavioralAnalyzer:
         )
         
         # Calculate statistics for turning bouts
-        turning_velocities = motor_velocities[is_turning]
+        turning_velocities = turning_values[is_turning]
         
         if len(turning_velocities) > 0:
             avg_velocity = np.mean(np.abs(turning_velocities))
@@ -877,11 +924,11 @@ class BehavioralAnalyzer:
         turning_time_pct = (turning_time / total_time) * 100
         
         # Turned distance (sum of absolute left and right movement)
-        turned_distance = np.sum(np.abs(motor_velocities)) * sampling_interval
+        turned_distance = np.sum(np.abs(turning_values)) * sampling_interval
         
         # Turn direction percentages
-        left_turns = np.sum(motor_velocities[is_turning] < 0)
-        right_turns = np.sum(motor_velocities[is_turning] > 0)
+        left_turns = np.sum(turning_values[is_turning] < 0)
+        right_turns = np.sum(turning_values[is_turning] > 0)
         total_turns = left_turns + right_turns
         
         if total_turns > 0:
@@ -902,7 +949,8 @@ class BehavioralAnalyzer:
             'turned_distance_m': turned_distance,
             'left_percentage': left_pct,
             'right_percentage': right_pct,
-            'total_time_seconds': total_time
+            'total_time_seconds': total_time,
+            'turning_column': selected_column
         }
         
         # Save CSV
@@ -914,21 +962,24 @@ class BehavioralAnalyzer:
             'Turned_Distance_deg': turned_distance,
             'Left_Turn_Percentage': left_pct,
             'Right_Turn_Percentage': right_pct,
-            'Threshold_deg_s': threshold
+            'Threshold_deg_s': threshold,
+            'Turning_Column': selected_column
         }])
-        csv_path = save_dir / f"{self.mouse_name}_turning_stats{suffix}.csv"
+        csv_label_suffix = f"_{column_label}" if column_label != "motor" else ""
+        csv_path = save_dir / f"{self.mouse_name}_turning_stats{csv_label_suffix}{suffix}.csv"
         df.to_csv(csv_path, index=False)
         print(f"✅ Saved turning statistics: {csv_path}")
         
         # Create and save thresholded time series plot for turning (use absolute velocity for thresholding/plotting)
         time_seconds = (self.sliced_data.index - self.sliced_data.index[0]).total_seconds()
-        ts_path = save_dir / f"{self.mouse_name}_turning_thresholded_timeseries{suffix}.png"
+        ts_label_suffix = f"_{column_label}" if column_label != "motor" else ""
+        ts_path = save_dir / f"{self.mouse_name}_turning_thresholded_timeseries{ts_label_suffix}{suffix}.png"
         self._plot_thresholded_timeseries(
             time_seconds=time_seconds,
             values=abs_turn,
             threshold=threshold,
-            title=f"Absolute Turning Velocity (Motor) with Threshold - {self.mouse_name}{suffix}",
-            ylabel='|Motor_Velocity| (degrees/s)',
+            title=f"Absolute Turning Velocity ({selected_column}) with Threshold - {self.mouse_name}{suffix}",
+            ylabel=f'|{selected_column}|',
             save_path=ts_path,
             mask_above=(abs_turn > threshold)
         )
@@ -1227,7 +1278,8 @@ def run_behavioral_analysis(loaded_data: Dict[Path, Dict],
                            plot_bins: int = 50,
                            min_bout_duration_s: float = 0.2,
                            running_percentile: float = 10,
-                           turning_percentile: Optional[float] = None):
+                           turning_percentile: Optional[float] = None,
+                           turning_velocity_column: str = "Motor_Velocity"):
     """
     Run behavioral analysis for all loaded data paths.
     
@@ -1251,6 +1303,8 @@ def run_behavioral_analysis(loaded_data: Dict[Path, Dict],
     turning_percentile : Optional[float]
         Percentile to use on values below median for turning threshold (default: 25).
         If None, uses 25th percentile.
+    turning_velocity_column : str
+        Column to use for turning analysis (e.g., "Motor_Velocity" or "Velocity_0Y").
     """
     output_base_dir.mkdir(parents=True, exist_ok=True)
     
@@ -1276,7 +1330,8 @@ def run_behavioral_analysis(loaded_data: Dict[Path, Dict],
                 threshold_plot_bins=plot_bins,
                 min_bout_duration_s=min_bout_duration_s,
                 running_percentile=running_percentile,
-                turning_percentile=turning_percentile
+                turning_percentile=turning_percentile,
+                turning_velocity_column=turning_velocity_column
             )
             results, figures = analyzer.run_full_analysis(output_base_dir, encoder_column, exp_day)
             
@@ -1427,7 +1482,7 @@ def save_cohort_csv(cohort_data: List[Dict[str, Any]], data_dir: Path):
 
 
 # %%
-run_behavioral_analysis(loaded_data, data_dir, encoder_column="Motor_Velocity", min_bout_duration_s=1, running_percentile=10)
+run_behavioral_analysis(loaded_data, data_dir, encoder_column="Motor_Velocity", min_bout_duration_s=1, running_percentile=10, turning_velocity_column= "Velocity_0Y")
 
 # %%
 # create DFs and plot figure for each data path
