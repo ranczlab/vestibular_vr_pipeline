@@ -16,35 +16,22 @@
 # ## Setup
 
 # +
-from sleap.visualization import visualize_ml_features
-from sleap.ml_feature_extraction import extract_ml_features
-from sklearn.preprocessing import StandardScaler
-import seaborn as sns
 import numpy as np
 from pathlib import Path
-import os
 import sys
 import matplotlib.pyplot as plt
-import matplotlib.cm as cm
 import pandas as pd
-import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import plotly.io as pio
 import gc
 import io
-from contextlib import redirect_stdout
 
-from matplotlib.lines import Line2D
-from matplotlib.colors import LogNorm
-from fastkde.fastKDE import fastKDE
 from scipy.stats import linregress
 from scipy.signal import butter, filtfilt
 from scipy.signal import correlate
 from scipy.stats import pearsonr
-from scipy.signal import find_peaks
 
-from harp_resources import process, utils
+from harp_resources import process
 from sleap import load_and_process as lp
 from sleap import processing_functions as pf
 from sleap import saccade_processing as sp
@@ -53,6 +40,8 @@ from sleap.visualization import plot_all_saccades_overlay, plot_saccade_amplitud
 from sleap.annotation_gui import launch_annotation_gui
 from sleap.ml_feature_extraction import extract_experiment_id
 from sleap.annotation_storage import load_annotations, print_annotation_stats
+from sleap.visualization import visualize_ml_features
+from sleap.ml_feature_extraction import extract_ml_features
 
 # Reload modules to pick up latest changes (useful after code updates)
 # Set force_reload_modules = True to always reload, or False to use cached
@@ -96,7 +85,6 @@ def get_eye_label(key):
 # notebook cell is rerun
 NaNs_removed = False
 
-# test ruff again, I think this is the last time
 # symbols to use ✅ ℹ️ ⚠️ ❗
 
 # +
@@ -280,14 +268,13 @@ if VideoData2_Has_Sleap:
     print(f"{get_eye_label('VideoData2')}: FPS = {FPS_2}")
 # -
 
-
 # plot timeseries of coordinates in browser for both VideoData1 and VideoData2
 ##########################################################################
 if plot_QC_timeseries:
     print(
-        f"⚠️ Check for long discontinuities and outliers in the data, we will try to deal with them later"
+        "⚠️ Check for long discontinuities and outliers in the data, we will try to deal with them later"
     )
-    print(f"ℹ️ Figures open in browser window, takes a bit of time.")
+    print("ℹ️ Figures open in browser window, takes a bit of time.")
 
     # Helper list variables
     subplot_titles = (
@@ -423,216 +410,210 @@ if plot_QC_timeseries:
 # +
 # QC plot XY coordinate distributions to visualize outliers
 ##########################################################################
+columns_of_interest = [
+    "left",
+    "right",
+    "center",
+    "p1",
+    "p2",
+    "p3",
+    "p4",
+    "p5",
+    "p6",
+    "p7",
+    "p8",
+]
 
+# Filter out NaN values and calculate the min and max values for X and Y
+# coordinates for both dict1 and dict2
+
+def min_max_dict(coordinates_dict):
+    x_min = min(
+        [
+            coordinates_dict[f"{col}.x"][
+                ~np.isnan(coordinates_dict[f"{col}.x"])
+            ].min()
+            for col in columns_of_interest
+        ]
+    )
+    x_max = max(
+        [
+            coordinates_dict[f"{col}.x"][
+                ~np.isnan(coordinates_dict[f"{col}.x"])
+            ].max()
+            for col in columns_of_interest
+        ]
+    )
+    y_min = min(
+        [
+            coordinates_dict[f"{col}.y"][
+                ~np.isnan(coordinates_dict[f"{col}.y"])
+            ].min()
+            for col in columns_of_interest
+        ]
+    )
+    y_max = max(
+        [
+            coordinates_dict[f"{col}.y"][
+                ~np.isnan(coordinates_dict[f"{col}.y"])
+            ].max()
+            for col in columns_of_interest
+        ]
+    )
+    return x_min, x_max, y_min, y_max
+
+# PLOT QC plot XY coordinate distributions to visualize outliers
+##########################################################################
 if plot_QC_timeseries:
-    columns_of_interest = [
-        "left",
-        "right",
-        "center",
-        "p1",
-        "p2",
-        "p3",
-        "p4",
-        "p5",
-        "p6",
-        "p7",
-        "p8",
-    ]
-
-    # Filter out NaN values and calculate the min and max values for X and Y
-    # coordinates for both dict1 and dict2
-
-    def min_max_dict(coordinates_dict):
-        x_min = min(
-            [
-                coordinates_dict[f"{col}.x"][
-                    ~np.isnan(coordinates_dict[f"{col}.x"])
-                ].min()
-                for col in columns_of_interest
-            ]
-        )
-        x_max = max(
-            [
-                coordinates_dict[f"{col}.x"][
-                    ~np.isnan(coordinates_dict[f"{col}.x"])
-                ].max()
-                for col in columns_of_interest
-            ]
-        )
-        y_min = min(
-            [
-                coordinates_dict[f"{col}.y"][
-                    ~np.isnan(coordinates_dict[f"{col}.y"])
-                ].min()
-                for col in columns_of_interest
-            ]
-        )
-        y_max = max(
-            [
-                coordinates_dict[f"{col}.y"][
-                    ~np.isnan(coordinates_dict[f"{col}.y"])
-                ].max()
-                for col in columns_of_interest
-            ]
-        )
-        return x_min, x_max, y_min, y_max
-
-
-# Only plot panels for 1 and 2 if VideoData1_Has_Sleap and/or
-# VideoData2_Has_Sleap are true
-
-# Compute min/max as before for global axes limits
-if VideoData1_Has_Sleap:
-    x_min1, x_max1, y_min1, y_max1 = pf.min_max_dict(
-        coordinates_dict1_raw, columns_of_interest
-    )
-
-if VideoData2_Has_Sleap:
-    x_min2, x_max2, y_min2, y_max2 = pf.min_max_dict(
-        coordinates_dict2_raw, columns_of_interest
-    )
-
-# Use global min and max for consistency only if both VideoData1_Has_Sleap
-# and VideoData2_Has_Sleap are True
-if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
-    x_min = min(x_min1, x_min2)
-    x_max = max(x_max1, x_max2)
-    y_min = min(y_min1, y_min2)
-    y_max = max(y_max1, y_max2)
-elif VideoData1_Has_Sleap:
-    x_min, x_max, y_min, y_max = x_min1, x_max1, y_min1, y_max1
-elif VideoData2_Has_Sleap:
-    x_min, x_max, y_min, y_max = x_min2, x_max2, y_min2, y_max2
-else:
-    raise ValueError("Neither VideoData1 nor VideoData2 has Sleap data available.")
-
-# Create the figure and axes
-
-fig, ax = plt.subplots(nrows=2, ncols=2, figsize=(18, 12))
-
-fig.suptitle(
-    f"XY coordinate distribution of different points for {get_eye_label('VideoData1')} and {get_eye_label('VideoData2')} before outlier removal and NaN interpolation",
-    fontsize=14,
-)
-
-
-# Define colormap for p1-p8
-
-colors = ["blue", "green", "red", "cyan", "magenta", "yellow", "black", "orange"]
-
-
-# Panel 1: left, right, center (dict1)
-
-if "VideoData1_Has_Sleap" in globals() and VideoData1_Has_Sleap:
-    ax[0, 0].set_title(f"{get_eye_label('VideoData1')}: left, right, center")
-    ax[0, 0].scatter(
-        coordinates_dict1_raw["left.x"],
-        coordinates_dict1_raw["left.y"],
-        color="black",
-        label="left",
-        s=10,
-    )
-    ax[0, 0].scatter(
-        coordinates_dict1_raw["right.x"],
-        coordinates_dict1_raw["right.y"],
-        color="grey",
-        label="right",
-        s=10,
-    )
-    ax[0, 0].scatter(
-        coordinates_dict1_raw["center.x"],
-        coordinates_dict1_raw["center.y"],
-        color="red",
-        label="center",
-        s=10,
-    )
-    ax[0, 0].set_xlim([x_min, x_max])
-    ax[0, 0].set_ylim([y_min, y_max])
-    ax[0, 0].set_xlabel("x coordinates (pixels)")
-    ax[0, 0].set_ylabel("y coordinates (pixels)")
-    ax[0, 0].legend(loc="upper right")
-else:
-    ax[0, 0].axis("off")
-
-# Panel 2: p1 to p8 (dict1)
-
-if "VideoData1_Has_Sleap" in globals() and VideoData1_Has_Sleap:
-    ax[0, 1].set_title(f"{get_eye_label('VideoData1')}: p1 to p8")
-    for idx, col in enumerate(columns_of_interest[3:]):
-        ax[0, 1].scatter(
-            coordinates_dict1_raw[f"{col}.x"],
-            coordinates_dict1_raw[f"{col}.y"],
-            color=colors[idx],
-            label=col,
-            s=5,
+    # Compute min/max as before for global axes limits
+    if VideoData1_Has_Sleap:
+        x_min1, x_max1, y_min1, y_max1 = pf.min_max_dict(
+            coordinates_dict1_raw, columns_of_interest
         )
 
-    ax[0, 1].set_xlim([x_min, x_max])
-    ax[0, 1].set_ylim([y_min, y_max])
-    ax[0, 1].set_xlabel("x coordinates (pixels)")
-    ax[0, 1].set_ylabel("y coordinates (pixels)")
-    ax[0, 1].legend(loc="upper right")
-else:
-    ax[0, 1].axis("off")
-
-# Panel 3: left, right, center (dict2)
-
-if "VideoData2_Has_Sleap" in globals() and VideoData2_Has_Sleap:
-    ax[1, 0].set_title(f"{get_eye_label('VideoData2')}: left, right, center")
-    ax[1, 0].scatter(
-        coordinates_dict2_raw["left.x"],
-        coordinates_dict2_raw["left.y"],
-        color="black",
-        label="left",
-        s=10,
-    )
-    ax[1, 0].scatter(
-        coordinates_dict2_raw["right.x"],
-        coordinates_dict2_raw["right.y"],
-        color="grey",
-        label="right",
-        s=10,
-    )
-    ax[1, 0].scatter(
-        coordinates_dict2_raw["center.x"],
-        coordinates_dict2_raw["center.y"],
-        color="red",
-        label="center",
-        s=10,
-    )
-    ax[1, 0].set_xlim([x_min, x_max])
-    ax[1, 0].set_ylim([y_min, y_max])
-    ax[1, 0].set_xlabel("x coordinates (pixels)")
-    ax[1, 0].set_ylabel("y coordinates (pixels)")
-    ax[1, 0].legend(loc="upper right")
-else:
-    ax[1, 0].axis("off")
-
-# Panel 4: p1 to p8 (dict2)
-
-if "VideoData2_Has_Sleap" in globals() and VideoData2_Has_Sleap:
-    ax[1, 1].set_title(f"{get_eye_label('VideoData2')}: p1 to p8")
-    for idx, col in enumerate(columns_of_interest[3:]):
-        ax[1, 1].scatter(
-            coordinates_dict2_raw[f"{col}.x"],
-            coordinates_dict2_raw[f"{col}.y"],
-            color=colors[idx],
-            label=col,
-            s=5,
+    if VideoData2_Has_Sleap:
+        x_min2, x_max2, y_min2, y_max2 = pf.min_max_dict(
+            coordinates_dict2_raw, columns_of_interest
         )
 
-    ax[1, 1].set_xlim([x_min, x_max])
-    ax[1, 1].set_ylim([y_min, y_max])
-    ax[1, 1].set_xlabel("x coordinates (pixels)")
-    ax[1, 1].set_ylabel("y coordinates (pixels)")
-    ax[1, 1].legend(loc="upper right")
-else:
-    ax[1, 1].axis("off")
+    # Use global min and max for consistency only if both VideoData1_Has_Sleap
+    # and VideoData2_Has_Sleap are True
+    if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
+        x_min = min(x_min1, x_min2)
+        x_max = max(x_max1, x_max2)
+        y_min = min(y_min1, y_min2)
+        y_max = max(y_max1, y_max2)
+    elif VideoData1_Has_Sleap:
+        x_min, x_max, y_min, y_max = x_min1, x_max1, y_min1, y_max1
+    elif VideoData2_Has_Sleap:
+        x_min, x_max, y_min, y_max = x_min2, x_max2, y_min2, y_max2
+    else:
+        raise ValueError("Neither VideoData1 nor VideoData2 has Sleap data available.")
 
-plt.tight_layout(rect=[0, 0.03, 1, 0.96])
+    # Create the figure and axes
 
-plt.show()
+    fig, ax = plt.subplots(nrows=2, ncols=2, figsize=(18, 12))
 
+    fig.suptitle(
+        f"XY coordinate distribution of different points for {get_eye_label('VideoData1')} and {get_eye_label('VideoData2')} before outlier removal and NaN interpolation",
+        fontsize=14,
+    )
+
+    # Define colormap for p1-p8
+
+    colors = ["blue", "green", "red", "cyan", "magenta", "yellow", "black", "orange"]
+
+    # Panel 1: left, right, center (dict1)
+
+    if "VideoData1_Has_Sleap" in globals() and VideoData1_Has_Sleap:
+        ax[0, 0].set_title(f"{get_eye_label('VideoData1')}: left, right, center")
+        ax[0, 0].scatter(
+            coordinates_dict1_raw["left.x"],
+            coordinates_dict1_raw["left.y"],
+            color="black",
+            label="left",
+            s=10,
+        )
+        ax[0, 0].scatter(
+            coordinates_dict1_raw["right.x"],
+            coordinates_dict1_raw["right.y"],
+            color="grey",
+            label="right",
+            s=10,
+        )
+        ax[0, 0].scatter(
+            coordinates_dict1_raw["center.x"],
+            coordinates_dict1_raw["center.y"],
+            color="red",
+            label="center",
+            s=10,
+        )
+        ax[0, 0].set_xlim([x_min, x_max])
+        ax[0, 0].set_ylim([y_min, y_max])
+        ax[0, 0].set_xlabel("x coordinates (pixels)")
+        ax[0, 0].set_ylabel("y coordinates (pixels)")
+        ax[0, 0].legend(loc="upper right")
+    else:
+        ax[0, 0].axis("off")
+
+    # Panel 2: p1 to p8 (dict1)
+
+    if "VideoData1_Has_Sleap" in globals() and VideoData1_Has_Sleap:
+        ax[0, 1].set_title(f"{get_eye_label('VideoData1')}: p1 to p8")
+        for idx, col in enumerate(columns_of_interest[3:]):
+            ax[0, 1].scatter(
+                coordinates_dict1_raw[f"{col}.x"],
+                coordinates_dict1_raw[f"{col}.y"],
+                color=colors[idx],
+                label=col,
+                s=5,
+            )
+
+        ax[0, 1].set_xlim([x_min, x_max])
+        ax[0, 1].set_ylim([y_min, y_max])
+        ax[0, 1].set_xlabel("x coordinates (pixels)")
+        ax[0, 1].set_ylabel("y coordinates (pixels)")
+        ax[0, 1].legend(loc="upper right")
+    else:
+        ax[0, 1].axis("off")
+
+    # Panel 3: left, right, center (dict2)
+
+    if "VideoData2_Has_Sleap" in globals() and VideoData2_Has_Sleap:
+        ax[1, 0].set_title(f"{get_eye_label('VideoData2')}: left, right, center")
+        ax[1, 0].scatter(
+            coordinates_dict2_raw["left.x"],
+            coordinates_dict2_raw["left.y"],
+            color="black",
+            label="left",
+            s=10,
+        )
+        ax[1, 0].scatter(
+            coordinates_dict2_raw["right.x"],
+            coordinates_dict2_raw["right.y"],
+            color="grey",
+            label="right",
+            s=10,
+        )
+        ax[1, 0].scatter(
+            coordinates_dict2_raw["center.x"],
+            coordinates_dict2_raw["center.y"],
+            color="red",
+            label="center",
+            s=10,
+        )
+        ax[1, 0].set_xlim([x_min, x_max])
+        ax[1, 0].set_ylim([y_min, y_max])
+        ax[1, 0].set_xlabel("x coordinates (pixels)")
+        ax[1, 0].set_ylabel("y coordinates (pixels)")
+        ax[1, 0].legend(loc="upper right")
+    else:
+        ax[1, 0].axis("off")
+
+    # Panel 4: p1 to p8 (dict2)
+
+    if "VideoData2_Has_Sleap" in globals() and VideoData2_Has_Sleap:
+        ax[1, 1].set_title(f"{get_eye_label('VideoData2')}: p1 to p8")
+        for idx, col in enumerate(columns_of_interest[3:]):
+            ax[1, 1].scatter(
+                coordinates_dict2_raw[f"{col}.x"],
+                coordinates_dict2_raw[f"{col}.y"],
+                color=colors[idx],
+                label=col,
+                s=5,
+            )
+
+        ax[1, 1].set_xlim([x_min, x_max])
+        ax[1, 1].set_ylim([y_min, y_max])
+        ax[1, 1].set_xlabel("x coordinates (pixels)")
+        ax[1, 1].set_ylabel("y coordinates (pixels)")
+        ax[1, 1].legend(loc="upper right")
+    else:
+        ax[1, 1].axis("off")
+
+    plt.tight_layout(rect=[0, 0.03, 1, 0.96])
+
+    plt.show()
 
 # +
 # Center coordinates, filter low-confidence points, remove outliers, and interpolate
@@ -711,19 +692,18 @@ columns_of_interest = [
 ]
 # VideoData1 processing
 if "VideoData1_Has_Sleap" in globals() and VideoData1_Has_Sleap:
-    VideoData1_centered = pf.center_coordinates_to_median(
+    VideoData1_centered_for_plot = pf.center_coordinates_to_median(
         VideoData1, columns_of_interest, get_eye_label("VideoData1")
     )
 
 # VideoData2 processing
 if "VideoData2_Has_Sleap" in globals() and VideoData2_Has_Sleap:
-    VideoData2_centered = pf.center_coordinates_to_median(
+    VideoData2_centered_for_plot = pf.center_coordinates_to_median(
         VideoData2, columns_of_interest, get_eye_label("VideoData2")
     )
 
-##########################################################################
 # remove low confidence points (score < threshold)
-##########################################################################
+##################################################
 if not NaNs_removed:
     if debug:
         print(
@@ -765,7 +745,6 @@ if not NaNs_removed:
             debug=debug,
         )
 
-    ##########################################################################
     # remove outliers (x times SD)
     # then interpolates on all NaN values (skipped frames, low confidence inference points, outliers)
     ##########################################################################
@@ -849,7 +828,7 @@ if debug:
     print("=" * 80)
     print(f"\nHard threshold: instance.score < {blink_instance_score_threshold}")
     print(
-        f"  Frames with instance.score below this threshold will be considered potential blinks."
+        "  Frames with instance.score below this threshold will be considered potential blinks."
     )
     print("=" * 80)
 
@@ -1158,7 +1137,7 @@ if (
         total_v2_independent = len(v2_independent)
 
         if debug:
-            print(f"\nBlink bout counts:")
+            print("\nBlink bout counts:")
             print(f"  VideoData1: {total_v1_bouts} blink bout(s)")
             print(f"  VideoData2: {total_v2_bouts} blink bout(s)")
             print(f"  Concurrent: {total_concurrent} bout(s) (overlapping frames)")
@@ -1168,7 +1147,7 @@ if (
             if total_v1_bouts > 0 and total_v2_bouts > 0:
                 concurrent_pct_v1 = (total_concurrent / total_v1_bouts) * 100
                 concurrent_pct_v2 = (total_concurrent / total_v2_bouts) * 100
-                print(f"\nConcurrency percentage:")
+                print("\nConcurrency percentage:")
                 print(
                     f"  {concurrent_pct_v1:.1f}% of VideoData1 bouts are concurrent with VideoData2"
                 )
@@ -1188,7 +1167,7 @@ if (
 
                     mean_offset = np.mean(time_offsets_ms)
                     std_offset = np.std(time_offsets_ms)
-                    print(f"\nTiming offset for concurrent bouts:")
+                    print("\nTiming offset for concurrent bouts:")
                     print(
                         f"  Mean offset (VideoData1 - VideoData2): {mean_offset:.2f} ms"
                     )
@@ -1201,16 +1180,16 @@ if (
             print("=" * 80)
     elif has_bouts_v1 or has_bouts_v2:
         print(
-            f"\n⚠️ Cannot compare blink bouts - only one eye has blink bouts detected:"
+            "\n⚠️ Cannot compare blink bouts - only one eye has blink bouts detected:"
         )
         if has_bouts_v1:
             print(f"  VideoData1: {len(blink_bouts_v1)} blink bout(s)")
         else:
-            print(f"  VideoData1: 0 blink bout(s)")
+            print("  VideoData1: 0 blink bout(s)")
         if has_bouts_v2:
             print(f"  VideoData2: {len(blink_bouts_v2)} blink bout(s)")
         else:
-            print(f"  VideoData2: 0 blink bout(s)")
+            print("  VideoData2: 0 blink bout(s)")
     else:
         print("\n⚠️ Cannot compare blink bouts - neither video has blink bouts detected")
 
@@ -1326,11 +1305,11 @@ print(f"\n✅ Blink detection output saved to: {output_file}")
 
 
 # +
-# QC plot timeseries of interpolation corrected NaN and (TODO low confidence coordinates in browser
+# QC plot timeseries of interpolation corrected NaN in browser
 ##########################################################################
 
 if plot_QC_timeseries:
-    print(f"ℹ️ Figure opens in browser window, takes a bit of time.")
+    print("ℹ️ Figure opens in browser window, takes a bit of time.")
 
     # VideoData1 QC Plot
     if "VideoData1_Has_Sleap" in globals() and VideoData1_Has_Sleap:
@@ -1340,10 +1319,10 @@ if plot_QC_timeseries:
             shared_xaxes=True,
             vertical_spacing=0.05,
             subplot_titles=(
-                f"VideoData1 - X coordinates for pupil centre and left-right eye corner",
-                f"VideoData1 - Y coordinates for pupil centre and left-right eye corner",
-                f"VideoData1 - X coordinates for iris points",
-                f"VideoData1 - Y coordinates for iris points",
+                "VideoData1 - X coordinates for pupil centre and left-right eye corner",
+                "VideoData1 - Y coordinates for pupil centre and left-right eye corner",
+                "VideoData1 - X coordinates for iris points",
+                "VideoData1 - Y coordinates for iris points",
             ),
         )
 
@@ -1433,7 +1412,7 @@ if plot_QC_timeseries:
 
         fig1.update_layout(
             height=1200,
-            title_text=f"VideoData1 - Time series subplots for coordinates (QC after interpolation)",
+            title_text="VideoData1 - Time series subplots for coordinates (QC after interpolation)",
             showlegend=True,
         )
         fig1.update_xaxes(title_text="Seconds", row=4, col=1)
@@ -1452,10 +1431,10 @@ if plot_QC_timeseries:
             shared_xaxes=True,
             vertical_spacing=0.05,
             subplot_titles=(
-                f"VideoData2 - X coordinates for pupil centre and left-right eye corner",
-                f"VideoData2 - Y coordinates for pupil centre and left-right eye corner",
-                f"VideoData2 - X coordinates for iris points",
-                f"VideoData2 - Y coordinates for iris points",
+                "VideoData2 - X coordinates for pupil centre and left-right eye corner",
+                "VideoData2 - Y coordinates for pupil centre and left-right eye corner",
+                "VideoData2 - X coordinates for iris points",
+                "VideoData2 - Y coordinates for iris points",
             ),
         )
 
@@ -1547,7 +1526,7 @@ if plot_QC_timeseries:
 
         fig2.update_layout(
             height=1200,
-            title_text=f"VideoData2 - Time series subplots for coordinates (QC after interpolation)",
+            title_text="VideoData2 - Time series subplots for coordinates (QC after interpolation)",
             showlegend=True,
         )
         fig2.update_xaxes(title_text="Seconds", row=4, col=1)
@@ -1560,36 +1539,35 @@ if plot_QC_timeseries:
 
 
 # +
-# QC plot XY coordinate distributions after NaN and ( TODO - low confidence inference points) are interpolated
-##########################################################################
+# QC plot XY coordinate distributions after NaN are interpolated
+################################################################
 
-if plot_QC_timeseries:
-    columns_of_interest = [
-        "left.x",
-        "left.y",
-        "center.x",
-        "center.y",
-        "right.x",
-        "right.y",
-        "p1.x",
-        "p1.y",
-        "p2.x",
-        "p2.y",
-        "p3.x",
-        "p3.y",
-        "p4.x",
-        "p4.y",
-        "p5.x",
-        "p5.y",
-        "p6.x",
-        "p6.y",
-        "p7.x",
-        "p7.y",
-        "p8.x",
-        "p8.y",
-    ]
+columns_of_interest = [
+    "left.x",
+    "left.y",
+    "center.x",
+    "center.y",
+    "right.x",
+    "right.y",
+    "p1.x",
+    "p1.y",
+    "p2.x",
+    "p2.y",
+    "p3.x",
+    "p3.y",
+    "p4.x",
+    "p4.y",
+    "p5.x",
+    "p5.y",
+    "p6.x",
+    "p6.y",
+    "p7.x",
+    "p7.y",
+    "p8.x",
+    "p8.y",
+]
 
-    # Create coordinates_dict for both datasets
+# Create coordinates_dict for both datasets
 if VideoData1_Has_Sleap:
     coordinates_dict1_processed = lp.get_coordinates_dict(
         VideoData1, columns_of_interest
@@ -1617,7 +1595,6 @@ columns_of_interest = [
 
 # Filter out NaN values and calculate the min and max values for X and Y
 # coordinates for both dict1 and dict2
-
 
 def min_max_dict(coordinates_dict):
     x_min = min(
@@ -1651,158 +1628,156 @@ def min_max_dict(coordinates_dict):
     return x_min, x_max, y_min, y_max
 
 
-if VideoData1_Has_Sleap:
-    x_min1, x_max1, y_min1, y_max1 = min_max_dict(coordinates_dict1_processed)
-if VideoData2_Has_Sleap:
-    x_min2, x_max2, y_min2, y_max2 = min_max_dict(coordinates_dict2_processed)
+if plot_QC_timeseries:
+    if VideoData1_Has_Sleap:
+        x_min1, x_max1, y_min1, y_max1 = min_max_dict(coordinates_dict1_processed)
+    if VideoData2_Has_Sleap:
+        x_min2, x_max2, y_min2, y_max2 = min_max_dict(coordinates_dict2_processed)
 
-# Use global min and max for consistency across subplots
-if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
-    x_min = min(x_min1, x_min2)
-    x_max = max(x_max1, x_max2)
-    y_min = min(y_min1, y_min2)
-    y_max = max(y_max1, y_max2)
-elif VideoData1_Has_Sleap:
-    x_min, x_max, y_min, y_max = x_min1, x_max1, y_min1, y_max1
-elif VideoData2_Has_Sleap:
-    x_min, x_max, y_min, y_max = x_min2, x_max2, y_min2, y_max2
+    # Use global min and max for consistency across subplots
+    if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
+        x_min = min(x_min1, x_min2)
+        x_max = max(x_max1, x_max2)
+        y_min = min(y_min1, y_min2)
+        y_max = max(y_max1, y_max2)
+    elif VideoData1_Has_Sleap:
+        x_min, x_max, y_min, y_max = x_min1, x_max1, y_min1, y_max1
+    elif VideoData2_Has_Sleap:
+        x_min, x_max, y_min, y_max = x_min2, x_max2, y_min2, y_max2
 
-
-fig, ax = plt.subplots(nrows=2, ncols=2, figsize=(18, 12))
-fig.suptitle(
-    f"XY coordinate distribution of different points for {get_eye_label('VideoData1')} and {get_eye_label('VideoData2')} post outlier removal and NaN interpolation",
-    fontsize=14,
-)
-
-# Define colormap for p1-p8
-colors = ["blue", "green", "red", "cyan", "magenta", "yellow", "black", "orange"]
-
-# Panel 1: left, right, center (VideoData1)
-if VideoData1_Has_Sleap:
-    ax[0, 0].set_title(f"{get_eye_label('VideoData1')}: left, right, center")
-
-    ax[0, 0].scatter(
-        coordinates_dict1_processed["left.x"],
-        coordinates_dict1_processed["left.y"],
-        color="black",
-        label="left",
-        s=10,
+    fig, ax = plt.subplots(nrows=2, ncols=2, figsize=(18, 12))
+    fig.suptitle(
+        f"XY coordinate distribution of different points for {get_eye_label('VideoData1')} and {get_eye_label('VideoData2')} post outlier removal and NaN interpolation",
+        fontsize=14,
     )
 
-    ax[0, 0].scatter(
-        coordinates_dict1_processed["right.x"],
-        coordinates_dict1_processed["right.y"],
-        color="grey",
-        label="right",
-        s=10,
-    )
+    # Define colormap for p1-p8
+    colors = ["blue", "green", "red", "cyan", "magenta", "yellow", "black", "orange"]
 
-    ax[0, 0].scatter(
-        coordinates_dict1_processed["center.x"],
-        coordinates_dict1_processed["center.y"],
-        color="red",
-        label="center",
-        s=10,
-    )
+    # Panel 1: left, right, center (VideoData1)
+    if VideoData1_Has_Sleap:
+        ax[0, 0].set_title(f"{get_eye_label('VideoData1')}: left, right, center")
 
-    ax[0, 0].set_xlim([x_min, x_max])
-
-    ax[0, 0].set_ylim([y_min, y_max])
-
-    ax[0, 0].set_xlabel("x coordinates (pixels)")
-
-    ax[0, 0].set_ylabel("y coordinates (pixels)")
-
-    ax[0, 0].legend(loc="upper right")
-
-    # Panel 2: p1 to p8 (VideoData1)
-
-    ax[0, 1].set_title(f"{get_eye_label('VideoData1')}: p1 to p8")
-
-    for idx, col in enumerate(columns_of_interest[3:]):
-        ax[0, 1].scatter(
-            coordinates_dict1_processed[f"{col}.x"],
-            coordinates_dict1_processed[f"{col}.y"],
-            color=colors[idx],
-            label=col,
-            s=5,
+        ax[0, 0].scatter(
+            coordinates_dict1_processed["left.x"],
+            coordinates_dict1_processed["left.y"],
+            color="black",
+            label="left",
+            s=10,
         )
 
-    ax[0, 1].set_xlim([x_min, x_max])
-
-    ax[0, 1].set_ylim([y_min, y_max])
-
-    ax[0, 1].set_xlabel("x coordinates (pixels)")
-
-    ax[0, 1].set_ylabel("y coordinates (pixels)")
-
-    ax[0, 1].legend(loc="upper right")
-
-
-# Panel 3: left, right, center (VideoData2)
-if VideoData2_Has_Sleap:
-    ax[1, 0].set_title(f"{get_eye_label('VideoData2')}: left, right, center")
-
-    ax[1, 0].scatter(
-        coordinates_dict2_processed["left.x"],
-        coordinates_dict2_processed["left.y"],
-        color="black",
-        label="left",
-        s=10,
-    )
-
-    ax[1, 0].scatter(
-        coordinates_dict2_processed["right.x"],
-        coordinates_dict2_processed["right.y"],
-        color="grey",
-        label="right",
-        s=10,
-    )
-
-    ax[1, 0].scatter(
-        coordinates_dict2_processed["center.x"],
-        coordinates_dict2_processed["center.y"],
-        color="red",
-        label="center",
-        s=10,
-    )
-
-    ax[1, 0].set_xlim([x_min, x_max])
-
-    ax[1, 0].set_ylim([y_min, y_max])
-
-    ax[1, 0].set_xlabel("x coordinates (pixels)")
-
-    ax[1, 0].set_ylabel("y coordinates (pixels)")
-
-    ax[1, 0].legend(loc="upper right")
-
-    # Panel 4: p1 to p8 (VideoData2)
-
-    ax[1, 1].set_title(f"{get_eye_label('VideoData2')}: p1 to p8")
-
-    for idx, col in enumerate(columns_of_interest[3:]):
-        ax[1, 1].scatter(
-            coordinates_dict2_processed[f"{col}.x"],
-            coordinates_dict2_processed[f"{col}.y"],
-            color=colors[idx],
-            label=col,
-            s=5,
+        ax[0, 0].scatter(
+            coordinates_dict1_processed["right.x"],
+            coordinates_dict1_processed["right.y"],
+            color="grey",
+            label="right",
+            s=10,
         )
 
-    ax[1, 1].set_xlim([x_min, x_max])
+        ax[0, 0].scatter(
+            coordinates_dict1_processed["center.x"],
+            coordinates_dict1_processed["center.y"],
+            color="red",
+            label="center",
+            s=10,
+        )
 
-    ax[1, 1].set_ylim([y_min, y_max])
+        ax[0, 0].set_xlim([x_min, x_max])
 
-    ax[1, 1].set_xlabel("x coordinates (pixels)")
+        ax[0, 0].set_ylim([y_min, y_max])
 
-    ax[1, 1].set_ylabel("y coordinates (pixels)")
+        ax[0, 0].set_xlabel("x coordinates (pixels)")
 
-    ax[1, 1].legend(loc="upper right")
+        ax[0, 0].set_ylabel("y coordinates (pixels)")
 
+        ax[0, 0].legend(loc="upper right")
 
-plt.tight_layout(rect=[0, 0.03, 1, 0.96])
-plt.show()
+        # Panel 2: p1 to p8 (VideoData1)
+
+        ax[0, 1].set_title(f"{get_eye_label('VideoData1')}: p1 to p8")
+
+        for idx, col in enumerate(columns_of_interest[3:]):
+            ax[0, 1].scatter(
+                coordinates_dict1_processed[f"{col}.x"],
+                coordinates_dict1_processed[f"{col}.y"],
+                color=colors[idx],
+                label=col,
+                s=5,
+            )
+
+        ax[0, 1].set_xlim([x_min, x_max])
+
+        ax[0, 1].set_ylim([y_min, y_max])
+
+        ax[0, 1].set_xlabel("x coordinates (pixels)")
+
+        ax[0, 1].set_ylabel("y coordinates (pixels)")
+
+        ax[0, 1].legend(loc="upper right")
+
+    # Panel 3: left, right, center (VideoData2)
+    if VideoData2_Has_Sleap:
+        ax[1, 0].set_title(f"{get_eye_label('VideoData2')}: left, right, center")
+
+        ax[1, 0].scatter(
+            coordinates_dict2_processed["left.x"],
+            coordinates_dict2_processed["left.y"],
+            color="black",
+            label="left",
+            s=10,
+        )
+
+        ax[1, 0].scatter(
+            coordinates_dict2_processed["right.x"],
+            coordinates_dict2_processed["right.y"],
+            color="grey",
+            label="right",
+            s=10,
+        )
+
+        ax[1, 0].scatter(
+            coordinates_dict2_processed["center.x"],
+            coordinates_dict2_processed["center.y"],
+            color="red",
+            label="center",
+            s=10,
+        )
+
+        ax[1, 0].set_xlim([x_min, x_max])
+
+        ax[1, 0].set_ylim([y_min, y_max])
+
+        ax[1, 0].set_xlabel("x coordinates (pixels)")
+
+        ax[1, 0].set_ylabel("y coordinates (pixels)")
+
+        ax[1, 0].legend(loc="upper right")
+
+        # Panel 4: p1 to p8 (VideoData2)
+
+        ax[1, 1].set_title(f"{get_eye_label('VideoData2')}: p1 to p8")
+
+        for idx, col in enumerate(columns_of_interest[3:]):
+            ax[1, 1].scatter(
+                coordinates_dict2_processed[f"{col}.x"],
+                coordinates_dict2_processed[f"{col}.y"],
+                color=colors[idx],
+                label=col,
+                s=5,
+            )
+
+        ax[1, 1].set_xlim([x_min, x_max])
+
+        ax[1, 1].set_ylim([y_min, y_max])
+
+        ax[1, 1].set_xlabel("x coordinates (pixels)")
+
+        ax[1, 1].set_ylabel("y coordinates (pixels)")
+
+        ax[1, 1].legend(loc="upper right")
+
+    plt.tight_layout(rect=[0, 0.03, 1, 0.96])
+    plt.show()
 
 # +
 # fit ellipses on the 8 points to determine pupil centre and diameter
@@ -1835,7 +1810,7 @@ columns_of_interest = [
 
 # VideoData1 processing
 if VideoData1_Has_Sleap:
-    print(f"=== VideoData1 Ellipse Fitting for Pupil Diameter ===")
+    print("=== VideoData1 Ellipse Fitting for Pupil Diameter ===")
     coordinates_dict1_processed = lp.get_coordinates_dict(
         VideoData1, columns_of_interest
     )
@@ -1896,7 +1871,7 @@ if VideoData1_Has_Sleap:
 
 # VideoData2 processing
 if VideoData2_Has_Sleap:
-    print(f"=== VideoData2 Ellipse Fitting for Pupil Diameter ===")
+    print("=== VideoData2 Ellipse Fitting for Pupil Diameter ===")
     coordinates_dict2_processed = lp.get_coordinates_dict(
         VideoData2, columns_of_interest
     )
@@ -1955,13 +1930,13 @@ if VideoData2_Has_Sleap:
         ],
     )
 
-##########################################################################
-# Filter pupil diameter using 10 Hz Butterworth low-pass filter
+
+# Filter pupil diameter using a user set (default 10) Hz Butterworth low-pass filter
 ##########################################################################
 
 # VideoData1 filtering
 if VideoData1_Has_Sleap:
-    print(f"\n=== Filtering pupil diameter for VideoData1  ===")
+    print("\n=== Filtering pupil diameter for VideoData1  ===")
     # Butterworth filter parameters - pupil_filter_cutoff_hz low-pass filter
     # Sampling frequency (Hz)
     fs1 = 1 / np.median(np.diff(SleapVideoData1["Seconds"]))
@@ -1989,7 +1964,7 @@ if VideoData1_Has_Sleap:
 
 # VideoData2 filtering
 if VideoData2_Has_Sleap:
-    print(f"=== Filtering pupil diameter for VideoData1 ===")
+    print("=== Filtering pupil diameter for VideoData1 ===")
     # Butterworth filter parameters - pupil_filter_cutoff_hz low-pass filter
     # Sampling frequency (Hz)
     fs2 = 1 / np.median(np.diff(SleapVideoData2["Seconds"]))
@@ -2022,37 +1997,6 @@ print("✅ Done calculating pupil diameter and angle for both VideoData1 and Vid
 ##########################################################################
 
 if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
-    # # Create subplots for both comparison and cross-correlation
-    # fig = make_subplots(
-    #     rows=2, cols=1,
-    #     subplot_titles=["Pupil Diameter Comparison", "Cross-Correlation Analysis"],
-    #     vertical_spacing=0.15
-    # )
-
-    # # Add SleapVideoData1 pupil diameter
-    # fig.add_trace(
-    #     go.Scatter(
-    #         x=SleapVideoData1['Seconds'],
-    #         y=SleapVideoData1['Ellipse.Diameter'],
-    #         mode='lines',
-    #         name=f"VideoData1 Pupil Diameter",
-    #         line=dict(color='blue')
-    #     ),
-    #     row=1, col=1
-    # )
-
-    # # Add SleapVideoData2 pupil diameter
-    # fig.add_trace(
-    #     go.Scatter(
-    #         x=SleapVideoData2['Seconds'],
-    #         y=SleapVideoData2['Ellipse.Diameter'],
-    #         mode='lines',
-    #         name=f"VideoData2 Pupil Diameter",
-    #         line=dict(color='red')
-    #     ),
-    #     row=1, col=1
-    # )
-
     # Cross-correlation analysis
     print("=== Cross-Correlation Analysis ===")
 
@@ -2095,7 +2039,7 @@ if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
             pupil1_z = (pupil1_clean - pupil1_mean) / pupil1_std
             pupil2_z = (pupil2_clean - pupil2_mean) / pupil2_std
             print(
-                f"Applied z-score normalization to pupil diameter signals (accounts for different camera magnifications)"
+                "Applied z-score normalization to pupil diameter signals (accounts for different camera magnifications)"
             )
             print(f"  VideoData1: mean={pupil1_mean:.2f}, std={pupil1_std:.2f}")
             print(f"  VideoData2: mean={pupil2_mean:.2f}, std={pupil2_std:.2f}")
@@ -2138,53 +2082,8 @@ if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
                 correlation_normalized = correlation
                 peak_correlation_normalized = 0
 
-            # # Plot cross-correlation
-            # fig.add_trace(
-            #     go.Scatter(
-            #         x=lag_times,
-            #         y=correlation_normalized,
-            #         mode='lines',
-            #         name="Cross-Correlation",
-            #         line=dict(color='green')
-            #     ),
-            #     row=2, col=1
-            # )
-
-            # # Add vertical line at peak
-            # fig.add_vline(
-            #     x=peak_lag_time,
-            #     line_dash="dash",
-            #     line_color="red",
-            #     annotation_text=f"Peak: {peak_correlation_normalized:.3f}",
-            #     row=2, col=1
-            # )
-
         except Exception as e:
             print(f"❌ Error in cross-correlation calculation: {e}")
-            # # Add empty trace to maintain plot structure
-            # fig.add_trace(
-            #     go.Scatter(
-            #         x=[0], y=[0],
-            #         mode='lines',
-            #         name="Cross-Correlation (Error)",
-            #         line=dict(color='gray')
-            #     ),
-            #     row=2, col=1
-            # )
-
-    # # Update axes labels
-    # fig.update_xaxes(title_text="Time (seconds)", row=1, col=1)
-    # fig.update_yaxes(title_text="Pupil Diameter", row=1, col=1)
-    # fig.update_xaxes(title_text="Lag (seconds)", row=2, col=1)
-    # fig.update_yaxes(title_text="Normalized Correlation", row=2, col=1)
-
-    # fig.update_layout(
-    #     height=800,
-    #     width=1000,
-    #     title_text=f"SLEAP Pupil Diameter Analysis: Comparison & Cross-Correlation"
-    # )
-
-    # fig.show()
 
     # Additional correlation statistics
     if len(pupil1_clean) >= 2 and len(pupil2_clean) >= 2:
@@ -2196,12 +2095,12 @@ if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
             pearson_r_display = pearson_r
             pearson_p_display = pearson_p
 
-            print(f"\n=== Additional Statistics ===")
+            print("\n=== Additional Statistics ===")
             print(f"Pearson correlation coefficient: {pearson_r:.2f}")
 
             # Handle extremely small p-values
             if pearson_p < 1e-300:
-                print(f"Pearson p-value: < 1e-300 (extremely significant)")
+                print("Pearson p-value: < 1e-300 (extremely significant)")
             else:
                 print(f"Pearson p-value: {pearson_p:.5e}")
 
@@ -2246,7 +2145,7 @@ None
 # 1) Compute correlations for VideoData1
 # ------------------------------------------------------------------
 if VideoData1_Has_Sleap is True:
-    print(f"=== VideoData1 Analysis ===")
+    print("=== VideoData1 Analysis ===")
     slope_x1, intercept_x1, r_value_x1, p_value_x1, std_err_x1 = linregress(
         VideoData1["Ellipse.Center.X"], VideoData1["center.x"]
     )
@@ -2267,7 +2166,7 @@ if VideoData1_Has_Sleap is True:
 # 2) Compute correlations for VideoData2
 # ------------------------------------------------------------------
 if VideoData2_Has_Sleap is True:
-    print(f"\n=== VideoData2 Analysis ===")
+    print("\n=== VideoData2 Analysis ===")
     slope_x2, intercept_x2, r_value_x2, p_value_x2, std_err_x2 = linregress(
         VideoData2["Ellipse.Center.X"], VideoData2["center.x"]
     )
@@ -2288,7 +2187,7 @@ if VideoData2_Has_Sleap is True:
 # 3) Center of Mass Analysis (if both VideoData1 and VideoData2 are available)
 # ------------------------------------------------------------------
 if VideoData1_Has_Sleap is True and VideoData2_Has_Sleap is True:
-    print(f"\n=== Center of Mass Distance Analysis ===")
+    print("\n=== Center of Mass Distance Analysis ===")
 
     # Calculate center of mass (mean) for VideoData1
     com_center_x1 = VideoData1["center.x"].mean()
@@ -2411,49 +2310,30 @@ else:
 
 if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
     # Get the Center.X data
-
     center_x1 = VideoData1["Ellipse.Center.X"].values
-
     center_x2 = VideoData2["Ellipse.Center.X"].values
-
     min_length = min(len(center_x1), len(center_x2))
-
     center_x1_truncated = center_x1[:min_length]
-
     center_x2_truncated = center_x2[:min_length]
-
     valid_mask1 = ~np.isnan(center_x1_truncated)
-
     valid_mask2 = ~np.isnan(center_x2_truncated)
-
     valid_mask = valid_mask1 & valid_mask2
-
     center_x1_clean = center_x1_truncated[valid_mask]
-
     center_x2_clean = center_x2_truncated[valid_mask]
 
     if len(center_x1_clean) >= 2 and len(center_x2_clean) >= 2:
         try:
             # Calculate Pearson correlation
-
             pearson_r_center, pearson_p_center = pearsonr(
                 center_x1_clean, center_x2_clean
             )
-
             # Calculate cross-correlation for peak lag
-
             correlation = correlate(center_x1_clean, center_x2_clean, mode="full")
-
             lags = np.arange(-len(center_x2_clean) + 1, len(center_x1_clean))
-
             dt = np.median(np.diff(VideoData1["Seconds"]))
-
             lag_times = lags * dt
-
             peak_idx = np.argmax(correlation)
-
             peak_lag_time_center = lag_times[peak_idx]
-
         except Exception as e:
             print(f"❌ Error calculating Ellipse.Center.X correlation stats: {e}")
 
@@ -2474,8 +2354,8 @@ gs = fig.add_gridspec(4, 2, hspace=0.3, wspace=0.3)
 if VideoData1_Has_Sleap:
     ax1 = fig.add_subplot(gs[0, :])
     ax1.plot(
-        VideoData1_centered["Seconds"],
-        VideoData1_centered["center.x"],
+        VideoData1_centered_for_plot["Seconds"],
+        VideoData1_centered_for_plot["center.x"],
         linewidth=0.5,
         c="blue",
         alpha=0.6,
@@ -2499,8 +2379,8 @@ if VideoData1_Has_Sleap:
 if VideoData2_Has_Sleap:
     ax2 = fig.add_subplot(gs[1, :])
     ax2.plot(
-        VideoData2_centered["Seconds"],
-        VideoData2_centered["center.x"],
+        VideoData2_centered_for_plot["Seconds"],
+        VideoData2_centered_for_plot["center.x"],
         linewidth=0.5,
         c="blue",
         alpha=0.6,
@@ -2539,8 +2419,8 @@ if VideoData1_Has_Sleap:
     )
 
     # Center (red) - from centered data
-    x_center1 = VideoData1_centered["center.x"].to_numpy()
-    y_center1 = VideoData1_centered["center.y"].to_numpy()
+    x_center1 = VideoData1_centered_for_plot["center.x"].to_numpy()
+    y_center1 = VideoData1_centered_for_plot["center.y"].to_numpy()
     mask2 = ~(np.isnan(x_center1) | np.isnan(y_center1))
 
     ax3.scatter(
@@ -2615,8 +2495,8 @@ if VideoData2_Has_Sleap:
     )
 
     # Center (red) - from centered data
-    x_center2 = VideoData2_centered["center.x"].to_numpy()
-    y_center2 = VideoData2_centered["center.y"].to_numpy()
+    x_center2 = VideoData2_centered_for_plot["center.x"].to_numpy()
+    y_center2 = VideoData2_centered_for_plot["center.y"].to_numpy()
     mask4 = ~(np.isnan(x_center2) | np.isnan(y_center2))
 
     ax4.scatter(
@@ -2883,9 +2763,11 @@ png_path = save_path / "Eye_data_QC.png"
 plt.savefig(png_path, dpi=600, bbox_inches="tight", format="png")
 print(f"✅ QC figure saved as PNG (600 dpi for printing): {png_path}")
 
-plt.show()
+if plot_QC_timeseries:
+    plt.show()
+else:
+    plt.close(fig)
 # -
-
 
 # Create interactive time series plots using plotly for browser viewing
 if plot_QC_timeseries:
@@ -2909,8 +2791,8 @@ if plot_QC_timeseries:
     if VideoData1_Has_Sleap:
         fig.add_trace(
             go.Scatter(
-                x=VideoData1_centered["Seconds"],
-                y=VideoData1_centered["center.x"],
+                x=VideoData1_centered_for_plot["Seconds"],
+                y=VideoData1_centered_for_plot["center.x"],
                 mode="lines",
                 name="center.x original",
                 line=dict(color="blue", width=0.5),
@@ -2937,8 +2819,8 @@ if plot_QC_timeseries:
     if VideoData2_Has_Sleap:
         fig.add_trace(
             go.Scatter(
-                x=VideoData2_centered["Seconds"],
-                y=VideoData2_centered["center.x"],
+                x=VideoData2_centered_for_plot["Seconds"],
+                y=VideoData2_centered_for_plot["center.x"],
                 mode="lines",
                 name="center.x original",
                 line=dict(color="blue", width=0.5),
@@ -3194,6 +3076,38 @@ if VideoData2_Has_Sleap:
         adaptive_percentile_pre_drift=adaptive_percentile_pre_drift,
         adaptive_percentile_post_variance=adaptive_percentile_post_variance,
     )
+
+# +
+# SAVE SACCADE RESULTS TO CSV TODO  next - this should be parquet and contain saccade info (onset time, NT or TN, amplitude, placeholder for classification to be done later (3 options, orienting, compensating or saccade-fixate)
+##########################################################################
+# reindex to aeon datetime to be done in the other notebook
+
+# Keep only the specified columns in VideoData1/2
+keep_cols = [
+    "frame_idx",
+    "Seconds",
+    "Ellipse.Diameter",
+    "Ellipse.Angle",
+    "Ellipse.Center.X",
+    "Ellipse.Center.Y",
+    "Ellipse.Diameter.Filt",
+]
+if 'VideoData1' in globals():
+    VideoData1 = VideoData1.loc[:, [col for col in keep_cols if col in VideoData1.columns]]
+    save_path1 = (
+        save_path / "Video_Sleap_Data1" / "Video_Sleap_Data1_1904-01-01T00-00-00.csv"
+    )
+    save_path1.parent.mkdir(parents=True, exist_ok=True)
+    VideoData1.to_csv(save_path1)
+
+if 'VideoData2' in globals():
+    VideoData2 = VideoData2.loc[:, [col for col in keep_cols if col in VideoData2.columns]]
+    save_path2 = (
+        save_path / "Video_Sleap_Data2" / "Video_Sleap_Data2_1904-01-01T00-00-00.csv"
+    )
+    save_path2.parent.mkdir(parents=True, exist_ok=True)
+    VideoData2.to_csv(save_path2)
+
 
 # +
 # VISUALIZE ALL SACCADES - SIDE BY SIDE
@@ -3504,7 +3418,7 @@ if debug:
                 # Baseline values
                 valid_baseline = baseline_values[mask & ~np.isnan(baseline_values)]
                 if len(valid_baseline) > 0:
-                    print(f"  Baseline values (subtracted):")
+                    print("  Baseline values (subtracted):")
                     print(f"    Mean: {valid_baseline.mean():.2f} px")
                     print(f"    Std: {valid_baseline.std():.2f} px")
                     print(
@@ -3517,7 +3431,7 @@ if debug:
                     mask & ~np.isnan(baseline_window_means_before)
                 ]
                 if len(valid_before) > 0:
-                    print(f"\n  Baseline window mean BEFORE baselining:")
+                    print("\n  Baseline window mean BEFORE baselining:")
                     print(f"    Mean: {valid_before.mean():.2f} px")
                     print(f"    Std: {valid_before.std():.2f} px")
                     print(
@@ -3532,7 +3446,7 @@ if debug:
                     mask & ~np.isnan(baseline_window_means_after)
                 ]
                 if len(valid_after) > 0:
-                    print(f"\n  Baseline window mean AFTER baselining (should be ~0):")
+                    print("\n  Baseline window mean AFTER baselining (should be ~0):")
                     print(f"    Mean: {valid_after.mean():.2f} px")
                     print(f"    Std: {valid_after.std():.2f} px")
                     print(
@@ -3556,7 +3470,7 @@ if debug:
                     # Show distribution of baseline window means (should all be
                     # ~0)
                     print(
-                        f"\n  Distribution of baseline window means AFTER baselining:"
+                        "\n  Distribution of baseline window means AFTER baselining:"
                     )
                     print(
                         f"    Segments with |mean| < 0.1 px: {(np.abs(valid_after) < 0.1).sum()}"
@@ -3577,7 +3491,7 @@ if debug:
                     ]  # Top 10 worst
                     if len(worst_indices) > 0:
                         print(
-                            f"\n  Top 10 segments with largest |baseline window mean|:"
+                            "\n  Top 10 segments with largest |baseline window mean|:"
                         )
                         for i, idx in enumerate(
                             worst_indices[::-1]
@@ -3604,14 +3518,14 @@ if debug:
                             print(
                                 f"\n  ⚠️  CRITICAL: {mismatches.sum()} segments where baseline_value != baseline_window_mean_before"
                             )
-                            print(f"    This indicates a bug in baselining logic!")
+                            print("    This indicates a bug in baselining logic!")
                             for i in np.where(mismatches)[0][:5]:  # Show first 5
                                 print(
                                     f"      Segment {i}: baseline_value={valid_baseline[i]:.3f}, baseline_window_mean_before={valid_before_check[i]:.3f}"
                                 )
                         else:
                             print(
-                                f"\n  ✅ Baselining logic check: baseline_value matches baseline_window_mean_before for all segments"
+                                "\n  ✅ Baselining logic check: baseline_value matches baseline_window_mean_before for all segments"
                             )
 
                 # Baseline window point counts
@@ -3619,7 +3533,7 @@ if debug:
                     mask & (baseline_window_counts > 0)
                 ]
                 if len(valid_counts) > 0:
-                    print(f"\n  Baseline window point counts:")
+                    print("\n  Baseline window point counts:")
                     print(f"    Mean: {valid_counts.mean():.1f} points")
                     print(
                         f"    Range: [{valid_counts.min()}, {valid_counts.max()}] points"
@@ -3634,7 +3548,7 @@ if debug:
         # Compare original vs baselined values at the start of segments (before
         # threshold)
         print(f"\n{'=' * 80}")
-        print(f"ADDITIONAL BASELINING CHECK: Comparing segment start positions")
+        print("ADDITIONAL BASELINING CHECK: Comparing segment start positions")
         print(f"{'=' * 80}")
 
         for direction in ["upward", "downward"]:
@@ -3682,7 +3596,7 @@ if debug:
                         segment_start_means_baselined
                     )
                     print(
-                        f"  Mean position at segment start (first 5 pre-threshold points) AFTER baselining:"
+                        "  Mean position at segment start (first 5 pre-threshold points) AFTER baselining:"
                     )
                     print(f"    Mean: {segment_start_means_baselined.mean():.3f} px")
                     print(f"    Std: {segment_start_means_baselined.std():.3f} px")
@@ -3702,7 +3616,7 @@ if debug:
                     ]
                     if len(worst_indices) > 0:
                         print(
-                            f"\n  Top 10 segments with largest |start position mean| AFTER baselining:"
+                            "\n  Top 10 segments with largest |start position mean| AFTER baselining:"
                         )
                         for idx in worst_indices[::-1]:
                             print(
@@ -4258,7 +4172,7 @@ if plot_saccade_detection_QC:
 
         from scipy import stats
 
-        print(f"\n📊 Statistical Comparisons:")
+        print("\n📊 Statistical Comparisons:")
 
         print(f"  Orienting saccades: {len(orienting_saccades)}")
 
@@ -4275,7 +4189,7 @@ if plot_saccade_detection_QC:
                 orienting_amps, compensatory_amps, alternative="two-sided"
             )
 
-            print(f"\n  Amplitude (px):")
+            print("\n  Amplitude (px):")
 
             print(
                 f"    Orienting: {orienting_amps.mean():.2f} ± {orienting_amps.std():.2f} (median: {np.median(orienting_amps):.2f})"
@@ -4297,7 +4211,7 @@ if plot_saccade_detection_QC:
                 orienting_durs, compensatory_durs, alternative="two-sided"
             )
 
-            print(f"\n  Duration (s):")
+            print("\n  Duration (s):")
 
             print(
                 f"    Orienting: {orienting_durs.mean():.3f} ± {orienting_durs.std():.3f} (median: {np.median(orienting_durs):.3f})"
@@ -4321,7 +4235,7 @@ if plot_saccade_detection_QC:
                 orienting_pre_vel, compensatory_pre_vel, alternative="two-sided"
             )
 
-            print(f"\n  Pre-saccade velocity (px/s):")
+            print("\n  Pre-saccade velocity (px/s):")
 
             print(
                 f"    Orienting: {orienting_pre_vel.mean():.2f} ± {orienting_pre_vel.std():.2f} (median: {np.median(orienting_pre_vel):.2f})"
@@ -4347,7 +4261,7 @@ if plot_saccade_detection_QC:
                 orienting_pre_drift, compensatory_pre_drift, alternative="two-sided"
             )
 
-            print(f"\n  Pre-saccade position drift (px):")
+            print("\n  Pre-saccade position drift (px):")
 
             print(
                 f"    Orienting: {orienting_pre_drift.mean():.2f} ± {orienting_pre_drift.std():.2f} (median: {np.median(orienting_pre_drift):.2f})"
@@ -4375,7 +4289,7 @@ if plot_saccade_detection_QC:
                 orienting_post_var, compensatory_post_var, alternative="two-sided"
             )
 
-            print(f"\n  Post-saccade position variance (px²):")
+            print("\n  Post-saccade position variance (px²):")
 
             print(
                 f"    Orienting: {orienting_post_var.mean():.2f} ± {orienting_post_var.std():.2f} (median: {np.median(orienting_post_var):.2f})"
@@ -4391,7 +4305,7 @@ if plot_saccade_detection_QC:
 
             if len(compensatory_saccades) > 0:
                 bout_sizes = compensatory_saccades["bout_size"].values
-                print(f"\n  Bout size (compensatory saccades only):")
+                print("\n  Bout size (compensatory saccades only):")
                 print(
                     f"    Mean: {bout_sizes.mean():.2f} ± {bout_sizes.std():.2f} saccades"
                 )
@@ -4412,7 +4326,7 @@ if plot_saccade_detection_QC:
                     orienting_conf, compensatory_conf, alternative="two-sided"
                 )
 
-                print(f"\n  Classification Confidence:")
+                print("\n  Classification Confidence:")
 
                 print(
                     f"    Orienting: {orienting_conf.mean():.3f} ± {orienting_conf.std():.3f} (median: {np.median(orienting_conf):.3f})"
@@ -4426,7 +4340,7 @@ if plot_saccade_detection_QC:
 
         else:
             print(
-                f"  ⚠️ Cannot perform statistical comparisons - need both types present"
+                "  ⚠️ Cannot perform statistical comparisons - need both types present"
             )
 
         # Visualization
@@ -5095,7 +5009,7 @@ if isinstance(saccade_results, dict):
                 eye_breakdown[eye_label] = count
 
 print(f"\n{'=' * 80}")
-print(f"Launching GUI Annotation Tool (BOTH EYES)")
+print("Launching GUI Annotation Tool (BOTH EYES)")
 print(f"{'=' * 80}")
 print(f"Experiment ID: {experiment_id}")
 print(f"Eyes: {', '.join(eye_breakdown.keys()) if eye_breakdown else 'Unknown'}")
