@@ -318,6 +318,23 @@ def load_videography_data(path, debug=False):
             print(f'VideoData2 final dataframe: {len(vd2_out)} rows, frame_idx range {vd2_out["frame_idx"].min()}-{vd2_out["frame_idx"].max()}')
         print('='*80 + '\n')
     
+    def _ensure_unique_seconds(df, video_label):
+        if 'Seconds' in df.columns and df['Seconds'].duplicated().any():
+            duplicate_count = df['Seconds'].duplicated().sum()
+            duplicated_values = df.loc[df['Seconds'].duplicated(keep=False), 'Seconds'].unique()
+            sample_values = ', '.join(f"{val:.6f}" for val in duplicated_values[:5])
+            print(
+                f"❗ CRITICAL ERROR: Duplicate timestamps detected in '{video_label}'. "
+                f"Found {duplicate_count} duplicate entries. Sample duplicate values: {sample_values}"
+            )
+            raise ValueError(
+                f"Duplicate timestamps detected in '{video_label}'. "
+                "Please inspect the source data. Duplicate Seconds values break downstream processing."
+            )
+
+    _ensure_unique_seconds(vd1_out, "VideoData1")
+    _ensure_unique_seconds(vd2_out, "VideoData2")
+
     return vd1_out, vd2_out, vd1_has_sleap, vd2_has_sleap
 
 def recalculated_coordinates(point_name, df, reference_subtraced_displacements_dict):

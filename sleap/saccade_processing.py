@@ -149,9 +149,6 @@ def detect_saccades_adaptive(df, position_col='X_smooth', velocity_col='vel_x_sm
             'end_position': end_x,
             'amplitude': amplitude,
             'displacement': displacement,  # Signed displacement for direction validation
-            'start_idx': int(start_idx),
-            'peak_idx': int(peak_idx),
-            'end_idx': int(end_idx),
             'start_frame_idx': start_frame_idx,
             'peak_frame_idx': peak_frame_idx,
             'end_frame_idx': end_frame_idx
@@ -214,9 +211,6 @@ def detect_saccades_adaptive(df, position_col='X_smooth', velocity_col='vel_x_sm
             'end_position': end_x,
             'amplitude': amplitude,
             'displacement': displacement,  # Signed displacement for direction validation
-            'start_idx': int(start_idx),
-            'peak_idx': int(peak_idx),
-            'end_idx': int(end_idx),
             'start_frame_idx': start_frame_idx,
             'peak_frame_idx': peak_frame_idx,
             'end_frame_idx': end_frame_idx
@@ -225,6 +219,59 @@ def detect_saccades_adaptive(df, position_col='X_smooth', velocity_col='vel_x_sm
     # Convert to DataFrames for easier handling
     upward_saccades_df = pd.DataFrame(upward_saccades)
     downward_saccades_df = pd.DataFrame(downward_saccades)
+
+    drop_idx_cols = ["start_idx", "peak_idx", "end_idx"]
+    upward_saccades_df = upward_saccades_df.drop(columns=drop_idx_cols, errors="ignore")
+    downward_saccades_df = downward_saccades_df.drop(columns=drop_idx_cols, errors="ignore")
+
+    # Filter out saccades containing NaN in critical columns
+    essential_cols = [
+        "time",
+        "start_time",
+        "end_time",
+        "start_position",
+        "end_position",
+        "amplitude",
+        "displacement",
+        "start_frame_idx",
+        "peak_frame_idx",
+        "end_frame_idx",
+    ]
+
+    nan_filter_messages = []
+
+    def _clean_nan_rows(df, label):
+        if df is None or df.empty:
+            return df, 0, 0
+        present_cols = [col for col in essential_cols if col in df.columns]
+        if not present_cols:
+            return df, 0, len(df)
+        original_count = len(df)
+        cleaned_df = df.dropna(subset=present_cols)
+        removed = original_count - len(cleaned_df)
+        return cleaned_df.reset_index(drop=True), removed, original_count
+
+    upward_saccades_df, removed_up, total_up = _clean_nan_rows(
+        upward_saccades_df, "upward"
+    )
+    downward_saccades_df, removed_down, total_down = _clean_nan_rows(
+        downward_saccades_df, "downward"
+    )
+
+    total_removed = removed_up + removed_down
+    total_detected = total_up + total_down
+
+    if total_removed > 0:
+        percent_removed = (total_removed / total_detected) * 100 if total_detected else 0
+        print(
+            f"⚠️ Filtered out {total_removed} saccade(s) "
+            f"({percent_removed:.1f}% of detected) due to NaN values in critical fields."
+        )
+        if percent_removed > 5:
+            print(
+                "❗ Warning: More than 5% of detected saccades were removed because of NaN values. "
+                "Please review data quality (blinks, missing tracking) for this recording."
+            )
     
     if verbose:
         # Format direction labels for output
@@ -1251,10 +1298,14 @@ def analyze_eye_video_saccades(
     # Compute instantaneous velocity from SMOOTHED position (not raw)
     # This gives smooth velocity because we smoothed before differentiating
     df['dt'] = df['Seconds'].diff()
+    if 'dt' in df.columns:
+        eps = np.finfo(float).eps
+        df.loc[df['dt'].abs() <= eps, 'dt'] = np.nan
+        df.loc[df['dt'] <= 0, 'dt'] = np.nan
     df['vel_x_smooth'] = df['X_smooth'].diff() / df['dt']
-    
-    # Also compute velocity from raw position for reference (noisy, not used for detection)
     df['vel_x_raw'] = df['X_raw'].diff() / df['dt']
+    df['vel_x_smooth'].replace([np.inf, -np.inf], np.nan, inplace=True)
+    df['vel_x_raw'].replace([np.inf, -np.inf], np.nan, inplace=True)
     df['vel_x_original'] = df['vel_x_raw']  # Keep for reference
 
     # Saccade detection

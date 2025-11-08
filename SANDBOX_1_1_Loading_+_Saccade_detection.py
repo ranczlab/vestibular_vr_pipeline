@@ -3008,6 +3008,11 @@ def get_direction_map_for_video(video_key):
         return {"upward": "TN", "downward": "NT"}
 
 
+def get_eye_code_for_video(video_key):
+    """Return 'L' or 'R' for the specified video."""
+    return video1_eye if video_key == "VideoData1" else video2_eye
+
+
 if VideoData1_Has_Sleap:
     print(f"\n🔎 === Source: ({get_eye_label('VideoData1')}) ===\n")
     df1 = VideoData1[["Ellipse.Center.X", "Seconds", "frame_idx"]].copy()
@@ -3078,49 +3083,6 @@ if VideoData2_Has_Sleap:
     )
 
 # +
-print("Columns in VideoData1:", VideoData1.columns.tolist())
-import sys
-
-def print_all_dfs_and_dicts():
-    import pandas as pd
-    print("\n=== DataFrames currently in memory ===")
-    for var_name, var_val in globals().items():
-        if isinstance(var_val, pd.DataFrame):
-            print(f"{var_name} (DataFrame): columns = {list(var_val.columns)}")
-
-    print("\n=== Dictionaries currently in memory ===")
-    for var_name, var_val in globals().items():
-        if isinstance(var_val, dict):
-            print(f"{var_name} (dict): keys type = {type(next(iter(var_val), None))}")
-
-print_all_dfs_and_dicts()
-
-# Explaining the contents of the saccade_results dictionary
-
-print("\n=== Info: saccade_results dictionary ===")
-print("saccade_results is a dictionary keyed by video name (e.g., 'VideoData1', 'VideoData2').")
-print("Each entry contains the output DataFrame or result from analyze_eye_video_saccades for that video.")
-print("- Typically, each contained DataFrame holds detected saccades with columns like:")
-print("  ['onset_frame', 'offset_frame', 'onset_time', 'offset_time', 'amplitude', 'direction',")
-print("   'NT_or_TN', 'peak_velocity', 'duration', 'classification', ... other per-saccade features]")
-for k, v in saccade_results.items():
-    print(f"\nVideo key: {k}")
-    print(f"Type: {type(v)}")
-    if hasattr(v, 'head'):
-        try:
-            print(f"Shape: {v.shape}")
-            print("Columns:", list(v.columns))
-            print("First 3 rows:\n", v.head(3))
-        except Exception as e:
-            print(f"Could not display DataFrame: {e}")
-    else:
-        print("Value is not a DataFrame. Contents:")
-        print(v)
-print("\nNote: Use saccade_results['VideoData1'] to see saccade details for VideoData1, etc.")
-
-
-
-# +
 # SAVE SACCADE RESULTS TO FILES
 ##########################################################################
 # Build tidy per-saccade summary tables, merge saccade metadata into VideoData,
@@ -3153,7 +3115,7 @@ def build_saccade_summary(video_key):
     summary = summary.sort_values(["start_time", "time"]).reset_index(drop=True)
     summary.insert(0, "saccade_id", np.arange(1, len(summary) + 1, dtype=int))
     summary["video_key"] = video_key
-    summary["eye"] = get_eye_label(video_key)
+    summary["eye"] = get_eye_code_for_video(video_key)
 
     # Normalise frame/index columns
     summary["merge_frame_idx"] = pd.to_numeric(
@@ -3163,9 +3125,6 @@ def build_saccade_summary(video_key):
         "start_frame_idx",
         "peak_frame_idx",
         "end_frame_idx",
-        "start_idx",
-        "peak_idx",
-        "end_idx",
     ]:
         if col_name in summary.columns:
             summary[col_name] = pd.to_numeric(
@@ -3182,9 +3141,6 @@ def build_saccade_summary(video_key):
         "end_position": "saccade_end_position",
         "amplitude": "saccade_amplitude",
         "displacement": "saccade_displacement",
-        "start_idx": "saccade_start_idx",
-        "peak_idx": "saccade_peak_idx",
-        "end_idx": "saccade_end_idx",
         "start_frame_idx": "saccade_start_frame_idx",
         "peak_frame_idx": "saccade_peak_frame_idx",
         "end_frame_idx": "saccade_end_frame_idx",
@@ -3205,9 +3161,6 @@ def build_saccade_summary(video_key):
         "saccade_start_frame_idx",
         "saccade_peak_frame_idx",
         "saccade_end_frame_idx",
-        "saccade_start_idx",
-        "saccade_peak_idx",
-        "saccade_end_idx",
         "saccade_peak_velocity",
         "saccade_amplitude",
         "saccade_displacement",
@@ -3254,6 +3207,7 @@ def merge_summary_into_video(video_df, summary_df):
 
 
 if "VideoData1" in globals() and "VideoData1" in saccade_results:
+
     summary_v1 = build_saccade_summary("VideoData1")
     if not summary_v1.empty:
         VideoData1 = merge_summary_into_video(VideoData1, summary_v1)
@@ -3285,6 +3239,10 @@ if "VideoData2" in globals():
     summary_table = summary_tables.get("VideoData2")
     if summary_table is not None and not summary_table.empty:
         summary_table.to_csv(save_path2 / "VideoData2_saccade_summary.csv", index=False)
+# -
+
+print("Columns in VideoData1:", list(VideoData1.columns))
+
 
 # +
 # VISUALIZE ALL SACCADES - SIDE BY SIDE
