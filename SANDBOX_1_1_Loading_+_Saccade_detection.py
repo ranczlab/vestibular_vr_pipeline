@@ -692,13 +692,13 @@ columns_of_interest = [
 ]
 # VideoData1 processing
 if "VideoData1_Has_Sleap" in globals() and VideoData1_Has_Sleap:
-    VideoData1_centered_for_plot = pf.center_coordinates_to_median(
+    VideoData1_centered = pf.center_coordinates_to_median(
         VideoData1, columns_of_interest, get_eye_label("VideoData1")
     )
 
 # VideoData2 processing
 if "VideoData2_Has_Sleap" in globals() and VideoData2_Has_Sleap:
-    VideoData2_centered_for_plot = pf.center_coordinates_to_median(
+    VideoData2_centered = pf.center_coordinates_to_median(
         VideoData2, columns_of_interest, get_eye_label("VideoData2")
     )
 
@@ -2354,8 +2354,8 @@ gs = fig.add_gridspec(4, 2, hspace=0.3, wspace=0.3)
 if VideoData1_Has_Sleap:
     ax1 = fig.add_subplot(gs[0, :])
     ax1.plot(
-        VideoData1_centered_for_plot["Seconds"],
-        VideoData1_centered_for_plot["center.x"],
+        VideoData1_centered["Seconds"],
+        VideoData1_centered["center.x"],
         linewidth=0.5,
         c="blue",
         alpha=0.6,
@@ -2379,8 +2379,8 @@ if VideoData1_Has_Sleap:
 if VideoData2_Has_Sleap:
     ax2 = fig.add_subplot(gs[1, :])
     ax2.plot(
-        VideoData2_centered_for_plot["Seconds"],
-        VideoData2_centered_for_plot["center.x"],
+        VideoData2_centered["Seconds"],
+        VideoData2_centered["center.x"],
         linewidth=0.5,
         c="blue",
         alpha=0.6,
@@ -2419,8 +2419,8 @@ if VideoData1_Has_Sleap:
     )
 
     # Center (red) - from centered data
-    x_center1 = VideoData1_centered_for_plot["center.x"].to_numpy()
-    y_center1 = VideoData1_centered_for_plot["center.y"].to_numpy()
+    x_center1 = VideoData1_centered["center.x"].to_numpy()
+    y_center1 = VideoData1_centered["center.y"].to_numpy()
     mask2 = ~(np.isnan(x_center1) | np.isnan(y_center1))
 
     ax3.scatter(
@@ -2495,8 +2495,8 @@ if VideoData2_Has_Sleap:
     )
 
     # Center (red) - from centered data
-    x_center2 = VideoData2_centered_for_plot["center.x"].to_numpy()
-    y_center2 = VideoData2_centered_for_plot["center.y"].to_numpy()
+    x_center2 = VideoData2_centered["center.x"].to_numpy()
+    y_center2 = VideoData2_centered["center.y"].to_numpy()
     mask4 = ~(np.isnan(x_center2) | np.isnan(y_center2))
 
     ax4.scatter(
@@ -2791,8 +2791,8 @@ if plot_QC_timeseries:
     if VideoData1_Has_Sleap:
         fig.add_trace(
             go.Scatter(
-                x=VideoData1_centered_for_plot["Seconds"],
-                y=VideoData1_centered_for_plot["center.x"],
+                x=VideoData1_centered["Seconds"],
+                y=VideoData1_centered["center.x"],
                 mode="lines",
                 name="center.x original",
                 line=dict(color="blue", width=0.5),
@@ -2819,8 +2819,8 @@ if plot_QC_timeseries:
     if VideoData2_Has_Sleap:
         fig.add_trace(
             go.Scatter(
-                x=VideoData2_centered_for_plot["Seconds"],
-                y=VideoData2_centered_for_plot["center.x"],
+                x=VideoData2_centered["Seconds"],
+                y=VideoData2_centered["center.x"],
                 mode="lines",
                 name="center.x original",
                 line=dict(color="blue", width=0.5),
@@ -3010,7 +3010,7 @@ def get_direction_map_for_video(video_key):
 
 if VideoData1_Has_Sleap:
     print(f"\n🔎 === Source: ({get_eye_label('VideoData1')}) ===\n")
-    df1 = VideoData1[["Ellipse.Center.X", "Seconds"]].copy()
+    df1 = VideoData1[["Ellipse.Center.X", "Seconds", "frame_idx"]].copy()
     dir_map_v1 = get_direction_map_for_video("VideoData1")
     saccade_results["VideoData1"] = analyze_eye_video_saccades(
         df1,
@@ -3045,7 +3045,7 @@ if VideoData1_Has_Sleap:
 
 if VideoData2_Has_Sleap:
     print(f"\n🔎 === Source: ({get_eye_label('VideoData2')}) ===\n")
-    df2 = VideoData2[["Ellipse.Center.X", "Seconds"]].copy()
+    df2 = VideoData2[["Ellipse.Center.X", "Seconds", "frame_idx"]].copy()
     dir_map_v2 = get_direction_map_for_video("VideoData2")
     saccade_results["VideoData2"] = analyze_eye_video_saccades(
         df2,
@@ -3078,36 +3078,213 @@ if VideoData2_Has_Sleap:
     )
 
 # +
-# SAVE SACCADE RESULTS TO CSV TODO  next - this should be parquet and contain saccade info (onset time, NT or TN, amplitude, placeholder for classification to be done later (3 options, orienting, compensating or saccade-fixate)
+print("Columns in VideoData1:", VideoData1.columns.tolist())
+import sys
+
+def print_all_dfs_and_dicts():
+    import pandas as pd
+    print("\n=== DataFrames currently in memory ===")
+    for var_name, var_val in globals().items():
+        if isinstance(var_val, pd.DataFrame):
+            print(f"{var_name} (DataFrame): columns = {list(var_val.columns)}")
+
+    print("\n=== Dictionaries currently in memory ===")
+    for var_name, var_val in globals().items():
+        if isinstance(var_val, dict):
+            print(f"{var_name} (dict): keys type = {type(next(iter(var_val), None))}")
+
+print_all_dfs_and_dicts()
+
+# Explaining the contents of the saccade_results dictionary
+
+print("\n=== Info: saccade_results dictionary ===")
+print("saccade_results is a dictionary keyed by video name (e.g., 'VideoData1', 'VideoData2').")
+print("Each entry contains the output DataFrame or result from analyze_eye_video_saccades for that video.")
+print("- Typically, each contained DataFrame holds detected saccades with columns like:")
+print("  ['onset_frame', 'offset_frame', 'onset_time', 'offset_time', 'amplitude', 'direction',")
+print("   'NT_or_TN', 'peak_velocity', 'duration', 'classification', ... other per-saccade features]")
+for k, v in saccade_results.items():
+    print(f"\nVideo key: {k}")
+    print(f"Type: {type(v)}")
+    if hasattr(v, 'head'):
+        try:
+            print(f"Shape: {v.shape}")
+            print("Columns:", list(v.columns))
+            print("First 3 rows:\n", v.head(3))
+        except Exception as e:
+            print(f"Could not display DataFrame: {e}")
+    else:
+        print("Value is not a DataFrame. Contents:")
+        print(v)
+print("\nNote: Use saccade_results['VideoData1'] to see saccade details for VideoData1, etc.")
+
+
+
+# +
+# SAVE SACCADE RESULTS TO FILES
 ##########################################################################
-# reindex to aeon datetime to be done in the other notebook
+# Build tidy per-saccade summary tables, merge saccade metadata into VideoData,
+# then save enriched DataFrames (parquet) and QC summaries (CSV).
 
-# Keep only the specified columns in VideoData1/2
-keep_cols = [
-    "frame_idx",
-    "Seconds",
-    "Ellipse.Diameter",
-    "Ellipse.Angle",
-    "Ellipse.Center.X",
-    "Ellipse.Center.Y",
-    "Ellipse.Diameter.Filt",
-]
-if 'VideoData1' in globals():
-    VideoData1 = VideoData1.loc[:, [col for col in keep_cols if col in VideoData1.columns]]
-    save_path1 = (
-        save_path / "Video_Sleap_Data1" / "Video_Sleap_Data1_1904-01-01T00-00-00.csv"
+
+def build_saccade_summary(video_key):
+    """Create a tidy per-saccade summary table for the specified video."""
+    results = saccade_results.get(video_key)
+    if results is None:
+        return pd.DataFrame()
+
+    direction_map = get_direction_map_for_video(video_key)
+    summary_parts = []
+    for direction, df in (
+        ("upward", results.get("upward_saccades_df")),
+        ("downward", results.get("downward_saccades_df")),
+    ):
+        if df is None or df.empty:
+            continue
+        temp = df.copy()
+        temp["direction"] = direction
+        temp["direction_label"] = direction_map.get(direction, direction)
+        summary_parts.append(temp)
+
+    if not summary_parts:
+        return pd.DataFrame()
+
+    summary = pd.concat(summary_parts, ignore_index=True)
+    summary = summary.sort_values(["start_time", "time"]).reset_index(drop=True)
+    summary.insert(0, "saccade_id", np.arange(1, len(summary) + 1, dtype=int))
+    summary["video_key"] = video_key
+    summary["eye"] = get_eye_label(video_key)
+
+    # Normalise frame/index columns
+    summary["merge_frame_idx"] = pd.to_numeric(
+        summary.get("start_frame_idx"), errors="coerce"
+    ).astype("Int64")
+    for col_name in [
+        "start_frame_idx",
+        "peak_frame_idx",
+        "end_frame_idx",
+        "start_idx",
+        "peak_idx",
+        "end_idx",
+    ]:
+        if col_name in summary.columns:
+            summary[col_name] = pd.to_numeric(
+                summary[col_name], errors="coerce"
+            ).astype("Int64")
+
+    rename_map = {
+        "time": "saccade_peak_time",
+        "velocity": "saccade_peak_velocity",
+        "start_time": "saccade_start_time",
+        "end_time": "saccade_end_time",
+        "duration": "saccade_duration",
+        "start_position": "saccade_start_position",
+        "end_position": "saccade_end_position",
+        "amplitude": "saccade_amplitude",
+        "displacement": "saccade_displacement",
+        "start_idx": "saccade_start_idx",
+        "peak_idx": "saccade_peak_idx",
+        "end_idx": "saccade_end_idx",
+        "start_frame_idx": "saccade_start_frame_idx",
+        "peak_frame_idx": "saccade_peak_frame_idx",
+        "end_frame_idx": "saccade_end_frame_idx",
+    }
+    summary = summary.rename(
+        columns={k: v for k, v in rename_map.items() if k in summary.columns}
     )
+
+    preferred_order = [
+        "saccade_id",
+        "video_key",
+        "eye",
+        "direction",
+        "direction_label",
+        "saccade_start_time",
+        "saccade_end_time",
+        "saccade_peak_time",
+        "saccade_start_frame_idx",
+        "saccade_peak_frame_idx",
+        "saccade_end_frame_idx",
+        "saccade_start_idx",
+        "saccade_peak_idx",
+        "saccade_end_idx",
+        "saccade_peak_velocity",
+        "saccade_amplitude",
+        "saccade_displacement",
+        "saccade_duration",
+        "saccade_start_position",
+        "saccade_end_position",
+        "saccade_type",
+        "bout_id",
+        "bout_size",
+        "pre_saccade_mean_velocity",
+        "pre_saccade_position_drift",
+        "post_saccade_position_variance",
+        "post_saccade_position_change",
+        "merge_frame_idx",
+    ]
+    remaining_cols = [col for col in summary.columns if col not in preferred_order]
+    summary = summary[preferred_order + remaining_cols]
+    return summary
+
+
+summary_tables = {}
+
+
+def merge_summary_into_video(video_df, summary_df):
+    """Merge tidy saccade summary columns into the per-frame VideoData DataFrame."""
+    if summary_df is None or summary_df.empty:
+        return video_df
+
+    summary_columns = [col for col in summary_df.columns if col != "merge_frame_idx"]
+    columns_to_drop = [col for col in summary_columns if col in video_df.columns]
+    if columns_to_drop:
+        video_df = video_df.drop(columns=columns_to_drop)
+
+    summary_for_join = summary_df.set_index("merge_frame_idx")
+    summary_for_join = summary_for_join.drop(columns=["merge_frame_idx"], errors="ignore")
+
+    merged = (
+        video_df.set_index("frame_idx")
+        .join(summary_for_join, how="left")
+        .reset_index()
+        .rename(columns={"index": "frame_idx"})
+    )
+    return merged
+
+
+if "VideoData1" in globals() and "VideoData1" in saccade_results:
+    summary_v1 = build_saccade_summary("VideoData1")
+    if not summary_v1.empty:
+        VideoData1 = merge_summary_into_video(VideoData1, summary_v1)
+        summary_tables["VideoData1"] = summary_v1.drop(columns=["merge_frame_idx"])
+    else:
+        summary_tables["VideoData1"] = summary_v1
+
+if "VideoData2" in globals() and "VideoData2" in saccade_results:
+    summary_v2 = build_saccade_summary("VideoData2")
+    if not summary_v2.empty:
+        VideoData2 = merge_summary_into_video(VideoData2, summary_v2)
+        summary_tables["VideoData2"] = summary_v2.drop(columns=["merge_frame_idx"])
+    else:
+        summary_tables["VideoData2"] = summary_v2
+
+# Save enriched VideoData tables as parquet and tidy summaries as CSV for QC
+if "VideoData1" in globals():
+    save_path1 = save_path / "Video_Sleap_Data1"
     save_path1.parent.mkdir(parents=True, exist_ok=True)
-    VideoData1.to_csv(save_path1)
+    VideoData1.to_parquet(save_path1 / "Video_Sleap_Data1_1904-01-01T00-00-00.parquet", index=False)
+    summary_table = summary_tables.get("VideoData1")
+    if summary_table is not None and not summary_table.empty:
+        summary_table.to_csv(save_path1 / "VideoData1_saccade_summary.csv", index=False)
 
-if 'VideoData2' in globals():
-    VideoData2 = VideoData2.loc[:, [col for col in keep_cols if col in VideoData2.columns]]
-    save_path2 = (
-        save_path / "Video_Sleap_Data2" / "Video_Sleap_Data2_1904-01-01T00-00-00.csv"
-    )
+if "VideoData2" in globals():
+    save_path2 = save_path / "Video_Sleap_Data2"
     save_path2.parent.mkdir(parents=True, exist_ok=True)
-    VideoData2.to_csv(save_path2)
-
+    VideoData2.to_parquet(save_path2 / "Video_Sleap_Data2_1904-01-01T00-00-00.parquet", index=False)
+    summary_table = summary_tables.get("VideoData2")
+    if summary_table is not None and not summary_table.empty:
+        summary_table.to_csv(save_path2 / "VideoData2_saccade_summary.csv", index=False)
 
 # +
 # VISUALIZE ALL SACCADES - SIDE BY SIDE

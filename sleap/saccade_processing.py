@@ -67,6 +67,7 @@ def detect_saccades_adaptive(df, position_col='X_smooth', velocity_col='vel_x_sm
     # 1. Calculate adaptive thresholds using statistical methods
     abs_vel = df[velocity_col].abs().dropna()
     vel_thresh = abs_vel.mean() + k * abs_vel.std()
+    frame_idx_available = 'frame_idx' in df.columns
     
     if verbose:
         print(f"Adaptive velocity threshold: {vel_thresh:.2f} px/s")
@@ -126,6 +127,18 @@ def detect_saccades_adaptive(df, position_col='X_smooth', velocity_col='vel_x_sm
         amplitude = abs(end_x - start_x)
         displacement = end_x - start_x  # Signed displacement: positive = upward, negative = downward
         
+        if frame_idx_available:
+            start_frame_idx_val = df.iloc[start_idx]['frame_idx']
+            peak_frame_idx_val = df.iloc[peak_idx]['frame_idx']
+            end_frame_idx_val = df.iloc[end_idx]['frame_idx']
+            start_frame_idx = int(start_frame_idx_val) if pd.notna(start_frame_idx_val) else np.nan
+            peak_frame_idx = int(peak_frame_idx_val) if pd.notna(peak_frame_idx_val) else np.nan
+            end_frame_idx = int(end_frame_idx_val) if pd.notna(end_frame_idx_val) else np.nan
+        else:
+            start_frame_idx = np.nan
+            peak_frame_idx = np.nan
+            end_frame_idx = np.nan
+
         upward_saccades.append({
             'time': peak_time,
             'velocity': peak_velocity,
@@ -135,7 +148,13 @@ def detect_saccades_adaptive(df, position_col='X_smooth', velocity_col='vel_x_sm
             'start_position': start_x,
             'end_position': end_x,
             'amplitude': amplitude,
-            'displacement': displacement  # Signed displacement for direction validation
+            'displacement': displacement,  # Signed displacement for direction validation
+            'start_idx': int(start_idx),
+            'peak_idx': int(peak_idx),
+            'end_idx': int(end_idx),
+            'start_frame_idx': start_frame_idx,
+            'peak_frame_idx': peak_frame_idx,
+            'end_frame_idx': end_frame_idx
         })
     
     downward_saccades = []
@@ -173,6 +192,18 @@ def detect_saccades_adaptive(df, position_col='X_smooth', velocity_col='vel_x_sm
         amplitude = abs(end_x - start_x)
         displacement = end_x - start_x  # Signed displacement: positive = upward, negative = downward
         
+        if frame_idx_available:
+            start_frame_idx_val = df.iloc[start_idx]['frame_idx']
+            peak_frame_idx_val = df.iloc[peak_idx]['frame_idx']
+            end_frame_idx_val = df.iloc[end_idx]['frame_idx']
+            start_frame_idx = int(start_frame_idx_val) if pd.notna(start_frame_idx_val) else np.nan
+            peak_frame_idx = int(peak_frame_idx_val) if pd.notna(peak_frame_idx_val) else np.nan
+            end_frame_idx = int(end_frame_idx_val) if pd.notna(end_frame_idx_val) else np.nan
+        else:
+            start_frame_idx = np.nan
+            peak_frame_idx = np.nan
+            end_frame_idx = np.nan
+
         downward_saccades.append({
             'time': peak_time,
             'velocity': peak_velocity,
@@ -182,7 +213,13 @@ def detect_saccades_adaptive(df, position_col='X_smooth', velocity_col='vel_x_sm
             'start_position': start_x,
             'end_position': end_x,
             'amplitude': amplitude,
-            'displacement': displacement  # Signed displacement for direction validation
+            'displacement': displacement,  # Signed displacement for direction validation
+            'start_idx': int(start_idx),
+            'peak_idx': int(peak_idx),
+            'end_idx': int(end_idx),
+            'start_frame_idx': start_frame_idx,
+            'peak_frame_idx': peak_frame_idx,
+            'end_frame_idx': end_frame_idx
         })
     
     # Convert to DataFrames for easier handling
@@ -1189,6 +1226,12 @@ def analyze_eye_video_saccades(
     # Preprocessing: Smooth position first (reduces noise before differentiation), then compute velocity
     # Use raw position for accurate amplitude calculations
     df = df.copy()
+
+    # Preserve frame indices so downstream steps can map back to original video frames
+    if 'frame_idx' not in df.columns:
+        df['frame_idx'] = df.index
+    df['original_dataframe_index'] = df.index
+
     # Ensure a clean positional index to avoid label/position confusion downstream
     df = df.reset_index(drop=True)
     
