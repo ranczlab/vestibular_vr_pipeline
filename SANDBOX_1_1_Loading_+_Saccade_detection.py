@@ -200,6 +200,82 @@ outlier_sd_threshold = 10  # for removing outliers from the data, they get inter
 # Common resampling rate (Hz) used for alignment with other modalities
 COMMON_RESAMPLED_RATE = 1000
 
+RESAMPLED_DROP_COLUMNS = [
+    "pre_saccade_mean_velocity",
+    "pre_saccade_position_drift",
+    "post_saccade_position_variance",
+    "post_saccade_position_change",
+    "saccade_start_position",
+    "saccade_end_position",
+    "Ellipse.Angle",
+    "Ellipse.Diameter",
+    "instance.score",
+    "left.x",
+    "left.y",
+    "left.score",
+    "right.x",
+    "right.y",
+    "right.score",
+    "p1.x",
+    "p1.y",
+    "p1.score",
+    "p2.x",
+    "p2.y",
+    "p2.score",
+    "p3.x",
+    "p3.y",
+    "p3.score",
+    "p4.x",
+    "p4.y",
+    "p4.score",
+    "p5.x",
+    "p5.y",
+    "p5.score",
+    "p6.x",
+    "p6.y",
+    "p6.score",
+    "p7.x",
+    "p7.y",
+    "p7.score",
+    "p8.x",
+    "p8.y",
+    "p8.score",
+    "center.x",
+    "center.y",
+    "center.score",
+]
+
+SACCADE_EXPORT_DROP_COLUMNS = {
+    "saccade_id",
+    "video_key",
+    "eye",
+    "direction",
+    "direction_label",
+    "saccade_start_time",
+    "saccade_end_time",
+    "saccade_peak_time",
+    "saccade_start_frame_idx",
+    "saccade_peak_frame_idx",
+    "saccade_end_frame_idx",
+    "saccade_peak_velocity",
+    "saccade_amplitude",
+    "saccade_displacement",
+    "saccade_duration",
+    "saccade_start_position",
+    "saccade_end_position",
+    "saccade_type",
+    "bout_id",
+    "bout_size",
+    "pre_saccade_mean_velocity",
+    "pre_saccade_position_drift",
+    "post_saccade_position_variance",
+    "post_saccade_position_change",
+    "classification_confidence",
+    "rule_based_class",
+    "rule_based_confidence",
+    "merge_frame_idx",
+}
+
 # Pupil diameter filter settings (Butterworth low-pass)
 pupil_filter_cutoff_hz = 10  # Hz
 pupil_filter_order = 6
@@ -3301,11 +3377,24 @@ if "VideoData1" in globals():
     resampled_csv_path1 = video_dir1 / "Video_Sleap_Data1_1904-01-01T00-00-00_resampled.csv"
     resampled_parquet_path1 = video_dir1 / "Video_Sleap_Data1_1904-01-01T00-00-00_resampled.parquet"
 
-    VideoData1_full_indexed = set_aeon_index(VideoData1)
+    drop_for_export = [col for col in SACCADE_EXPORT_DROP_COLUMNS if col in VideoData1.columns]
+    VideoData1_export = VideoData1.drop(columns=drop_for_export)
+
+    VideoData1_export_renamed = (
+        VideoData1_export.rename(columns={"Ellipse.Diameter.Filt": "Pupil.Diameter"})
+        if "Ellipse.Diameter.Filt" in VideoData1_export.columns
+        else VideoData1_export
+    )
+
+    VideoData1_full_indexed = set_aeon_index(VideoData1_export_renamed)
     append_aeon_time_column(VideoData1_full_indexed).to_csv(full_csv_path1, index=False)
     VideoData1_full_indexed.to_parquet(full_parquet_path1, engine="pyarrow", compression="snappy")
 
-    VideoData1_resampled = resample_video_dataframe(VideoData1, "eye1")
+    drop_for_resample = [col for col in RESAMPLED_DROP_COLUMNS if col in VideoData1_export.columns]
+    VideoData1_resampled_input = VideoData1_export.drop(columns=drop_for_resample)
+    VideoData1_resampled = resample_video_dataframe(VideoData1_resampled_input, "eye1")
+    if "Ellipse.Diameter.Filt" in VideoData1_resampled.columns:
+        VideoData1_resampled = VideoData1_resampled.rename(columns={"Ellipse.Diameter.Filt": "Pupil.Diameter"})
     VideoData1_resampled_indexed = set_aeon_index(VideoData1_resampled)
     append_aeon_time_column(VideoData1_resampled_indexed).to_csv(resampled_csv_path1, index=False)
     VideoData1_resampled_indexed.to_parquet(
@@ -3314,7 +3403,9 @@ if "VideoData1" in globals():
 
     summary_table = summary_tables.get("VideoData1")
     if summary_table is not None and not summary_table.empty:
-        summary_table.to_csv(video_dir1 / "VideoData1_saccade_summary.csv", index=False)
+        summary_export = summary_table.copy()
+        summary_export["aeon_time"] = summary_export["saccade_peak_time"].apply(api.aeon)
+        summary_export.to_csv(video_dir1 / "VideoData1_saccade_summary.csv", index=False)
 
 if "VideoData2" in globals():
     video_dir2 = save_path / "Video_Sleap_Data2"
@@ -3325,11 +3416,24 @@ if "VideoData2" in globals():
     resampled_csv_path2 = video_dir2 / "Video_Sleap_Data2_1904-01-01T00-00-00_resampled.csv"
     resampled_parquet_path2 = video_dir2 / "Video_Sleap_Data2_1904-01-01T00-00-00_resampled.parquet"
 
-    VideoData2_full_indexed = set_aeon_index(VideoData2)
+    drop_for_export = [col for col in SACCADE_EXPORT_DROP_COLUMNS if col in VideoData2.columns]
+    VideoData2_export = VideoData2.drop(columns=drop_for_export)
+
+    VideoData2_export_renamed = (
+        VideoData2_export.rename(columns={"Ellipse.Diameter.Filt": "Pupil.Diameter"})
+        if "Ellipse.Diameter.Filt" in VideoData2_export.columns
+        else VideoData2_export
+    )
+
+    VideoData2_full_indexed = set_aeon_index(VideoData2_export_renamed)
     append_aeon_time_column(VideoData2_full_indexed).to_csv(full_csv_path2, index=False)
     VideoData2_full_indexed.to_parquet(full_parquet_path2, engine="pyarrow", compression="snappy")
 
-    VideoData2_resampled = resample_video_dataframe(VideoData2, "eye2")
+    drop_for_resample = [col for col in RESAMPLED_DROP_COLUMNS if col in VideoData2_export.columns]
+    VideoData2_resampled_input = VideoData2_export.drop(columns=drop_for_resample)
+    VideoData2_resampled = resample_video_dataframe(VideoData2_resampled_input, "eye2")
+    if "Ellipse.Diameter.Filt" in VideoData2_resampled.columns:
+        VideoData2_resampled = VideoData2_resampled.rename(columns={"Ellipse.Diameter.Filt": "Pupil.Diameter"})
     VideoData2_resampled_indexed = set_aeon_index(VideoData2_resampled)
     append_aeon_time_column(VideoData2_resampled_indexed).to_csv(resampled_csv_path2, index=False)
     VideoData2_resampled_indexed.to_parquet(
@@ -3338,7 +3442,9 @@ if "VideoData2" in globals():
 
     summary_table = summary_tables.get("VideoData2")
     if summary_table is not None and not summary_table.empty:
-        summary_table.to_csv(video_dir2 / "VideoData2_saccade_summary.csv", index=False)
+        summary_export = summary_table.copy()
+        summary_export["aeon_time"] = summary_export["saccade_peak_time"].apply(api.aeon)
+        summary_export.to_csv(video_dir2 / "VideoData2_saccade_summary.csv", index=False)
 
 print("Columns in VideoData1:", list(VideoData1.columns))
 
