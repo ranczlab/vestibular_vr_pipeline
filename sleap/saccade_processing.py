@@ -8,9 +8,21 @@ from scipy.signal import find_peaks
 import matplotlib.cm as cm
 
 
-def detect_saccades_adaptive(df, position_col='X_smooth', velocity_col='vel_x_smooth', 
-                             time_col='Seconds', fps=None, k=5, refractory_period=0.1,
-                             onset_offset_fraction=0.2, peak_width=None, peak_width_time=None, verbose=True, upward_label=None, downward_label=None):
+def detect_saccades_adaptive(
+    df,
+    position_col='X_smooth',
+    velocity_col='vel_x_smooth',
+    time_col='Seconds',
+    fps=None,
+    k=5,
+    refractory_period=0.1,
+    onset_offset_fraction=0.2,
+    peak_width=None,
+    peak_width_time=None,
+    verbose=True,
+    upward_label=None,
+    downward_label=None,
+):
     """
     Detect saccades using adaptive statistical threshold method.
     
@@ -42,7 +54,7 @@ def detect_saccades_adaptive(df, position_col='X_smooth', velocity_col='vel_x_sm
         
     Returns:
     --------
-    tuple : (upward_saccades_df, downward_saccades_df, velocity_threshold)
+    tuple : (upward_saccades_df, downward_saccades_df, velocity_threshold, detection_summary)
     """
     # Calculate FPS if not provided
     if fps is None:
@@ -66,12 +78,14 @@ def detect_saccades_adaptive(df, position_col='X_smooth', velocity_col='vel_x_sm
     
     # 1. Calculate adaptive thresholds using statistical methods
     abs_vel = df[velocity_col].abs().dropna()
-    vel_thresh = abs_vel.mean() + k * abs_vel.std()
+    vel_mean = abs_vel.mean()
+    vel_std = abs_vel.std()
+    vel_thresh = vel_mean + k * vel_std
     frame_idx_available = 'frame_idx' in df.columns
     
     if verbose:
         print(f"Adaptive velocity threshold: {vel_thresh:.2f} px/s")
-        print(f"  (mean: {abs_vel.mean():.2f} px/s, std: {abs_vel.std():.2f} px/s, k={k})")
+        print(f"  (mean: {vel_mean:.2f} px/s, std: {vel_std:.2f} px/s, k={k})")
         print(f"Saccade duration parameter: {onset_offset_fraction} (saccade ends when velocity < {vel_thresh * onset_offset_fraction:.2f} px/s)")
     
     # 2. Find peaks using scipy's find_peaks with adaptive height
@@ -260,9 +274,9 @@ def detect_saccades_adaptive(df, position_col='X_smooth', velocity_col='vel_x_sm
 
     total_removed = removed_up + removed_down
     total_detected = total_up + total_down
+    percent_removed = (total_removed / total_detected) * 100 if total_detected else 0.0
 
-    if total_removed > 0:
-        percent_removed = (total_removed / total_detected) * 100 if total_detected else 0
+    if verbose and total_removed > 0:
         print(
             f"⚠️ Filtered out {total_removed} saccade(s) "
             f"({percent_removed:.1f}% of detected) due to NaN values in critical fields."
@@ -272,23 +286,68 @@ def detect_saccades_adaptive(df, position_col='X_smooth', velocity_col='vel_x_sm
                 "❗ Warning: More than 5% of detected saccades were removed because of NaN values. "
                 "Please review data quality (blinks, missing tracking) for this recording."
             )
-    
+
+    def _stats(df_stats):
+        if df_stats is None or len(df_stats) == 0:
+            return {
+                "mean_velocity": np.nan,
+                "mean_duration": np.nan,
+                "mean_amplitude": np.nan,
+                "std_amplitude": np.nan,
+            }
+        return {
+            "mean_velocity": df_stats['velocity'].mean(),
+            "mean_duration": df_stats['duration'].mean(),
+            "mean_amplitude": df_stats['amplitude'].mean(),
+            "std_amplitude": df_stats['amplitude'].std(),
+        }
+
+    upward_stats = _stats(upward_saccades_df)
+    downward_stats = _stats(downward_saccades_df)
+
     if verbose:
-        # Format direction labels for output
         upward_str = f"upward ({upward_label})" if upward_label else "upward"
         downward_str = f"downward ({downward_label})" if downward_label else "downward"
-        
+
         print(f"\n✅ Detected {len(pos_peaks)} {upward_str} saccades")
         print(f"✅ Detected {len(neg_peaks)} {downward_str} saccades")
-        
-        # Print summary statistics (compact format)
+
         if len(upward_saccades) > 0:
-            print(f"Upward saccades - mean velocity: {upward_saccades_df['velocity'].mean():.2f} px/s, mean duration: {upward_saccades_df['duration'].mean():.3f} s, mean amplitude: {upward_saccades_df['amplitude'].mean():.2f} px, std amplitude: {upward_saccades_df['amplitude'].std():.2f} px")
-        
+            print(
+                "Upward saccades - mean velocity: "
+                f"{upward_stats['mean_velocity']:.2f} px/s, mean duration: "
+                f"{upward_stats['mean_duration']:.3f} s, mean amplitude: "
+                f"{upward_stats['mean_amplitude']:.2f} px, std amplitude: "
+                f"{upward_stats['std_amplitude']:.2f} px"
+            )
+
         if len(downward_saccades) > 0:
-            print(f"Downward saccades - mean velocity: {downward_saccades_df['velocity'].mean():.2f} px/s, mean duration: {downward_saccades_df['duration'].mean():.3f} s, mean amplitude: {downward_saccades_df['amplitude'].mean():.2f} px, std amplitude: {downward_saccades_df['amplitude'].std():.2f} px")
+            print(
+                "Downward saccades - mean velocity: "
+                f"{downward_stats['mean_velocity']:.2f} px/s, mean duration: "
+                f"{downward_stats['mean_duration']:.3f} s, mean amplitude: "
+                f"{downward_stats['mean_amplitude']:.2f} px, std amplitude: "
+                f"{downward_stats['std_amplitude']:.2f} px"
+            )
+
+    detection_summary = {
+        "vel_thresh": vel_thresh,
+        "vel_mean": vel_mean,
+        "vel_std": vel_std,
+        "k": k,
+        "onset_offset_fraction": onset_offset_fraction,
+        "total_removed": total_removed,
+        "percent_removed": percent_removed,
+        "total_detected": total_detected,
+        "upward_count": len(upward_saccades_df),
+        "downward_count": len(downward_saccades_df),
+        "upward_stats": upward_stats,
+        "downward_stats": downward_stats,
+        "upward_label": upward_label,
+        "downward_label": downward_label,
+    }
     
-    return upward_saccades_df, downward_saccades_df, vel_thresh
+    return upward_saccades_df, downward_saccades_df, vel_thresh, detection_summary
 
 
 def extract_saccade_segment(df, sacc_df, n_before, n_after, direction='upward',
@@ -668,6 +727,8 @@ def classify_saccades_orienting_vs_compensatory(
     adaptive_percentile_post_variance : int
         Percentile for adaptive post-saccade variance threshold (default: 25)
         Used as lower percentile for orienting detection (low variance = stable)
+    debug : bool
+        If True, print extended QC information. If False, print compact summary outputs.
     position_col : str
         Column name for position data (default: 'X_smooth')
     velocity_col : str
@@ -688,8 +749,28 @@ def classify_saccades_orienting_vs_compensatory(
         'post_saccade_position_variance': Position variance in dynamic window (until next saccade or max interval)
         'post_saccade_position_change': Total position change in dynamic window (until next saccade or max interval)
     """
+    metrics = {
+        "use_adaptive_thresholds": use_adaptive_thresholds,
+        "thresholds": {},
+        "counts": {},
+        "confidence": {},
+        "orienting_stats": None,
+        "compensatory_stats": None,
+        "classification_success": False,
+        "high_confidence_count": 0,
+        "medium_confidence_count": 0,
+        "low_confidence_count": 0,
+    }
     if len(all_saccades_df) == 0:
-        return all_saccades_df
+        metrics["counts"] = {
+            "total": 0,
+            "orienting": 0,
+            "compensatory": 0,
+            "bouts": 0,
+            "isolated": 0,
+        }
+        metrics["confidence"] = {}
+        return all_saccades_df, metrics
     
     # Sort by time to ensure chronological order
     all_saccades_df = all_saccades_df.sort_values('time').reset_index(drop=True)
@@ -842,6 +923,34 @@ def classify_saccades_orienting_vs_compensatory(
             print(f"  Pre-saccade drift threshold: {pre_saccade_drift_threshold:.2f} px")
             print(f"  Post-saccade variance threshold: {post_saccade_variance_threshold:.2f} px²")
     
+    metrics["thresholds"] = {
+        "pre_velocity": pre_saccade_velocity_threshold,
+        "pre_drift": pre_saccade_drift_threshold,
+        "post_variance": post_saccade_variance_threshold,
+        "post_change_percent": post_saccade_position_change_threshold_percent,
+        "adaptive_percentiles": {
+            "pre_velocity": adaptive_percentile_pre_velocity,
+            "pre_drift": adaptive_percentile_pre_drift,
+            "post_variance": adaptive_percentile_post_variance,
+        },
+    }
+    
+    # Ensure feature columns use standard numpy floats (avoid pandas nullable dtypes)
+    numeric_columns = [
+        'amplitude',
+        'velocity',
+        'duration',
+        'pre_saccade_mean_velocity',
+        'pre_saccade_position_drift',
+        'post_saccade_position_variance',
+        'post_saccade_position_change',
+        'post_saccade_position_change_pct',
+        'saccade_peak_velocity',
+    ]
+    for col in numeric_columns:
+        if col in all_saccades_df.columns:
+            all_saccades_df[col] = pd.to_numeric(all_saccades_df[col], errors='coerce')
+
     # Stage 3: Classification logic
     # COMMENTED OUT: Bout-based classification removed per user request
     # Orienting saccades can also occur in quick bouts (especially pairs), so bout detection
@@ -1029,63 +1138,127 @@ def classify_saccades_orienting_vs_compensatory(
         # Store confidence score
         all_saccades_df.loc[idx, 'classification_confidence'] = confidence
     
+    unclassified_mask = all_saccades_df['saccade_type'].isna()
+    unclassified_count = int(unclassified_mask.sum())
+    n_total = len(all_saccades_df)
+    n_orienting = int((all_saccades_df['saccade_type'] == 'orienting').sum())
+    n_compensatory = int((all_saccades_df['saccade_type'] == 'compensatory').sum())
+    n_bouts = int(all_saccades_df['bout_id'].nunique())
+    n_isolated = int((all_saccades_df['bout_size'] == 1).sum())
+
+    metrics["counts"] = {
+        "total": n_total,
+        "orienting": n_orienting,
+        "compensatory": n_compensatory,
+        "bouts": n_bouts,
+        "isolated": n_isolated,
+        "unclassified": unclassified_count,
+    }
+    metrics["classification_success"] = (
+        unclassified_count == 0 and (n_orienting + n_compensatory == n_total)
+    )
+
+    conf_series = all_saccades_df['classification_confidence']
+    conf_valid = conf_series.dropna()
+    confidence_metrics = {}
+    if not conf_valid.empty:
+        conf_mean = conf_valid.mean()
+        conf_std = conf_valid.std()
+        conf_min = conf_valid.min()
+        conf_max = conf_valid.max()
+        confidence_metrics["overall"] = {
+            "mean": conf_mean,
+            "std": conf_std,
+            "min": conf_min,
+            "max": conf_max,
+        }
+        high_conf = int((conf_series >= 0.7).sum())
+        med_conf = int(((conf_series >= 0.4) & (conf_series < 0.7)).sum())
+        low_conf = int((conf_series < 0.4).sum())
+        metrics["high_confidence_count"] = high_conf
+        metrics["medium_confidence_count"] = med_conf
+        metrics["low_confidence_count"] = low_conf
+
+        orienting_conf = conf_series[(all_saccades_df['saccade_type'] == 'orienting') & (~conf_series.isna())]
+        compensatory_conf = conf_series[(all_saccades_df['saccade_type'] == 'compensatory') & (~conf_series.isna())]
+        confidence_metrics["orienting"] = {
+            "mean": orienting_conf.mean() if not orienting_conf.empty else np.nan,
+            "std": orienting_conf.std() if not orienting_conf.empty else np.nan,
+        }
+        confidence_metrics["compensatory"] = {
+            "mean": compensatory_conf.mean() if not compensatory_conf.empty else np.nan,
+            "std": compensatory_conf.std() if not compensatory_conf.empty else np.nan,
+        }
+        confidence_metrics["high"] = high_conf
+        confidence_metrics["medium"] = med_conf
+        confidence_metrics["low"] = low_conf
+    metrics["confidence"] = confidence_metrics
+
+    orienting_stats = None
+    if n_orienting > 0:
+        orienting_df = all_saccades_df[all_saccades_df['saccade_type'] == 'orienting']
+        orienting_stats = {
+            "mean_amplitude": orienting_df['amplitude'].mean(),
+            "mean_duration": orienting_df['duration'].mean(),
+            "mean_pre_velocity": orienting_df['pre_saccade_mean_velocity'].mean(),
+        }
+    metrics["orienting_stats"] = orienting_stats
+
+    compensatory_stats = None
+    if n_compensatory > 0:
+        compensatory_df = all_saccades_df[all_saccades_df['saccade_type'] == 'compensatory']
+        compensatory_stats = {
+            "mean_amplitude": compensatory_df['amplitude'].mean(),
+            "mean_duration": compensatory_df['duration'].mean(),
+            "mean_pre_velocity": compensatory_df['pre_saccade_mean_velocity'].mean(),
+            "mean_bout_size": compensatory_df['bout_size'].mean(),
+        }
+    metrics["compensatory_stats"] = compensatory_stats
+
     # Print statistics
     if verbose:
-        n_orienting = (all_saccades_df['saccade_type'] == 'orienting').sum()
-        n_compensatory = (all_saccades_df['saccade_type'] == 'compensatory').sum()
-        n_bouts = all_saccades_df['bout_id'].nunique()
-        n_isolated = (all_saccades_df['bout_size'] == 1).sum()
-        
+        if unclassified_count > 0:
+            print(f"⚠️ WARNING: {unclassified_count} saccades were not classified!")
         print(f"\n📊 Saccade Classification Results:")
-        print(f"  Total saccades: {len(all_saccades_df)}")
-        print(f"  Orienting saccades: {n_orienting} ({n_orienting/len(all_saccades_df)*100:.1f}%)")
-        print(f"  Compensatory saccades: {n_compensatory} ({n_compensatory/len(all_saccades_df)*100:.1f}%)")
+        print(f"  Total saccades: {n_total}")
+        print(f"  Orienting saccades: {n_orienting} ({(n_orienting / n_total * 100) if n_total else 0:.1f}%)")
+        print(f"  Compensatory saccades: {n_compensatory} ({(n_compensatory / n_total * 100) if n_total else 0:.1f}%)")
         print(f"  Detected bouts: {n_bouts}")
         print(f"  Isolated saccades: {n_isolated}")
         
-        # Confidence statistics
-        if 'classification_confidence' in all_saccades_df.columns:
-            conf_mean = all_saccades_df['classification_confidence'].mean()
-            conf_std = all_saccades_df['classification_confidence'].std()
-            conf_min = all_saccades_df['classification_confidence'].min()
-            conf_max = all_saccades_df['classification_confidence'].max()
+        if confidence_metrics:
+            overall = confidence_metrics.get("overall", {})
             print(f"\n  Classification Confidence:")
-            print(f"    Mean: {conf_mean:.3f} ± {conf_std:.3f}")
-            print(f"    Range: [{conf_min:.3f}, {conf_max:.3f}]")
-            
-            # Confidence by type
-            if n_orienting > 0:
-                orienting_conf = all_saccades_df[all_saccades_df['saccade_type'] == 'orienting']['classification_confidence']
-                print(f"    Orienting: {orienting_conf.mean():.3f} ± {orienting_conf.std():.3f}")
-            if n_compensatory > 0:
-                compensatory_conf = all_saccades_df[all_saccades_df['saccade_type'] == 'compensatory']['classification_confidence']
-                print(f"    Compensatory: {compensatory_conf.mean():.3f} ± {compensatory_conf.std():.3f}")
-            
-            # Count by confidence levels
-            high_conf = (all_saccades_df['classification_confidence'] >= 0.7).sum()
-            med_conf = ((all_saccades_df['classification_confidence'] >= 0.4) & 
-                       (all_saccades_df['classification_confidence'] < 0.7)).sum()
-            low_conf = (all_saccades_df['classification_confidence'] < 0.4).sum()
-            print(f"    High confidence (≥0.7): {high_conf} ({high_conf/len(all_saccades_df)*100:.1f}%)")
-            print(f"    Medium confidence (0.4-0.7): {med_conf} ({med_conf/len(all_saccades_df)*100:.1f}%)")
-            print(f"    Low confidence (<0.4): {low_conf} ({low_conf/len(all_saccades_df)*100:.1f}%)")
+            if overall:
+                print(f"    Mean: {overall['mean']:.3f} ± {overall['std']:.3f}")
+                print(f"    Range: [{overall['min']:.3f}, {overall['max']:.3f}]")
+            orient_conf = confidence_metrics.get("orienting")
+            if orient_conf and not np.isnan(orient_conf["mean"]):
+                print(f"    Orienting: {orient_conf['mean']:.3f} ± {orient_conf['std']:.3f}")
+            comp_conf = confidence_metrics.get("compensatory")
+            if comp_conf and not np.isnan(comp_conf["mean"]):
+                print(f"    Compensatory: {comp_conf['mean']:.3f} ± {comp_conf['std']:.3f}")
+            print(f"    High confidence (≥0.7): {metrics['high_confidence_count']} ({(metrics['high_confidence_count'] / n_total * 100) if n_total else 0:.1f}%)")
+            print(f"    Medium confidence (0.4-0.7): {metrics['medium_confidence_count']} ({(metrics['medium_confidence_count'] / n_total * 100) if n_total else 0:.1f}%)")
+            print(f"    Low confidence (<0.4): {metrics['low_confidence_count']} ({(metrics['low_confidence_count'] / n_total * 100) if n_total else 0:.1f}%)")
         
-        if n_orienting > 0:
-            orienting_df = all_saccades_df[all_saccades_df['saccade_type'] == 'orienting']
+        if orienting_stats:
             print(f"\n  Orienting saccades stats:")
-            print(f"    Mean amplitude: {orienting_df['amplitude'].mean():.2f} px")
-            print(f"    Mean duration: {orienting_df['duration'].mean():.3f} s")
-            print(f"    Mean pre-saccade velocity: {orienting_df['pre_saccade_mean_velocity'].mean():.2f} px/s")
+            print(f"    Mean amplitude: {orienting_stats['mean_amplitude']:.2f} px")
+            print(f"    Mean duration: {orienting_stats['mean_duration']:.3f} s")
+            print(f"    Mean pre-saccade velocity: {orienting_stats['mean_pre_velocity']:.2f} px/s")
         
-        if n_compensatory > 0:
-            compensatory_df = all_saccades_df[all_saccades_df['saccade_type'] == 'compensatory']
+        if compensatory_stats:
             print(f"\n  Compensatory saccades stats:")
-            print(f"    Mean amplitude: {compensatory_df['amplitude'].mean():.2f} px")
-            print(f"    Mean duration: {compensatory_df['duration'].mean():.3f} s")
-            print(f"    Mean pre-saccade velocity: {compensatory_df['pre_saccade_mean_velocity'].mean():.2f} px/s")
-            print(f"    Mean bout size: {compensatory_df['bout_size'].mean():.2f} saccades")
-    
-    return all_saccades_df
+            print(f"    Mean amplitude: {compensatory_stats['mean_amplitude']:.2f} px")
+            print(f"    Mean duration: {compensatory_stats['mean_duration']:.3f} s")
+            print(f"    Mean pre-saccade velocity: {compensatory_stats['mean_pre_velocity']:.2f} px/s")
+            print(f"    Mean bout size: {compensatory_stats['mean_bout_size']:.2f} saccades")
+        
+        if metrics["classification_success"]:
+            print(f"✅ All {n_total} saccades successfully classified ({n_orienting} orienting, {n_compensatory} compensatory)")
+
+    return all_saccades_df, metrics
 
 
 def analyze_eye_video_saccades(
@@ -1123,6 +1296,7 @@ def analyze_eye_video_saccades(
     adaptive_percentile_pre_velocity=75,
     adaptive_percentile_pre_drift=75,
     adaptive_percentile_post_variance=25,
+    debug=False,
 ):
     """
     Analyze saccades for a given eye video dataframe.
@@ -1274,6 +1448,17 @@ def analyze_eye_video_saccades(
     # Use raw position for accurate amplitude calculations
     df = df.copy()
 
+    # Validate temporal spacing: frames must be strictly increasing in time
+    if 'Seconds' in df.columns:
+        time_diff = df['Seconds'].diff()
+        non_positive = time_diff.dropna()[time_diff.dropna() <= 0]
+        if not non_positive.empty:
+            idx_preview = non_positive.index[:5].tolist()
+            raise ValueError(
+                f"{video_label} contains non-positive frame intervals at indices {idx_preview}. "
+                "Frame timestamps must be strictly increasing."
+            )
+
     # Preserve frame indices so downstream steps can map back to original video frames
     if 'frame_idx' not in df.columns:
         df['frame_idx'] = df.index
@@ -1304,13 +1489,13 @@ def analyze_eye_video_saccades(
         df.loc[df['dt'] <= 0, 'dt'] = np.nan
     df['vel_x_smooth'] = df['X_smooth'].diff() / df['dt']
     df['vel_x_raw'] = df['X_raw'].diff() / df['dt']
-    df['vel_x_smooth'].replace([np.inf, -np.inf], np.nan, inplace=True)
-    df['vel_x_raw'].replace([np.inf, -np.inf], np.nan, inplace=True)
+    df['vel_x_smooth'] = df['vel_x_smooth'].where(np.isfinite(df['vel_x_smooth']), np.nan).astype(float)
+    df['vel_x_raw'] = df['vel_x_raw'].where(np.isfinite(df['vel_x_raw']), np.nan).astype(float)
     df['vel_x_original'] = df['vel_x_raw']  # Keep for reference
 
     # Saccade detection
     # Use raw position for accurate amplitude calculations, smooth velocity for detection
-    upward_saccades_df, downward_saccades_df, vel_thresh = detect_saccades_adaptive(
+    upward_saccades_df, downward_saccades_df, vel_thresh, detection_summary = detect_saccades_adaptive(
         df,
         position_col='X_raw',  # Use raw position for accurate amplitude
         velocity_col='vel_x_smooth',  # Use smoothed velocity for robust detection
@@ -1320,7 +1505,7 @@ def analyze_eye_video_saccades(
         refractory_period=refractory_period,
         onset_offset_fraction=onset_offset_fraction,
         peak_width_time=peak_width_time,  # Pass time-based parameter
-        verbose=True,
+        verbose=False,
         upward_label=upward_label,
         downward_label=downward_label
     )
@@ -1378,7 +1563,7 @@ def analyze_eye_video_saccades(
     n_excluded_upward = sum(1 for ex in excluded_by_duration if ex['direction'] == 'upward')
     n_excluded_downward = sum(1 for ex in excluded_by_duration if ex['direction'] == 'downward')
     
-    if len(excluded_by_duration) > 0:
+    if len(excluded_by_duration) > 0 and debug:
         print(f"  Excluded {len(excluded_by_duration)} segment(s) with duration < {min_saccade_duration:.3f}s")
         if n_excluded_upward > 0:
             print(f"    - {n_excluded_upward} upward segment(s)")
@@ -1394,13 +1579,13 @@ def analyze_eye_video_saccades(
         if len(upward_saccades_df) > 0:
             upward_saccades_df = upward_saccades_df[~upward_saccades_df.index.isin(excluded_saccade_ids)].copy()
             n_upward_removed = n_upward_before - len(upward_saccades_df)
-            if n_upward_removed > 0:
+            if debug and n_upward_removed > 0:
                 print(f"  Removed {n_upward_removed} upward saccade(s) from DataFrame (segments filtered)")
         
         if len(downward_saccades_df) > 0:
             downward_saccades_df = downward_saccades_df[~downward_saccades_df.index.isin(excluded_saccade_ids)].copy()
             n_downward_removed = n_downward_before - len(downward_saccades_df)
-            if n_downward_removed > 0:
+            if debug and n_downward_removed > 0:
                 print(f"  Removed {n_downward_removed} downward saccade(s) from DataFrame (segments filtered)")
     
     # Use filtered segments for downstream processing
@@ -1471,8 +1656,9 @@ def analyze_eye_video_saccades(
             }
         
         # Classify saccades (if enabled)
+        classification_metrics = None
         if classify_orienting_compensatory:
-            all_saccades_df = classify_saccades_orienting_vs_compensatory(
+            all_saccades_df, classification_metrics = classify_saccades_orienting_vs_compensatory(
                 all_saccades_df, df, fps,
                 bout_window=bout_window,
                 pre_saccade_window=pre_saccade_window,
@@ -1487,7 +1673,7 @@ def analyze_eye_video_saccades(
                 adaptive_percentile_post_variance=adaptive_percentile_post_variance,
                 position_col='X_raw',  # Use raw position for accurate drift/variance calculations
                 velocity_col='vel_x_smooth',  # Use smoothed velocity for classification
-                verbose=True
+                verbose=False
             )
             # Verify all saccades are classified (all branches in classification logic assign a type)
             unclassified = all_saccades_df[all_saccades_df['saccade_type'].isna()]
@@ -1578,6 +1764,135 @@ def analyze_eye_video_saccades(
                 seg['bout_size'] = sacc_info['bout_size']
     else:
         all_saccades_df = pd.DataFrame()
+        classification_metrics = None
+
+    def _fmt(value, decimals=2):
+        if value is None or pd.isna(value):
+            return "n/a"
+        return f"{value:.{decimals}f}"
+
+    print(f"\n🔎 === Source: ({video_label}) ===\n")
+    print(f"Adaptive velocity threshold: {detection_summary['vel_thresh']:.2f} px/s")
+    print(
+        f"  (mean: {detection_summary['vel_mean']:.2f} px/s, "
+        f"std: {detection_summary['vel_std']:.2f} px/s, k={detection_summary['k']})"
+    )
+    if debug:
+        drop_level = detection_summary['vel_thresh'] * detection_summary['onset_offset_fraction']
+        print(
+            f"Saccade duration parameter: {detection_summary['onset_offset_fraction']:.3g} "
+            f"(saccade ends when velocity < {drop_level:.2f} px/s)"
+        )
+        if detection_summary['total_removed'] > 0:
+            print(
+                f"⚠️ Filtered out {detection_summary['total_removed']} saccade(s) "
+                f"({detection_summary['percent_removed']:.1f}% of detected) due to NaN values in critical fields."
+            )
+    print()
+
+    upward_label_str = (
+        f" ({detection_summary['upward_label']})"
+        if detection_summary.get('upward_label')
+        else ""
+    )
+    downward_label_str = (
+        f" ({detection_summary['downward_label']})"
+        if detection_summary.get('downward_label')
+        else ""
+    )
+    print(f"✅ Detected {detection_summary['upward_count']} upward{upward_label_str} saccades")
+    print(f"✅ Detected {detection_summary['downward_count']} downward{downward_label_str} saccades")
+
+    up_stats = detection_summary['upward_stats']
+    down_stats = detection_summary['downward_stats']
+    print(
+        "Upward saccades - mean velocity: "
+        f"{_fmt(up_stats['mean_velocity'])} px/s, mean duration: "
+        f"{_fmt(up_stats['mean_duration'], 3)} s, mean amplitude: "
+        f"{_fmt(up_stats['mean_amplitude'])} px, std amplitude: "
+        f"{_fmt(up_stats['std_amplitude'])} px"
+    )
+    print(
+        "Downward saccades - mean velocity: "
+        f"{_fmt(down_stats['mean_velocity'])} px/s, mean duration: "
+        f"{_fmt(down_stats['mean_duration'], 3)} s, mean amplitude: "
+        f"{_fmt(down_stats['mean_amplitude'])} px, std amplitude: "
+        f"{_fmt(down_stats['std_amplitude'])} px"
+    )
+
+    if classification_metrics:
+        if debug:
+            thresholds = classification_metrics.get("thresholds", {})
+            if classification_metrics.get("use_adaptive_thresholds", False):
+                print("\n📊 Adaptive Thresholds Calculated (from feature distributions):")
+            else:
+                print("\n📊 Using Fixed Thresholds:")
+            if thresholds:
+                print(f"  Pre-saccade velocity threshold ({thresholds['adaptive_percentiles']['pre_velocity']}th percentile): {_fmt(thresholds['pre_velocity'])} px/s")
+                print(f"  Pre-saccade drift threshold ({thresholds['adaptive_percentiles']['pre_drift']}th percentile): {_fmt(thresholds['pre_drift'])} px")
+                print(f"  Post-saccade variance threshold ({thresholds['adaptive_percentiles']['post_variance']}th percentile): {_fmt(thresholds['post_variance'])} px²")
+
+            counts = classification_metrics.get("counts", {})
+            print("\n📊 Saccade Classification Results:")
+            total_cls = counts.get("total", 0)
+            orienting_cls = counts.get("orienting", 0)
+            compensatory_cls = counts.get("compensatory", 0)
+            bouts_cls = counts.get("bouts", 0)
+            isolated_cls = counts.get("isolated", 0)
+            print(f"  Total saccades: {total_cls}")
+            orient_pct = (orienting_cls / total_cls * 100) if total_cls else 0.0
+            comp_pct = (compensatory_cls / total_cls * 100) if total_cls else 0.0
+            print(f"  Orienting saccades: {orienting_cls} ({orient_pct:.1f}%)")
+            print(f"  Compensatory saccades: {compensatory_cls} ({comp_pct:.1f}%)")
+            print(f"  Detected bouts: {bouts_cls}")
+            print(f"  Isolated saccades: {isolated_cls}")
+
+            confidence_info = classification_metrics.get("confidence", {})
+            overall_conf = confidence_info.get("overall")
+            if overall_conf:
+                print("\n  Classification Confidence:")
+                print(f"    Mean: {_fmt(overall_conf['mean'])} ± {_fmt(overall_conf['std'])}")
+                print(f"    Range: [{_fmt(overall_conf['min'])}, {_fmt(overall_conf['max'])}]")
+                orient_conf = confidence_info.get("orienting")
+                if orient_conf and not pd.isna(orient_conf["mean"]):
+                    print(f"    Orienting: {_fmt(orient_conf['mean'])} ± {_fmt(orient_conf['std'])}")
+                comp_conf = confidence_info.get("compensatory")
+                if comp_conf and not pd.isna(comp_conf["mean"]):
+                    print(f"    Compensatory: {_fmt(comp_conf['mean'])} ± {_fmt(comp_conf['std'])}")
+                total_cls = counts.get("total", 0) or 0
+                high_cnt = classification_metrics.get("high_confidence_count", 0)
+                med_cnt = classification_metrics.get("medium_confidence_count", 0)
+                low_cnt = classification_metrics.get("low_confidence_count", 0)
+                def _pct(count):
+                    return (count / total_cls * 100) if total_cls else 0.0
+                print(f"    High confidence (≥0.7): {high_cnt} ({_pct(high_cnt):.1f}%)")
+                print(f"    Medium confidence (0.4-0.7): {med_cnt} ({_pct(med_cnt):.1f}%)")
+                print(f"    Low confidence (<0.4): {low_cnt} ({_pct(low_cnt):.1f}%)")
+
+            orient_stats = classification_metrics.get("orienting_stats")
+            if orient_stats:
+                print("\n  Orienting saccades stats:")
+                print(f"    Mean amplitude: {_fmt(orient_stats['mean_amplitude'])} px")
+                print(f"    Mean duration: {_fmt(orient_stats['mean_duration'], 3)} s")
+                print(f"    Mean pre-saccade velocity: {_fmt(orient_stats['mean_pre_velocity'])} px/s")
+
+            comp_stats = classification_metrics.get("compensatory_stats")
+            if comp_stats:
+                print("\n  Compensatory saccades stats:")
+                print(f"    Mean amplitude: {_fmt(comp_stats['mean_amplitude'])} px")
+                print(f"    Mean duration: {_fmt(comp_stats['mean_duration'], 3)} s")
+                print(f"    Mean pre-saccade velocity: {_fmt(comp_stats['mean_pre_velocity'])} px/s")
+                print(f"    Mean bout size: {_fmt(comp_stats['mean_bout_size'])} saccades")
+
+        counts = classification_metrics.get("counts", {}) if classification_metrics else {}
+        total_cls = counts.get("total", 0)
+        orienting_cls = counts.get("orienting", 0)
+        compensatory_cls = counts.get("compensatory", 0)
+        unclassified_cls = counts.get("unclassified", 0)
+        if classification_metrics.get("classification_success"):
+            print(f"\n✅ All {total_cls} saccades successfully classified ({orienting_cls} orienting, {compensatory_cls} compensatory)")
+        elif total_cls > 0:
+            print(f"\n⚠️ {unclassified_cls} saccade(s) were not classified")
 
     summary = {
         'upward_saccades_df': upward_saccades_df,
@@ -1586,10 +1901,12 @@ def analyze_eye_video_saccades(
         'peri_saccades': peri_saccades,
         'upward_segments': upward_segments,
         'downward_segments': downward_segments,
-        'vel_thresh': vel_thresh,
+        'vel_thresh': detection_summary['vel_thresh'],
         'video_label': video_label,
         'all_excluded': all_excluded,
-        'df': df
+        'df': df,
+        'detection_summary': detection_summary,
+        'classification_summary': classification_metrics,
     }
     return summary
 

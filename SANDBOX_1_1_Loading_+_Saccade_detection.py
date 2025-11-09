@@ -386,6 +386,8 @@ data_path = Path(
 # Path('/Users/rancze/Documents/Data/vestVR/Cohort1/No_iso_correction/Visual_mismatch_day3/B6J2717-2024-12-10T12-17-03')
 # # only has sleap data 1
 save_path = data_path.parent / f"{data_path.name}_processedData"
+qc_debug_dir = save_path / "QC_and_debug"
+qc_debug_dir.mkdir(parents=True, exist_ok=True)
 
 VideoData1, VideoData2, VideoData1_Has_Sleap, VideoData2_Has_Sleap = (
     lp.load_videography_data(data_path, debug=debug)
@@ -3189,6 +3191,7 @@ if VideoData1_Has_Sleap:
         adaptive_percentile_pre_velocity=adaptive_percentile_pre_velocity,
         adaptive_percentile_pre_drift=adaptive_percentile_pre_drift,
         adaptive_percentile_post_variance=adaptive_percentile_post_variance,
+        debug=debug,
     )
 
 
@@ -3224,6 +3227,7 @@ if VideoData2_Has_Sleap:
         adaptive_percentile_pre_velocity=adaptive_percentile_pre_velocity,
         adaptive_percentile_pre_drift=adaptive_percentile_pre_drift,
         adaptive_percentile_post_variance=adaptive_percentile_post_variance,
+        debug=debug,
     )
 
 # +
@@ -3370,9 +3374,6 @@ if "VideoData2" in globals() and "VideoData2" in saccade_results:
 # Save enriched VideoData tables as parquet and tidy summaries as CSV for QC
 downsampled_output_dir = save_path / "downsampled_data"
 downsampled_output_dir.mkdir(parents=True, exist_ok=True)
-
-qc_debug_dir = save_path / "QC_and_debug"
-qc_debug_dir.mkdir(parents=True, exist_ok=True)
 
 if "VideoData1" in globals():
     video_dir1 = qc_debug_dir / "Video_Sleap_Data1"
