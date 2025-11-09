@@ -47,6 +47,7 @@ import warnings
 import traceback
 import gc
 import json
+import re
 
 # %config Completer.use_jedi = False  # Fixes autocomplete issues
 # %config InlineBackend.figure_format = 'retina'  # Improves plot resolution
@@ -102,9 +103,16 @@ data_dirs = [  # Add your data directories here
 cohort_data_dir = Path('/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/').expanduser() # for Ede
 
 # Collect raw data paths (excluding '_processedData' dirs)
+# Only include directories that match the expected pattern (have a timestamp: YYYY-MM-DDTHH-MM-SS)
 rawdata_paths = []
+timestamp_pattern = re.compile(r'\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}')  # Matches YYYY-MM-DDTHH-MM-SS
 for data_dir in data_dirs:
-    subdirs = [p for p in data_dir.iterdir() if p.is_dir() and not p.name.endswith('_processedData')]
+    subdirs = [
+        p for p in data_dir.iterdir() 
+        if p.is_dir() 
+        and not p.name.endswith('_processedData')
+        and timestamp_pattern.search(p.name)  # Only include directories with timestamp pattern
+    ]
     rawdata_paths.extend(subdirs)  # Collect all subdirectories
 pprint(rawdata_paths)
 
@@ -158,6 +166,7 @@ for idx, data_path in enumerate(data_paths, start=1):
         session_settings["metadata"] = session_settings["metadata"].apply(process.safe_from_json)
         video_dataframes: Dict[str, pd.DataFrame] = {}
         video_join_frames: List[pd.DataFrame] = []
+        video_saccade_summaries: Dict[str, pd.DataFrame] = {}
 
         for video_key, eye_suffix in (("VideoData1", "eye1"), ("VideoData2", "eye2")):
             video_path = data_path / f"{video_key}_resampled.parquet"
@@ -177,12 +186,126 @@ for idx, data_path in enumerate(data_paths, start=1):
             if rename_map:
                 video_df = video_df.rename(columns=rename_map)
 
+            # ------------------------------
+            # Alignment diagnostics & guards
+            # ------------------------------
+            if not isinstance(video_df.index, pd.DatetimeIndex):
+                raise TypeError(f"{video_key} index must be a DatetimeIndex. Found {type(video_df.index)}.")
+
+            photo_index = photometry_tracking_encoder_data.index
+            if not isinstance(photo_index, pd.DatetimeIndex):
+                raise TypeError("photometry_tracking_encoder_data index must be a DatetimeIndex.")
+
+            video_index = video_df.index.sort_values()
+            photo_index_sorted = photo_index.sort_values()
+
+            video_start, video_end = video_index[0], video_index[-1]
+            photo_start, photo_end = photo_index_sorted[0], photo_index_sorted[-1]
+
+            # Check and report time window differences
+            start_diff = (video_start - photo_start).total_seconds()
+            end_diff = (video_end - photo_end).total_seconds()
+            if start_diff != 0 or end_diff != 0:
+                start_msg = f"starts {abs(start_diff):.3f}s {'before' if start_diff < 0 else 'after'}"
+                end_msg = f"ends {abs(end_diff):.3f}s {'before' if end_diff < 0 else 'after'}"
+                print(f"ℹ️ {video_key}: {start_msg}, {end_msg} photometry window - not a problem, it is trimmed and NaN-padded")
+
+            # Check for timestamp misalignment and reindex if needed
+            in_range = video_index[(video_index >= photo_start) & (video_index <= photo_end)]
+            matched = in_range.intersection(photo_index_sorted)
+            unmatched = in_range.difference(photo_index_sorted)
+            
+            if len(unmatched) > 0:
+                # Calculate average time difference for reporting
+                unmatched_series = pd.Series(unmatched)
+                nearest_indices = photo_index_sorted.get_indexer(unmatched_series, method='nearest')
+                nearest_photo_times = photo_index_sorted[nearest_indices]
+                
+                # Calculate time differences (video - photo) in seconds
+                time_diffs_series = pd.Series(unmatched_series.values) - pd.Series(nearest_photo_times.values)
+                time_diffs = time_diffs_series.dt.total_seconds().values
+                mean_diff_ms = np.mean(time_diffs) * 1000  # Convert to milliseconds
+                
+                # Reindex video dataframe to photometry index using nearest neighbor matching
+                # Use get_indexer to find nearest video indices for each photometry timestamp
+                video_indices_for_photo = video_df.index.get_indexer(photo_index_sorted, method='nearest')
+                
+                # Create aligned dataframe by mapping video data to photometry timestamps
+                video_df_aligned = pd.DataFrame(
+                    index=photo_index_sorted,
+                    columns=video_df.columns
+                )
+                for col in video_df.columns:
+                    video_df_aligned[col] = video_df[col].iloc[video_indices_for_photo].values
+                
+                # Check for duplicate mappings (multiple photometry timestamps mapping to same video timestamp)
+                unique_mappings = len(np.unique(video_indices_for_photo))
+                if unique_mappings < len(photo_index_sorted):
+                    # This shouldn't happen with small offsets, but handle it if it does
+                    video_df_aligned = video_df_aligned.groupby(video_df_aligned.index).mean()
+                
+                # Report the alignment
+                print(f"⚠️ {video_key}: Timestamp misalignment corrected (avg difference: {mean_diff_ms:.3f} ms)")
+                
+                # Replace original video_df with aligned version
+                video_df = video_df_aligned
+            else:
+                print(f"✅ {video_key}: Timestamps perfectly aligned with photometry data.")
+
             video_dataframes[video_key] = video_df
             video_join_frames.append(video_df)
             print(f"✅ Loaded {video_key} resampled data from {video_path.name}")
 
         for video_df in video_join_frames:
             photometry_tracking_encoder_data = photometry_tracking_encoder_data.join(video_df, how="left")
+        
+        # Load saccade summary CSV files if they exist
+        for video_key in ("VideoData1", "VideoData2"):
+            saccade_summary_path = data_path / f"{video_key}_saccade_summary.csv"
+            if saccade_summary_path.exists():
+                try:
+                    saccade_summary_df = pd.read_csv(saccade_summary_path)
+                    # Convert aeon_time column to datetime if present
+                    if "aeon_time" in saccade_summary_df.columns:
+                        saccade_summary_df["aeon_time"] = pd.to_datetime(saccade_summary_df["aeon_time"])
+                        # Set aeon_time as index for reindexing
+                        saccade_summary_indexed = saccade_summary_df.set_index("aeon_time")
+                        
+                        # Reindex to photometry timestamps using nearest neighbor matching
+                        photo_index_sorted = photometry_tracking_encoder_data.index.sort_values()
+                        saccade_indices_for_photo = saccade_summary_indexed.index.get_indexer(photo_index_sorted, method='nearest')
+                        
+                        # Calculate time differences for reporting (only for actual saccade events)
+                        # For each saccade timestamp, find its nearest photometry timestamp
+                        saccade_times = saccade_summary_indexed.index.values
+                        photo_indices_for_saccades = photo_index_sorted.get_indexer(saccade_times, method='nearest')
+                        nearest_photo_times = photo_index_sorted[photo_indices_for_saccades]
+                        
+                        # Calculate differences (saccade - photo) in seconds
+                        time_diffs_series = pd.Series(saccade_times) - pd.Series(nearest_photo_times.values)
+                        time_diffs = time_diffs_series.dt.total_seconds().values
+                        mean_diff_ms = np.mean(time_diffs) * 1000
+                        
+                        # Create reindexed dataframe
+                        saccade_summary_aligned = pd.DataFrame(
+                            index=photo_index_sorted,
+                            columns=saccade_summary_indexed.columns
+                        )
+                        for col in saccade_summary_indexed.columns:
+                            saccade_summary_aligned[col] = saccade_summary_indexed[col].iloc[saccade_indices_for_photo].values
+                        
+                        # Report alignment
+                        print(f"⚠️ {video_key} saccade summary: Timestamps reindexed to photometry (avg difference: {mean_diff_ms:.3f} ms)")
+                        
+                        video_saccade_summaries[video_key] = saccade_summary_aligned
+                    else:
+                        # No aeon_time column, store as-is
+                        video_saccade_summaries[video_key] = saccade_summary_df
+                        print(f"✅ Loaded {video_key} saccade summary ({len(saccade_summary_df)} saccades)")
+                except Exception as e:
+                    print(f"⚠️ Error loading {video_key} saccade summary: {str(e)}")
+            else:
+                print(f"ℹ️ No {video_key} saccade summary found at {saccade_summary_path}")
         
         print(f"✅ Successfully loaded all parquet files for {data_path.name}")
         
@@ -209,6 +332,7 @@ for idx, data_path in enumerate(data_paths, start=1):
             "photometry_info": photometry_info,
             "session_settings": session_settings,
             "video_data": video_dataframes,
+            "video_saccade_summaries": video_saccade_summaries,
             "mouse_name": mouse_name
         }
         
