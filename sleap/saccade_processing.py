@@ -1783,11 +1783,12 @@ def analyze_eye_video_saccades(
             f"Saccade duration parameter: {detection_summary['onset_offset_fraction']:.3g} "
             f"(saccade ends when velocity < {drop_level:.2f} px/s)"
         )
-        if detection_summary['total_removed'] > 0:
-            print(
-                f"⚠️ Filtered out {detection_summary['total_removed']} saccade(s) "
-                f"({detection_summary['percent_removed']:.1f}% of detected) due to NaN values in critical fields."
-            )
+    # Always show NaN filter warning if any saccades were filtered
+    if detection_summary['total_removed'] > 0:
+        print(
+            f"⚠️ Filtered out {detection_summary['total_removed']} saccade(s) "
+            f"({detection_summary['percent_removed']:.1f}% of detected) due to NaN values in critical fields."
+        )
     print()
 
     upward_label_str = (

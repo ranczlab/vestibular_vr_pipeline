@@ -94,9 +94,13 @@ from harp_resources import process, utils # Reassign to maintain direct referenc
 data_dirs = [  # Add your data directories here
     # Path('~/RANCZLAB-NAS/data/ONIX/20250409_Cohort3_rotation/Vestibular_mismatch_day1').expanduser(),
     # Path('/home/ikharitonov/RANCZLAB-NAS/data/ONIX/20250923_Cohort6_rotation/EXP_1_fluoxetine_1').expanduser()
-    Path('/Volumes/RanczLab2/Cohort1_rotation/Visual_mismatch_day4').expanduser()
+    # Path('/Volumes/RanczLab2/Cohort1_rotation/Visual_mismatch_day4').expanduser() # for Nora
+    Path('/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4').expanduser() # for Ede
 ]
-cohort_data_dir = Path('/Volumes/RanczLab2/Cohort1_rotation/').expanduser()
+# FIXME can we do this straight from the data_dirs path (i.e. walk one directory back?)
+# cohort_data_dir = Path('/Volumes/RanczLab2/Cohort1_rotation/').expanduser() # for Nora
+cohort_data_dir = Path('/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/').expanduser() # for Ede
+
 # Collect raw data paths (excluding '_processedData' dirs)
 rawdata_paths = []
 for data_dir in data_dirs:
