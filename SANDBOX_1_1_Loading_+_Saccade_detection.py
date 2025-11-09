@@ -296,7 +296,7 @@ blink_instance_score_threshold = 3.8
 # for saccades
 refractory_period = 0.1  # sec
 # Separate adaptive saccade threshold (k) for each video:
-k1 = 4.2  # for VideoData1 (L) - 3-6 works well
+k1 = 4.5  # for VideoData1 (L) - 3-6 works well
 k2 = 4.5  # for VideoData2 (R) - 3-6 works well
 
 # for adaptive saccade threshold - Number of standard deviations
@@ -3160,7 +3160,6 @@ def get_eye_code_for_video(video_key):
 
 
 if VideoData1_Has_Sleap:
-    print(f"\n🔎 === Source: ({get_eye_label('VideoData1')}) ===\n")
     df1 = VideoData1[["Ellipse.Center.X", "Seconds", "frame_idx"]].copy()
     dir_map_v1 = get_direction_map_for_video("VideoData1")
     saccade_results["VideoData1"] = analyze_eye_video_saccades(
@@ -3196,7 +3195,6 @@ if VideoData1_Has_Sleap:
 
 
 if VideoData2_Has_Sleap:
-    print(f"\n🔎 === Source: ({get_eye_label('VideoData2')}) ===\n")
     df2 = VideoData2[["Ellipse.Center.X", "Seconds", "frame_idx"]].copy()
     dir_map_v2 = get_direction_map_for_video("VideoData2")
     saccade_results["VideoData2"] = analyze_eye_video_saccades(
