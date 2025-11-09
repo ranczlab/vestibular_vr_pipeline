@@ -147,15 +147,28 @@ def resample_video_dataframe(
 
     # Frame indices should remain integers if present
     if "frame_idx" in resampled.columns:
-        resampled["frame_idx"] = pd.to_numeric(resampled["frame_idx"], errors="coerce").round().astype("Int64")
+        resampled["frame_idx"] = (
+            pd.to_numeric(resampled["frame_idx"], errors="coerce").round().astype("Int64")
+        )
 
     return resampled
+
+
+def set_aeon_index(df: pd.DataFrame) -> pd.DataFrame:
+    """Return a copy of the dataframe with a DatetimeIndex derived from Seconds."""
+    df_indexed = df.copy()
+    df_indexed.index = pd.to_datetime(df_indexed["Seconds"].apply(api.aeon))
+    df_indexed.index.name = "aeon_time"
+    return df_indexed
 
 
 def append_aeon_time_column(df: pd.DataFrame) -> pd.DataFrame:
     """Return a copy of the dataframe with an additional aeon_time ISO timestamp column."""
     df_with_time = df.copy()
-    df_with_time["aeon_time"] = df_with_time["Seconds"].apply(lambda x: api.aeon(x).isoformat())
+    if isinstance(df_with_time.index, pd.DatetimeIndex):
+        df_with_time["aeon_time"] = df_with_time.index.map(lambda ts: ts.isoformat())
+    else:
+        df_with_time["aeon_time"] = df_with_time["Seconds"].apply(lambda x: api.aeon(x).isoformat())
     return df_with_time
 
 
@@ -3044,56 +3057,6 @@ if plot_QC_timeseries:
     html_path = save_path / "Eye_data_QC_time_series.html"
     fig.write_html(html_path)
     print(f"✅ Interactive time series plot saved to: {html_path}")
-
-
-# +
-# save as df to csv to be loaded in the photometry/harp/etc. analysis notebook
-##########################################################################
-# reindex to aeon datetime to be done in the other notebook
-
-if VideoData1_Has_Sleap:
-    video_dir1 = save_path / "Video_Sleap_Data1"
-    video_dir1.mkdir(parents=True, exist_ok=True)
-
-    full_csv_path1 = video_dir1 / "Video_Sleap_Data1_1904-01-01T00-00-00.csv"
-    full_parquet_path1 = video_dir1 / "Video_Sleap_Data1_1904-01-01T00-00-00.parquet"
-    resampled_csv_path1 = video_dir1 / "Video_Sleap_Data1_1904-01-01T00-00-00_resampled.csv"
-    resampled_parquet_path1 = video_dir1 / "Video_Sleap_Data1_1904-01-01T00-00-00_resampled.parquet"
-
-    VideoData1_full_indexed = set_aeon_index(VideoData1)
-    append_aeon_time_column(VideoData1_full_indexed).to_csv(full_csv_path1, index=False)
-    VideoData1_full_indexed.to_parquet(full_parquet_path1, engine="pyarrow", compression="snappy")
-
-    VideoData1_resampled = resample_video_dataframe(VideoData1, "eye1")
-    VideoData1_resampled_indexed = set_aeon_index(VideoData1_resampled)
-    append_aeon_time_column(VideoData1_resampled_indexed).to_csv(resampled_csv_path1, index=False)
-    VideoData1_resampled_indexed.to_parquet(
-        resampled_parquet_path1, engine="pyarrow", compression="snappy"
-    )
-    print(f"✅ Saved resampled VideoData1 to {resampled_parquet_path1}")
-
-if VideoData2_Has_Sleap:
-    video_dir2 = save_path / "Video_Sleap_Data2"
-    video_dir2.mkdir(parents=True, exist_ok=True)
-
-    full_csv_path2 = video_dir2 / "Video_Sleap_Data2_1904-01-01T00-00-00.csv"
-    full_parquet_path2 = video_dir2 / "Video_Sleap_Data2_1904-01-01T00-00-00.parquet"
-    resampled_csv_path2 = video_dir2 / "Video_Sleap_Data2_1904-01-01T00-00-00_resampled.csv"
-    resampled_parquet_path2 = video_dir2 / "Video_Sleap_Data2_1904-01-01T00-00-00_resampled.parquet"
-
-    VideoData2_full_indexed = set_aeon_index(VideoData2)
-    append_aeon_time_column(VideoData2_full_indexed).to_csv(full_csv_path2, index=False)
-    VideoData2_full_indexed.to_parquet(full_parquet_path2, engine="pyarrow", compression="snappy")
-
-    VideoData2_resampled = resample_video_dataframe(VideoData2, "eye2")
-    VideoData2_resampled_indexed = set_aeon_index(VideoData2_resampled)
-    append_aeon_time_column(VideoData2_resampled_indexed).to_csv(resampled_csv_path2, index=False)
-    VideoData2_resampled_indexed.to_parquet(
-        resampled_parquet_path2, engine="pyarrow", compression="snappy"
-    )
-    print(f"✅ Saved resampled VideoData2 to {resampled_parquet_path2}")
-# -
-
 
 # # Saccade detection
 #
