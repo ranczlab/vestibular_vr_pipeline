@@ -23,6 +23,7 @@ import math
 import os
 import warnings
 from collections import OrderedDict
+import re
 
 import numpy as np
 import pandas as pd
@@ -60,6 +61,7 @@ DATA_DIRS: List[Path] = [
     Path("/Volumes/RanczLab2/Cohort1_rotation/Visual_mismatch_day4/").expanduser(),
     Path("/Volumes/RanczLab2/Cohort3_rotation/Visual_mismatch_day4/").expanduser(),
     # Path("/Volumes/RanczLab2/Cohort1_rotation/Visual_mismatch_day3").expanduser(),
+    # Path("/Volumes/RanczLab2/Cohort3_rotation/Visual_mismatch_day3/").expanduser(),
 ]
 
 OUTPUT_SUBDIR_NAME = "turning_analysis"
@@ -83,13 +85,13 @@ PRE_WINDOW = (-1.0, 0.0)   # seconds relative to alignment (before 0)
 POST_WINDOW = (0.0, 1.0)   # seconds relative to alignment (after 0)
 
 # Threshold in deg/s to treat near-zero averages as no turn (avoid noisy sign flips).
-ZERO_THRESHOLD = 1e-2
+ZERO_THRESHOLD = 1e-2 #FIXME where is this used?
 
 # Windows used for timing and magnitude metrics.
-PEAK_WINDOW = (0.0, 3.0)     # search interval after alignment for peak velocity
-AUC_WINDOW = (0.0, 1.0)      # integration window for early-turn area (s)
+PEAK_WINDOW = (0.0, 1.0)     #FIXME THIS GETS OVERWRITTEN LATER ANYWAY TO 0-1s (as shown in plots)
+AUC_WINDOW = (0.0, 1.0)      # integration window for turn area (s)
 DECAY_FIT_WINDOW = (0.0, 3.0)  # window (s) used to estimate decay time constant
-LATENCY_FRACTION = 0.5       # fraction of peak used for latency measurement
+LATENCY_FRACTION = 0.5       #FIXME deprecated but needs to stay here??
 
 # Mapping from inferred turn direction to expected velocity sign after time 0.
 # Here we expect the actual turn to be opposite the label in the filename.
@@ -279,6 +281,37 @@ def assign_mouse_colors_consistent(mouse_ids: Iterable[str]) -> Dict[str, tuple]
     return OrderedDict((mouse, palette[idx]) for idx, mouse in enumerate(unique_mice))
 
 
+def _sanitize_label(value: str) -> str:
+    cleaned = re.sub(r"[^\w\-]+", "_", value)
+    cleaned = re.sub(r"_+", "_", cleaned)
+    return cleaned.strip("_")
+
+
+def build_output_folder_name(base_name: str, data_dirs: Iterable[Path]) -> str:
+    labels: List[str] = []
+    for directory in data_dirs:
+        try:
+            path = Path(directory).expanduser()
+        except Exception:
+            continue
+        if not path.exists():
+            continue
+        cohort = path.parent.name if path.parent != path else ""
+        day = path.name
+        parts = [part for part in (cohort, day) if part]
+        if not parts:
+            continue
+        label = _sanitize_label("_".join(parts))
+        if not label:
+            continue
+        if label not in labels:
+            labels.append(label)
+    if not labels:
+        return base_name
+    suffix = "__".join(labels)
+    return f"{base_name}__{suffix}"
+
+
 def determine_output_directory(data_dirs: Iterable[Path], folder_name: str) -> Optional[Path]:
     existing_dirs = []
     for directory in data_dirs:
@@ -288,17 +321,35 @@ def determine_output_directory(data_dirs: Iterable[Path], folder_name: str) -> O
     if not existing_dirs:
         print("⚠️ No existing data directories found; results will not be saved.")
         return None
+
+    folder_name = build_output_folder_name(folder_name, existing_dirs)
     try:
         common_path = Path(os.path.commonpath([str(path) for path in existing_dirs]))
     except ValueError:
         common_path = existing_dirs[0]
-    target_dir = common_path / folder_name
-    try:
-        target_dir.mkdir(parents=True, exist_ok=True)
-    except Exception as exc:  # noqa: BLE001
-        print(f"⚠️ Could not create output directory {target_dir}: {exc}")
-        return None
-    return target_dir
+
+    candidate_bases: List[Path] = []
+    candidate_bases.append(common_path)
+    for path in existing_dirs:
+        if path not in candidate_bases:
+            candidate_bases.append(path)
+        parent = path.parent
+        if parent not in candidate_bases:
+            candidate_bases.append(parent)
+    cwd_base = Path.cwd()
+    if cwd_base not in candidate_bases:
+        candidate_bases.append(cwd_base)
+
+    for base in candidate_bases:
+        target_dir = Path(base) / folder_name
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            return target_dir
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ Could not create output directory {target_dir}: {exc}")
+
+    print("⚠️ Exhausted all fallback locations; results will not be saved.")
+    return None
 
 
 def compute_paired_t_test(
@@ -554,6 +605,7 @@ errors
 running_records: List[Dict[str, object]] = []
 running_trace_records: List[pd.DataFrame] = []
 running_errors: List[str] = []
+running_peak_diagnostics: List[Dict[str, object]] = []
 
 if not results_df.empty:
     for _, row in results_df.iterrows():
@@ -563,6 +615,14 @@ if not results_df.empty:
         except Exception as exc:  # noqa: BLE001
             running_errors.append(f"{csv_path}: {exc}")
             continue
+
+        peak_window_mask = (running_df["time"] >= 0.0) & (running_df["time"] <= 1.0)
+        if peak_window_mask.any():
+            raw_peak_abs_mps = float(running_df.loc[peak_window_mask, "velocity"].abs().max())
+        else:
+            raw_peak_abs_mps = float("nan")
+
+        running_df["velocity"] = running_df["velocity"] * 100.0
 
         running_metrics = analyse_turn_direction(running_df, PRE_WINDOW, POST_WINDOW, ZERO_THRESHOLD)
         expected_sign = EXPECTED_DIRECTION_SIGN.get(row["direction"], np.nan)
@@ -586,6 +646,17 @@ if not results_df.empty:
             }
         )
 
+        running_peak_diagnostics.append(
+            {
+                "mouse": row["mouse"],
+                "group": row["group"],
+                "turn_label": row["direction"],
+                "csv_path": row["csv_path"],
+                "peak_abs_velocity_mps": raw_peak_abs_mps,
+                "peak_abs_velocity_cmps": raw_peak_abs_mps * 100.0 if math.isfinite(raw_peak_abs_mps) else float("nan"),
+            }
+        )
+
 running_results_df = pd.DataFrame(running_records)
 if not running_results_df.empty:
     running_results_df["direction"] = "All turns"
@@ -593,7 +664,22 @@ running_trace_samples_df = pd.concat(running_trace_records, ignore_index=True) i
 if not running_trace_samples_df.empty:
     running_trace_samples_df["direction"] = "All turns"
 
+running_peak_diag_df = pd.DataFrame(running_peak_diagnostics)
+
 running_results_df
+
+
+# %%
+if running_peak_diag_df.empty:
+    print("⚠️ No running peak diagnostics available")
+else:
+    display(Markdown("#### Running peak velocity diagnostics (per file)"))
+    display(
+        running_peak_diag_df.sort_values("peak_abs_velocity_cmps", ascending=False)
+        .reset_index(drop=True)
+    )
+    if OUTPUT_DIR is not None:
+        running_peak_diag_df.to_csv(OUTPUT_DIR / "running_peak_velocity_diagnostic.csv", index=False)
 
 
 # %%
@@ -678,6 +764,7 @@ else:
 if running_trace_samples_df.empty:
     running_per_mouse_traces = pd.DataFrame()
     running_avg_traces = pd.DataFrame()
+    print("⚠️ No running traces available. Ensure the running velocity analysis cell completed successfully.")
 else:
     running_per_mouse_traces = (
         running_trace_samples_df
@@ -697,12 +784,16 @@ else:
         .reset_index()
     )
 
+    n_traces = running_trace_samples_df["csv_path"].nunique()
+    n_mice_traces = running_trace_samples_df["mouse"].nunique()
+    print(f"✅ Running traces aggregated: {n_traces} files across {n_mice_traces} mice.")
+
 running_avg_traces
 
 
 # %%
 if running_avg_traces.empty:
-    print("⚠️ No running traces available for plotting")
+    print("⚠️ Skipping running trace plots because no averaged traces are available.")
 else:
     plot_groups = ["Apply halt", "No halt"]
     fig, axes = plt.subplots(1, 2, figsize=(12, 4), sharey=True)
@@ -724,7 +815,7 @@ else:
         ax.axhline(0, color="grey", linestyle=":", linewidth=1)
         ax.set_title(f"Running | {group_name}")
         ax.set_xlabel("Time (s)")
-        ax.set_ylabel("Running velocity (m/s)")
+        ax.set_ylabel("Running velocity (cm/s)")
 
     plt.tight_layout()
     plt.show()
@@ -735,8 +826,8 @@ else:
 # ----------------------------------------------------------------------
 
 running_metric_specs = [
-    ("post_mean", "Post-turn mean velocity (m/s)"),
-    ("peak_velocity_abs_1s", "Peak running velocity 0-1 s (m/s)"),
+    ("post_mean", "Post-turn mean velocity (cm/s)"),
+    ("peak_velocity_abs_1s", "Peak running velocity 0-1 s (cm/s)"),
 ]
 running_plot_groups = ["No halt", "Apply halt"]
 running_stats_df = pd.DataFrame()
@@ -1054,14 +1145,33 @@ else:
                 values = pivot.loc[mouse, groups_present]
                 if values.isna().all():
                     continue
-                line, = ax.plot(
-                    x_positions,
-                    values.to_numpy(dtype=float),
-                    marker="o",
-                    linewidth=1.1,
-                    alpha=0.65,
-                    color=mouse_colors.get(mouse, "#1f77b4"),
-                )
+                valid_mask = values.notna()
+                if not valid_mask.any():
+                    continue
+                x_mouse = x_positions[valid_mask.to_numpy(dtype=bool)]
+                y_mouse = values[valid_mask].to_numpy(dtype=float)
+                color = mouse_colors.get(mouse, "#1f77b4")
+                if x_mouse.size == 1:
+                    line, = ax.plot(
+                        x_mouse,
+                        y_mouse,
+                        marker="o",
+                        linestyle="none",
+                        markersize=5,
+                        alpha=0.8,
+                        color=color,
+                        zorder=2,
+                    )
+                else:
+                    line, = ax.plot(
+                        x_mouse,
+                        y_mouse,
+                        marker="o",
+                        linewidth=1.1,
+                        alpha=0.65,
+                        color=color,
+                        zorder=2,
+                    )
                 mouse_handles.setdefault(mouse, line)
 
             group_means = pivot[groups_present].mean(axis=0)
