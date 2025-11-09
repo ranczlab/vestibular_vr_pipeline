@@ -445,6 +445,7 @@ def compute_turn_timing_metrics(
     auc_window: Tuple[float, float],
     pre_window: Tuple[float, float],
     latency_fraction: float,
+    decay_fit_window: Tuple[float, float],
 ) -> Dict[str, float]:
     sign_used = expected_sign
     if not math.isfinite(sign_used) or sign_used == 0:
@@ -459,8 +460,10 @@ def compute_turn_timing_metrics(
         "time_to_peak": float("nan"),
         "peak_velocity_signed": float("nan"),
         "peak_velocity_magnitude": float("nan"),
+        "peak_velocity_abs_1s": float("nan"),
         "latency_to_fraction_peak": float("nan"),
         "auc_abs": float("nan"),
+        "decay_tau": float("nan"),
     }
     if peak_subset.empty:
         return timing_metrics
@@ -479,6 +482,7 @@ def compute_turn_timing_metrics(
     timing_metrics["time_to_peak"] = peak_time
     timing_metrics["peak_velocity_signed"] = raw_peak_value
     timing_metrics["peak_velocity_magnitude"] = float(peak_value_abs)
+    timing_metrics["peak_velocity_abs_1s"] = float(peak_value_abs)
 
     baseline_mask = (df["time"] >= pre_window[0]) & (df["time"] <= pre_window[1])
     baseline_abs = df.loc[baseline_mask, "velocity"].abs().mean()
@@ -515,6 +519,23 @@ def compute_turn_timing_metrics(
         auc_abs = auc_subset["velocity"].abs()
         auc_value = float(np.trapz(auc_abs.to_numpy(), auc_subset["time"].to_numpy()))
         timing_metrics["auc_abs"] = auc_value
+
+    start_decay, end_decay = decay_fit_window
+    if math.isfinite(peak_time):
+        start_decay = max(start_decay, peak_time)
+    decay_mask = (df["time"] >= start_decay) & (df["time"] <= end_decay)
+    decay_subset = df.loc[decay_mask].copy()
+    if not decay_subset.empty:
+        decay_subset["abs_velocity"] = decay_subset["velocity"].abs()
+        per_time = (
+            decay_subset.groupby("time", dropna=False)["abs_velocity"]
+            .mean()
+            .reset_index()
+            .sort_values("time")
+        )
+        tau = fit_exponential_decay(per_time["time"], per_time["abs_velocity"])
+        if math.isfinite(tau):
+            timing_metrics["decay_tau"] = float(tau)
 
     return timing_metrics
 
@@ -563,6 +584,7 @@ for entry in turn_event_files:
         AUC_WINDOW,
         PRE_WINDOW,
         LATENCY_FRACTION,
+        DECAY_FIT_WINDOW,
     )
 
     enriched_trace = df.copy()
@@ -1000,20 +1022,27 @@ else:
         "time_to_peak",
         "latency_to_fraction_peak",
         "peak_velocity_magnitude",
+        "peak_velocity_abs_1s",
         "auc_abs",
+        "decay_tau",
     ]
-    timing_summary_df = (
-        results_df.groupby(["group", "direction"], dropna=False)[timing_columns]
-        .agg(["mean", "sem"])
-    )
-    timing_summary_df.columns = [f"{metric}_{stat}" for metric, stat in timing_summary_df.columns]
-    timing_summary_df = timing_summary_df.reset_index()
+    timing_columns = [column for column in timing_columns if column in results_df.columns]
+    if timing_columns:
+        timing_summary_df = (
+            results_df.groupby(["group", "direction"], dropna=False)[timing_columns]
+            .agg(["mean", "sem"])
+        )
+        timing_summary_df.columns = [f"{metric}_{stat}" for metric, stat in timing_summary_df.columns]
+        timing_summary_df = timing_summary_df.reset_index()
 
-    timing_mouse_df = (
-        results_df.groupby(["group", "mouse", "direction"], dropna=False)[timing_columns]
-        .mean()
-        .reset_index()
-    )
+        timing_mouse_df = (
+            results_df.groupby(["group", "mouse", "direction"], dropna=False)[timing_columns]
+            .mean()
+            .reset_index()
+        )
+    else:
+        timing_summary_df = pd.DataFrame()
+        timing_mouse_df = pd.DataFrame()
 
 timing_summary_df
 
@@ -1044,64 +1073,21 @@ turning_stats_df = pd.DataFrame()
 
 # Aggregate timing metrics directly from results_df
 if results_df.empty:
-    timing_agg = pd.DataFrame()
+    combined = pd.DataFrame()
 else:
-    timing_cols = [metric for metric, _ in metric_specs if metric in ["latency_to_fraction_peak", "auc_abs"]]
-    timing_agg = (
-        results_df.groupby(["mouse", "group"], dropna=False)[timing_cols]
-        .mean()
-        .reset_index()
-    )
-
-# Aggregate 0-1 s peak absolute velocity and decay metrics from the raw traces
-if trace_samples_df.empty:
-    peak_abs_agg = pd.DataFrame()
-    decay_agg = pd.DataFrame()
-else:
-    post_mask = (trace_samples_df["time"] >= 0.0) & (trace_samples_df["time"] <= 1.0)
-    post_subset = trace_samples_df.loc[post_mask].copy()
-    if post_subset.empty:
-        peak_abs_agg = pd.DataFrame()
-    else:
-        post_subset["abs_velocity"] = post_subset["velocity"].abs()
-        per_record = (
-            post_subset.groupby(["mouse", "group", "csv_path"], dropna=False)["abs_velocity"]
-            .max()
-            .reset_index(name="peak_velocity_abs_1s")
-        )
-        peak_abs_agg = (
-            per_record.groupby(["mouse", "group"], dropna=False)["peak_velocity_abs_1s"]
+    metric_columns = [metric for metric, _ in metric_specs if metric in results_df.columns]
+    if metric_columns:
+        combined = (
+            results_df.groupby(["mouse", "group"], dropna=False)[metric_columns]
             .mean()
             .reset_index()
         )
-
-    decay_mask = (trace_samples_df["time"] >= DECAY_FIT_WINDOW[0]) & (trace_samples_df["time"] <= DECAY_FIT_WINDOW[1])
-    decay_subset = trace_samples_df.loc[decay_mask].copy()
-    if decay_subset.empty:
-        decay_agg = pd.DataFrame()
     else:
-        decay_subset["abs_velocity"] = decay_subset["velocity"].abs()
-        decay_records: List[Dict[str, object]] = []
-        for (group_name, mouse_id), group_df in decay_subset.groupby(["group", "mouse"], dropna=False):
-            series = group_df.groupby("time", dropna=False)["abs_velocity"].mean().reset_index().sort_values("time")
-            tau = fit_exponential_decay(series["time"], series["abs_velocity"])
-            if math.isfinite(tau):
-                decay_records.append({"mouse": mouse_id, "group": group_name, "decay_tau": tau})
-        decay_agg = pd.DataFrame(decay_records)
+        combined = pd.DataFrame()
 
-# Merge the data sources
-if timing_agg.empty and peak_abs_agg.empty and decay_agg.empty:
+if combined.empty:
     print("⚠️ No turning metrics available for comparison")
 else:
-    combined = timing_agg.copy() if not timing_agg.empty else pd.DataFrame(columns=["mouse", "group"])
-    for extra_df in (peak_abs_agg, decay_agg):
-        if extra_df.empty:
-            continue
-        if combined.empty:
-            combined = extra_df.copy()
-        else:
-            combined = pd.merge(combined, extra_df, on=["mouse", "group"], how="outer")
-
     available_specs = [(metric, label) for metric, label in metric_specs if metric in combined.columns]
     if not available_specs:
         print("⚠️ Metrics not found in aggregated data")
