@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.18.1
+#       jupytext_version: 1.16.7
 #   kernelspec:
 #     display_name: aeon
 #     language: python
@@ -128,7 +128,7 @@ plot_width = 14
 event_name = "Apply halt: 2s"  # Apply halt: 2s, No halt, DrumWithReverseflow block started, DrumBase block started
 vestibular_mismatch = False
 common_resampled_rate = 1000  # in Hz
-plot_fig1 = False
+plot_fig1 = False # save_path not defined, commented out FIg 1 creation
 
 # # for saccades
 # framerate = 59.77  # Hz (in the future, should come from saved data)
@@ -152,6 +152,33 @@ for idx, data_path in enumerate(data_paths, start=1):
         photometry_info = pd.read_parquet(data_path / "photometry_info.parquet", engine="pyarrow")
         session_settings = pd.read_parquet(data_path / "session_settings.parquet", engine="pyarrow")
         session_settings["metadata"] = session_settings["metadata"].apply(process.safe_from_json)
+        video_dataframes: Dict[str, pd.DataFrame] = {}
+        video_join_frames: List[pd.DataFrame] = []
+
+        for video_key, eye_suffix in (("VideoData1", "eye1"), ("VideoData2", "eye2")):
+            video_path = data_path / f"{video_key}_resampled.parquet"
+            if not video_path.exists():
+                print(f"ℹ️ No {video_key} resampled parquet found at {video_path}")
+                continue
+
+            video_df = pd.read_parquet(video_path, engine="pyarrow")
+            if "Seconds" in video_df.columns:
+                video_df = video_df.drop(columns=["Seconds"])
+
+            rename_map = {
+                col: f"{col}_{eye_suffix}"
+                for col in video_df.columns
+                if not col.endswith(f"_{eye_suffix}")
+            }
+            if rename_map:
+                video_df = video_df.rename(columns=rename_map)
+
+            video_dataframes[video_key] = video_df
+            video_join_frames.append(video_df)
+            print(f"✅ Loaded {video_key} resampled data from {video_path.name}")
+
+        for video_df in video_join_frames:
+            photometry_tracking_encoder_data = photometry_tracking_encoder_data.join(video_df, how="left")
         
         print(f"✅ Successfully loaded all parquet files for {data_path.name}")
         
@@ -177,6 +204,7 @@ for idx, data_path in enumerate(data_paths, start=1):
             "experiment_events": experiment_events,
             "photometry_info": photometry_info,
             "session_settings": session_settings,
+            "video_data": video_dataframes,
             "mouse_name": mouse_name
         }
         
@@ -1544,17 +1572,18 @@ for idx, data_path in enumerate(data_paths, start=1):
         # Plot figure if requested
         if plot_fig1:
             try:
-                process.plot_figure_1(
-                    photometry_tracking_encoder_data, 
-                    session_name, 
-                    save_path, 
-                    common_resampled_rate, 
-                    photodiode_halts, 
-                    save_figure=True, 
-                    show_figure=True, 
-                    downsample_factor=50
-                )
-                print(f"✅ Successfully created figure 1 for {data_path.name}")
+                # process.plot_figure_1(
+                #     photometry_tracking_encoder_data, 
+                #     session_name, 
+                #     save_path, 
+                #     common_resampled_rate, 
+                #     photodiode_halts, 
+                #     save_figure=True, 
+                #     show_figure=True, 
+                #     downsample_factor=50
+                # )
+                # print(f"✅ Successfully created figure 1 for {data_path.name}")
+                pass
             except Exception as e:
                 print(f"⚠️ ERROR creating figure 1: {str(e)}")
         else:

@@ -1401,7 +1401,7 @@ if "VideoData1_Has_Sleap" in globals() and VideoData1_Has_Sleap:
 
         # Create DataFrame and save to CSV
         blink_df_v1 = pd.DataFrame(blink_data_v1)
-        blink_csv_path_v1 = data_path / "blink_detection_VideoData1.csv"
+        blink_csv_path_v1 = qc_debug_dir / "blink_detection_VideoData1.csv"
         blink_df_v1.to_csv(blink_csv_path_v1, index=False)
         print(
             f"\n✅ Blink detection results (VideoData1) saved to: {blink_csv_path_v1}"
@@ -1445,7 +1445,7 @@ if "VideoData2_Has_Sleap" in globals() and VideoData2_Has_Sleap:
 
         # Create DataFrame and save to CSV
         blink_df_v2 = pd.DataFrame(blink_data_v2)
-        blink_csv_path_v2 = data_path / "blink_detection_VideoData2.csv"
+        blink_csv_path_v2 = qc_debug_dir / "blink_detection_VideoData2.csv"
         blink_df_v2.to_csv(blink_csv_path_v2, index=False)
         print(
             f"\n✅ Blink detection results (VideoData2) saved to: {blink_csv_path_v2}"
@@ -1466,7 +1466,7 @@ sys.stdout = original_stdout
 captured_output = output_buffer.getvalue()
 
 # Save to file in data_path folder
-output_file = data_path / "blink_detection_QC.txt"
+output_file = qc_debug_dir / "blink_detection_QC.txt"
 output_file.parent.mkdir(parents=True, exist_ok=True)
 with open(output_file, "w") as f:
     f.write(captured_output)
@@ -2924,12 +2924,12 @@ else:
 
 # Save as PDF (editable vector format)
 save_path.mkdir(parents=True, exist_ok=True)
-pdf_path = save_path / "Eye_data_QC.pdf"
+pdf_path = qc_debug_dir / "Eye_data_QC.pdf"
 plt.savefig(pdf_path, dpi=300, bbox_inches="tight", format="pdf")
 print(f"✅ QC figure saved as PDF (editable): {pdf_path}")
 
 # Also save as 600 dpi PNG (high-resolution for printing)
-png_path = save_path / "Eye_data_QC.png"
+png_path = qc_debug_dir / "Eye_data_QC.png"
 plt.savefig(png_path, dpi=600, bbox_inches="tight", format="png")
 print(f"✅ QC figure saved as PNG (600 dpi for printing): {png_path}")
 
@@ -3130,7 +3130,7 @@ if plot_QC_timeseries:
 
     # Also save as HTML
     save_path.mkdir(parents=True, exist_ok=True)
-    html_path = save_path / "Eye_data_QC_time_series.html"
+    html_path = qc_debug_dir / "Eye_data_QC_time_series.html"
     fig.write_html(html_path)
     print(f"✅ Interactive time series plot saved to: {html_path}")
 
@@ -3368,14 +3368,17 @@ if "VideoData2" in globals() and "VideoData2" in saccade_results:
         summary_tables["VideoData2"] = summary_v2
 
 # Save enriched VideoData tables as parquet and tidy summaries as CSV for QC
-if "VideoData1" in globals():
-    video_dir1 = save_path / "Video_Sleap_Data1"
-    video_dir1.mkdir(parents=True, exist_ok=True)
+downsampled_output_dir = save_path / "downsampled_data"
+downsampled_output_dir.mkdir(parents=True, exist_ok=True)
 
-    full_csv_path1 = video_dir1 / "Video_Sleap_Data1_1904-01-01T00-00-00.csv"
-    full_parquet_path1 = video_dir1 / "Video_Sleap_Data1_1904-01-01T00-00-00.parquet"
-    resampled_csv_path1 = video_dir1 / "Video_Sleap_Data1_1904-01-01T00-00-00_resampled.csv"
-    resampled_parquet_path1 = video_dir1 / "Video_Sleap_Data1_1904-01-01T00-00-00_resampled.parquet"
+qc_debug_dir = save_path / "QC_and_debug"
+qc_debug_dir.mkdir(parents=True, exist_ok=True)
+
+if "VideoData1" in globals():
+    video_dir1 = qc_debug_dir / "Video_Sleap_Data1"
+    if debug:
+        video_dir1.mkdir(parents=True, exist_ok=True)
+    summary_output_path1 = downsampled_output_dir / "VideoData1_saccade_summary.csv"
 
     drop_for_export = [col for col in SACCADE_EXPORT_DROP_COLUMNS if col in VideoData1.columns]
     VideoData1_export = VideoData1.drop(columns=drop_for_export)
@@ -3386,9 +3389,11 @@ if "VideoData1" in globals():
         else VideoData1_export
     )
 
-    VideoData1_full_indexed = set_aeon_index(VideoData1_export_renamed)
-    append_aeon_time_column(VideoData1_full_indexed).to_csv(full_csv_path1, index=False)
-    VideoData1_full_indexed.to_parquet(full_parquet_path1, engine="pyarrow", compression="snappy")
+    if debug:
+        VideoData1_full_indexed = set_aeon_index(VideoData1_export_renamed)
+        append_aeon_time_column(VideoData1_full_indexed).to_csv(
+            video_dir1 / "Video_Sleap_Data1_1904-01-01T00-00-00.csv", index=False
+        )
 
     drop_for_resample = [col for col in RESAMPLED_DROP_COLUMNS if col in VideoData1_export.columns]
     VideoData1_resampled_input = VideoData1_export.drop(columns=drop_for_resample)
@@ -3396,25 +3401,27 @@ if "VideoData1" in globals():
     if "Ellipse.Diameter.Filt" in VideoData1_resampled.columns:
         VideoData1_resampled = VideoData1_resampled.rename(columns={"Ellipse.Diameter.Filt": "Pupil.Diameter"})
     VideoData1_resampled_indexed = set_aeon_index(VideoData1_resampled)
-    append_aeon_time_column(VideoData1_resampled_indexed).to_csv(resampled_csv_path1, index=False)
+    if debug:
+        append_aeon_time_column(VideoData1_resampled_indexed).to_csv(
+            video_dir1 / "Video_Sleap_Data1_1904-01-01T00-00-00_resampled.csv", index=False
+        )
+    downsampled_video1_path = downsampled_output_dir / "VideoData1_resampled.parquet"
     VideoData1_resampled_indexed.to_parquet(
-        resampled_parquet_path1, engine="pyarrow", compression="snappy"
+        downsampled_video1_path, engine="pyarrow", compression="snappy"
     )
+    print(f"✅ Saved VideoData1 resampled parquet to {downsampled_video1_path}")
 
     summary_table = summary_tables.get("VideoData1")
     if summary_table is not None and not summary_table.empty:
         summary_export = summary_table.copy()
         summary_export["aeon_time"] = summary_export["saccade_peak_time"].apply(api.aeon)
-        summary_export.to_csv(video_dir1 / "VideoData1_saccade_summary.csv", index=False)
+        summary_export.to_csv(summary_output_path1, index=False)
 
 if "VideoData2" in globals():
-    video_dir2 = save_path / "Video_Sleap_Data2"
-    video_dir2.mkdir(parents=True, exist_ok=True)
-
-    full_csv_path2 = video_dir2 / "Video_Sleap_Data2_1904-01-01T00-00-00.csv"
-    full_parquet_path2 = video_dir2 / "Video_Sleap_Data2_1904-01-01T00-00-00.parquet"
-    resampled_csv_path2 = video_dir2 / "Video_Sleap_Data2_1904-01-01T00-00-00_resampled.csv"
-    resampled_parquet_path2 = video_dir2 / "Video_Sleap_Data2_1904-01-01T00-00-00_resampled.parquet"
+    video_dir2 = qc_debug_dir / "Video_Sleap_Data2"
+    if debug:
+        video_dir2.mkdir(parents=True, exist_ok=True)
+    summary_output_path2 = downsampled_output_dir / "VideoData2_saccade_summary.csv"
 
     drop_for_export = [col for col in SACCADE_EXPORT_DROP_COLUMNS if col in VideoData2.columns]
     VideoData2_export = VideoData2.drop(columns=drop_for_export)
@@ -3425,9 +3432,11 @@ if "VideoData2" in globals():
         else VideoData2_export
     )
 
-    VideoData2_full_indexed = set_aeon_index(VideoData2_export_renamed)
-    append_aeon_time_column(VideoData2_full_indexed).to_csv(full_csv_path2, index=False)
-    VideoData2_full_indexed.to_parquet(full_parquet_path2, engine="pyarrow", compression="snappy")
+    if debug:
+        VideoData2_full_indexed = set_aeon_index(VideoData2_export_renamed)
+        append_aeon_time_column(VideoData2_full_indexed).to_csv(
+            video_dir2 / "Video_Sleap_Data2_1904-01-01T00-00-00.csv", index=False
+        )
 
     drop_for_resample = [col for col in RESAMPLED_DROP_COLUMNS if col in VideoData2_export.columns]
     VideoData2_resampled_input = VideoData2_export.drop(columns=drop_for_resample)
@@ -3435,18 +3444,21 @@ if "VideoData2" in globals():
     if "Ellipse.Diameter.Filt" in VideoData2_resampled.columns:
         VideoData2_resampled = VideoData2_resampled.rename(columns={"Ellipse.Diameter.Filt": "Pupil.Diameter"})
     VideoData2_resampled_indexed = set_aeon_index(VideoData2_resampled)
-    append_aeon_time_column(VideoData2_resampled_indexed).to_csv(resampled_csv_path2, index=False)
+    if debug:
+        append_aeon_time_column(VideoData2_resampled_indexed).to_csv(
+            video_dir2 / "Video_Sleap_Data2_1904-01-01T00-00-00_resampled.csv", index=False
+        )
+    downsampled_video2_path = downsampled_output_dir / "VideoData2_resampled.parquet"
     VideoData2_resampled_indexed.to_parquet(
-        resampled_parquet_path2, engine="pyarrow", compression="snappy"
+        downsampled_video2_path, engine="pyarrow", compression="snappy"
     )
+    print(f"✅ Saved VideoData2 resampled parquet to {downsampled_video2_path}")
 
     summary_table = summary_tables.get("VideoData2")
     if summary_table is not None and not summary_table.empty:
         summary_export = summary_table.copy()
         summary_export["aeon_time"] = summary_export["saccade_peak_time"].apply(api.aeon)
-        summary_export.to_csv(video_dir2 / "VideoData2_saccade_summary.csv", index=False)
-
-print("Columns in VideoData1:", list(VideoData1.columns))
+        summary_export.to_csv(summary_output_path2, index=False)
 
 
 # +
