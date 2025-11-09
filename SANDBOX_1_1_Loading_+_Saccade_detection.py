@@ -19,6 +19,7 @@
 import numpy as np
 from pathlib import Path
 import sys
+from datetime import datetime
 import matplotlib.pyplot as plt
 import pandas as pd
 import plotly.graph_objects as go
@@ -32,6 +33,7 @@ from scipy.signal import correlate
 from scipy.stats import pearsonr
 
 from harp_resources import process
+import aeon.io.api as api
 from sleap import load_and_process as lp
 from sleap import processing_functions as pf
 from sleap import saccade_processing as sp
@@ -81,6 +83,82 @@ def get_eye_label(key):
     return VIDEO_LABELS.get(key, key)
 
 
+# Column prefixes that indicate SLEAP-derived eye-tracking data
+_SLEAP_EYE_PREFIXES = (
+    "left",
+    "right",
+    "center",
+    "p1",
+    "p2",
+    "p3",
+    "p4",
+    "p5",
+    "p6",
+    "p7",
+    "p8",
+    "Ellipse",
+)
+
+
+def _needs_eye_suffix(column: str) -> bool:
+    """Return True if the column should be tagged as eye data during resampling."""
+    return any(column.startswith(prefix) for prefix in _SLEAP_EYE_PREFIXES)
+
+
+def resample_video_dataframe(
+    video_df: pd.DataFrame,
+    eye_tag: str,
+    target_freq_hz: float = None,
+    optical_filter_hz: float = None,
+) -> pd.DataFrame:
+    """Resample a SLEAP video dataframe onto the common time grid."""
+    if "Seconds" not in video_df.columns:
+        raise ValueError("Video dataframe must contain a 'Seconds' column before resampling.")
+
+    target_freq_hz = target_freq_hz or COMMON_RESAMPLED_RATE
+    df_for_resample = video_df.copy()
+
+    # Rename SLEAP-specific columns so the resampler treats them as eye data
+    rename_map = {
+        col: f"{col}_{eye_tag}"
+        for col in df_for_resample.columns
+        if col not in {"Seconds", "frame_idx"} and _needs_eye_suffix(col)
+    }
+    df_for_resample = df_for_resample.rename(columns=rename_map)
+
+    # Convert Seconds to aeon datetime index and drop Seconds before resampling
+    df_for_resample.index = pd.to_datetime(df_for_resample["Seconds"].apply(api.aeon))
+    df_for_resample = df_for_resample.drop(columns=["Seconds"])
+
+    resampled = process.resample_dataframe(
+        df_for_resample,
+        target_freq_Hz=target_freq_hz,
+        optical_filter_Hz=optical_filter_hz,
+    )
+
+    # Restore original column names
+    inverse_map = {v: k for k, v in rename_map.items()}
+    resampled = resampled.rename(columns=inverse_map)
+
+    # Convert index back to Seconds
+    resampled_seconds = (resampled.index - datetime(1904, 1, 1)).total_seconds()
+    resampled = resampled.reset_index(drop=True)
+    resampled.insert(0, "Seconds", resampled_seconds)
+
+    # Frame indices should remain integers if present
+    if "frame_idx" in resampled.columns:
+        resampled["frame_idx"] = pd.to_numeric(resampled["frame_idx"], errors="coerce").round().astype("Int64")
+
+    return resampled
+
+
+def append_aeon_time_column(df: pd.DataFrame) -> pd.DataFrame:
+    """Return a copy of the dataframe with an additional aeon_time ISO timestamp column."""
+    df_with_time = df.copy()
+    df_with_time["aeon_time"] = df_with_time["Seconds"].apply(lambda x: api.aeon(x).isoformat())
+    return df_with_time
+
+
 # keep as false here, it is to checking if NaNs already removed if the
 # notebook cell is rerun
 NaNs_removed = False
@@ -105,6 +183,9 @@ plot_QC_timeseries = False
 # for filtering out inferred points with low confidence, they get interpolated
 score_cutoff = 0.2
 outlier_sd_threshold = 10  # for removing outliers from the data, they get interpolated
+
+# Common resampling rate (Hz) used for alignment with other modalities
+COMMON_RESAMPLED_RATE = 1000
 
 # Pupil diameter filter settings (Butterworth low-pass)
 pupil_filter_cutoff_hz = 10  # Hz
@@ -2971,22 +3052,46 @@ if plot_QC_timeseries:
 # reindex to aeon datetime to be done in the other notebook
 
 if VideoData1_Has_Sleap:
-    # Save  DataFrame as CSV to proper path and filename
-    save_path1 = (
-        save_path / "Video_Sleap_Data1" / "Video_Sleap_Data1_1904-01-01T00-00-00.csv"
+    video_dir1 = save_path / "Video_Sleap_Data1"
+    video_dir1.mkdir(parents=True, exist_ok=True)
+
+    full_csv_path1 = video_dir1 / "Video_Sleap_Data1_1904-01-01T00-00-00.csv"
+    full_parquet_path1 = video_dir1 / "Video_Sleap_Data1_1904-01-01T00-00-00.parquet"
+    resampled_csv_path1 = video_dir1 / "Video_Sleap_Data1_1904-01-01T00-00-00_resampled.csv"
+    resampled_parquet_path1 = video_dir1 / "Video_Sleap_Data1_1904-01-01T00-00-00_resampled.parquet"
+
+    VideoData1_full_indexed = set_aeon_index(VideoData1)
+    append_aeon_time_column(VideoData1_full_indexed).to_csv(full_csv_path1, index=False)
+    VideoData1_full_indexed.to_parquet(full_parquet_path1, engine="pyarrow", compression="snappy")
+
+    VideoData1_resampled = resample_video_dataframe(VideoData1, "eye1")
+    VideoData1_resampled_indexed = set_aeon_index(VideoData1_resampled)
+    append_aeon_time_column(VideoData1_resampled_indexed).to_csv(resampled_csv_path1, index=False)
+    VideoData1_resampled_indexed.to_parquet(
+        resampled_parquet_path1, engine="pyarrow", compression="snappy"
     )
-    save_path1.parent.mkdir(parents=True, exist_ok=True)
-    # save_path1.parent.mkdir(parents=True, exist_ok=True)
-    VideoData1.to_csv(save_path1)
+    print(f"✅ Saved resampled VideoData1 to {resampled_parquet_path1}")
 
 if VideoData2_Has_Sleap:
-    # Save  DataFrame as CSV to proper path and filename
-    save_path2 = (
-        save_path / "Video_Sleap_Data2" / "Video_Sleap_Data2_1904-01-01T00-00-00.csv"
+    video_dir2 = save_path / "Video_Sleap_Data2"
+    video_dir2.mkdir(parents=True, exist_ok=True)
+
+    full_csv_path2 = video_dir2 / "Video_Sleap_Data2_1904-01-01T00-00-00.csv"
+    full_parquet_path2 = video_dir2 / "Video_Sleap_Data2_1904-01-01T00-00-00.parquet"
+    resampled_csv_path2 = video_dir2 / "Video_Sleap_Data2_1904-01-01T00-00-00_resampled.csv"
+    resampled_parquet_path2 = video_dir2 / "Video_Sleap_Data2_1904-01-01T00-00-00_resampled.parquet"
+
+    VideoData2_full_indexed = set_aeon_index(VideoData2)
+    append_aeon_time_column(VideoData2_full_indexed).to_csv(full_csv_path2, index=False)
+    VideoData2_full_indexed.to_parquet(full_parquet_path2, engine="pyarrow", compression="snappy")
+
+    VideoData2_resampled = resample_video_dataframe(VideoData2, "eye2")
+    VideoData2_resampled_indexed = set_aeon_index(VideoData2_resampled)
+    append_aeon_time_column(VideoData2_resampled_indexed).to_csv(resampled_csv_path2, index=False)
+    VideoData2_resampled_indexed.to_parquet(
+        resampled_parquet_path2, engine="pyarrow", compression="snappy"
     )
-    save_path2.parent.mkdir(parents=True, exist_ok=True)
-    # save_path2.parent.mkdir(parents=True, exist_ok=True)
-    VideoData2.to_csv(save_path2)
+    print(f"✅ Saved resampled VideoData2 to {resampled_parquet_path2}")
 # -
 
 
@@ -3225,21 +3330,52 @@ if "VideoData2" in globals() and "VideoData2" in saccade_results:
 
 # Save enriched VideoData tables as parquet and tidy summaries as CSV for QC
 if "VideoData1" in globals():
-    save_path1 = save_path / "Video_Sleap_Data1"
-    save_path1.parent.mkdir(parents=True, exist_ok=True)
-    VideoData1.to_parquet(save_path1 / "Video_Sleap_Data1_1904-01-01T00-00-00.parquet", index=False)
+    video_dir1 = save_path / "Video_Sleap_Data1"
+    video_dir1.mkdir(parents=True, exist_ok=True)
+
+    full_csv_path1 = video_dir1 / "Video_Sleap_Data1_1904-01-01T00-00-00.csv"
+    full_parquet_path1 = video_dir1 / "Video_Sleap_Data1_1904-01-01T00-00-00.parquet"
+    resampled_csv_path1 = video_dir1 / "Video_Sleap_Data1_1904-01-01T00-00-00_resampled.csv"
+    resampled_parquet_path1 = video_dir1 / "Video_Sleap_Data1_1904-01-01T00-00-00_resampled.parquet"
+
+    VideoData1_full_indexed = set_aeon_index(VideoData1)
+    append_aeon_time_column(VideoData1_full_indexed).to_csv(full_csv_path1, index=False)
+    VideoData1_full_indexed.to_parquet(full_parquet_path1, engine="pyarrow", compression="snappy")
+
+    VideoData1_resampled = resample_video_dataframe(VideoData1, "eye1")
+    VideoData1_resampled_indexed = set_aeon_index(VideoData1_resampled)
+    append_aeon_time_column(VideoData1_resampled_indexed).to_csv(resampled_csv_path1, index=False)
+    VideoData1_resampled_indexed.to_parquet(
+        resampled_parquet_path1, engine="pyarrow", compression="snappy"
+    )
+
     summary_table = summary_tables.get("VideoData1")
     if summary_table is not None and not summary_table.empty:
-        summary_table.to_csv(save_path1 / "VideoData1_saccade_summary.csv", index=False)
+        summary_table.to_csv(video_dir1 / "VideoData1_saccade_summary.csv", index=False)
 
 if "VideoData2" in globals():
-    save_path2 = save_path / "Video_Sleap_Data2"
-    save_path2.parent.mkdir(parents=True, exist_ok=True)
-    VideoData2.to_parquet(save_path2 / "Video_Sleap_Data2_1904-01-01T00-00-00.parquet", index=False)
+    video_dir2 = save_path / "Video_Sleap_Data2"
+    video_dir2.mkdir(parents=True, exist_ok=True)
+
+    full_csv_path2 = video_dir2 / "Video_Sleap_Data2_1904-01-01T00-00-00.csv"
+    full_parquet_path2 = video_dir2 / "Video_Sleap_Data2_1904-01-01T00-00-00.parquet"
+    resampled_csv_path2 = video_dir2 / "Video_Sleap_Data2_1904-01-01T00-00-00_resampled.csv"
+    resampled_parquet_path2 = video_dir2 / "Video_Sleap_Data2_1904-01-01T00-00-00_resampled.parquet"
+
+    VideoData2_full_indexed = set_aeon_index(VideoData2)
+    append_aeon_time_column(VideoData2_full_indexed).to_csv(full_csv_path2, index=False)
+    VideoData2_full_indexed.to_parquet(full_parquet_path2, engine="pyarrow", compression="snappy")
+
+    VideoData2_resampled = resample_video_dataframe(VideoData2, "eye2")
+    VideoData2_resampled_indexed = set_aeon_index(VideoData2_resampled)
+    append_aeon_time_column(VideoData2_resampled_indexed).to_csv(resampled_csv_path2, index=False)
+    VideoData2_resampled_indexed.to_parquet(
+        resampled_parquet_path2, engine="pyarrow", compression="snappy"
+    )
+
     summary_table = summary_tables.get("VideoData2")
     if summary_table is not None and not summary_table.empty:
-        summary_table.to_csv(save_path2 / "VideoData2_saccade_summary.csv", index=False)
-# -
+        summary_table.to_csv(video_dir2 / "VideoData2_saccade_summary.csv", index=False)
 
 print("Columns in VideoData1:", list(VideoData1.columns))
 
