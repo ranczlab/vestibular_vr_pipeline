@@ -186,6 +186,7 @@ def merge_nearby_blinks(segments, merge_window_frames):
     -----------
     segments : list of dict
         List of blink segment dictionaries with keys: 'start_idx', 'end_idx', 'length', 'mean_score'
+        May also contain 'start_frame_idx' and 'end_frame_idx' if frame_idx values were stored
     merge_window_frames : int
         Maximum gap (in frames) between segments to merge them
         
@@ -198,7 +199,7 @@ def merge_nearby_blinks(segments, merge_window_frames):
     
     # Sort by start_idx
     sorted_segments = sorted(segments, key=lambda x: x['start_idx'])
-    merged = [sorted_segments[0]]
+    merged = [sorted_segments[0].copy()]  # Copy to avoid modifying original
     
     for seg in sorted_segments[1:]:
         last = merged[-1]
@@ -210,8 +211,14 @@ def merge_nearby_blinks(segments, merge_window_frames):
             merged[-1]['length'] = merged[-1]['end_idx'] - merged[-1]['start_idx'] + 1
             merged[-1]['mean_score'] = (last['mean_score'] * last['length'] + 
                                        seg['mean_score'] * seg['length']) / merged[-1]['length']
+            # Preserve frame_idx values if they exist
+            if 'start_frame_idx' in seg and 'end_frame_idx' in seg:
+                merged[-1]['end_frame_idx'] = seg['end_frame_idx']
+                # start_frame_idx stays the same (from first segment)
+                if 'start_frame_idx' not in merged[-1]:
+                    merged[-1]['start_frame_idx'] = last.get('start_frame_idx', last['start_idx'])
         else:
-            merged.append(seg)
+            merged.append(seg.copy())  # Copy to avoid modifying original
     
     return merged
 
@@ -447,6 +454,46 @@ def detect_blinks_for_video(video_data, columns_of_interest, blink_instance_scor
     
     # Always print key blink detection stats
     print(f"{video_label} - Found {len(all_blink_segments)} blink segments")
+    
+    # CRITICAL FIX: Store frame_idx values immediately while DataFrame is still valid
+    # This prevents issues if the DataFrame is modified later (e.g., by merge operations)
+    frame_idx_available = 'frame_idx' in video_data.columns
+    
+    # CRITICAL FIX: Validate frame_idx before storing blink values
+    if frame_idx_available:
+        # Check for duplicates
+        if video_data['frame_idx'].duplicated().any():
+            dup_count = video_data['frame_idx'].duplicated().sum()
+            print(f"   ⚠️ WARNING: {video_label} has {dup_count} duplicate frame_idx values before blink detection!")
+            print(f"      This may cause incorrect blink frame numbers. Frame_idx should be unique.")
+        # Check for monotonicity
+        if not video_data['frame_idx'].is_monotonic_increasing:
+            print(f"   ⚠️ WARNING: {video_label} frame_idx is not monotonic before blink detection!")
+            print(f"      This may cause incorrect blink frame numbers. Frame_idx should be strictly increasing.")
+    
+    for blink in all_blink_segments:
+        start_idx = blink['start_idx']
+        end_idx = blink['end_idx']
+        if frame_idx_available:
+            start_frame_val = video_data['frame_idx'].iloc[start_idx]
+            end_frame_val = video_data['frame_idx'].iloc[end_idx]
+            # Validate that stored values are valid
+            if pd.notna(start_frame_val) and pd.notna(end_frame_val):
+                blink['start_frame_idx'] = int(start_frame_val)
+                blink['end_frame_idx'] = int(end_frame_val)
+                # Additional validation: ensure start <= end
+                if blink['start_frame_idx'] > blink['end_frame_idx']:
+                    print(f"   ⚠️ WARNING: Blink segment has start_frame_idx ({blink['start_frame_idx']}) > end_frame_idx ({blink['end_frame_idx']})!")
+                    print(f"      This should not happen. Using positional indices instead.")
+                    blink['start_frame_idx'] = start_idx
+                    blink['end_frame_idx'] = end_idx
+            else:
+                # If NaN, use positional indices
+                blink['start_frame_idx'] = start_idx
+                blink['end_frame_idx'] = end_idx
+        else:
+            blink['start_frame_idx'] = start_idx
+            blink['end_frame_idx'] = end_idx
     
     # Filter out blinks shorter than min_frames_threshold frames
     blink_segments = [blink for blink in all_blink_segments if blink['length'] >= min_frames_threshold]

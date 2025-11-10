@@ -258,16 +258,16 @@ NaNs_removed = False
 ##########################################################################
 
 data_path = Path(
-    "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4/B6J2782-2025-04-28T14-22-03"
+    "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4/B6J2780-2025-04-28T13-10-18"
 )
 # data_path =
 # Path('/Users/rancze/Documents/Data/vestVR/Cohort1/No_iso_correction/Visual_mismatch_day3/B6J2717-2024-12-10T12-17-03') only has sleap data 1 for testing purposes
 
 ### MOST commonly changed params for tuning
 video1_eye = "L" # Options: 'L' or 'R'; which eye does VideoData1 represent? ('L' = Left,'R' = Right)
-debug = False # Set to True to enable debug output and QC plots across all cells (file loading, processing, etc.)
-plot_saccade_detection_QC = False
-plot_QC_timeseries = False
+debug = True # Set to True to enable debug output and QC plots across all cells (file loading, processing, etc.)
+plot_QC_timeseries = True # plots pop up in new windows, code hangs until plot window is closed - issue for batch processing, but shouldn't be used there anyway 
+plot_saccade_detection_QC = False # plots pop up in new windows, code hangs until plot window is closed - issue for batch processing, but shouldn't be used there anyway 
 blink_instance_score_threshold = 3.8 # hard threshold for blink detection - frames with instance.score below this value are considered blinks
 k1 = 4.5  # adaptive saccade detction threshold (k * SD) for VideoData1 - 3-6 works well
 k2 = 4.5  # adaptive saccade detction threshold (k * SD) for VideoData1 - 3-6 works well
@@ -1150,7 +1150,12 @@ if (
         for i, bout in enumerate(blink_bouts_v1, 1):
             start_idx = bout["start_idx"]
             end_idx = bout["end_idx"]
-            if "frame_idx" in VideoData1.columns:
+            # CRITICAL FIX: Use stored frame_idx values if available (from merge_nearby_blinks)
+            if "start_frame_idx" in bout and "end_frame_idx" in bout:
+                start_frame = int(bout["start_frame_idx"]) if pd.notna(bout["start_frame_idx"]) else start_idx
+                end_frame = int(bout["end_frame_idx"]) if pd.notna(bout["end_frame_idx"]) else end_idx
+            elif "frame_idx" in VideoData1.columns:
+                # Fallback: look up from DataFrame (may be wrong if DataFrame was modified)
                 start_frame = int(VideoData1["frame_idx"].iloc[start_idx])
                 end_frame = int(VideoData1["frame_idx"].iloc[end_idx])
             else:
@@ -1171,7 +1176,12 @@ if (
         for i, bout in enumerate(blink_bouts_v2, 1):
             start_idx = bout["start_idx"]
             end_idx = bout["end_idx"]
-            if "frame_idx" in VideoData2.columns:
+            # CRITICAL FIX: Use stored frame_idx values if available (from merge_nearby_blinks)
+            if "start_frame_idx" in bout and "end_frame_idx" in bout:
+                start_frame = int(bout["start_frame_idx"]) if pd.notna(bout["start_frame_idx"]) else start_idx
+                end_frame = int(bout["end_frame_idx"]) if pd.notna(bout["end_frame_idx"]) else end_idx
+            elif "frame_idx" in VideoData2.columns:
+                # Fallback: look up from DataFrame (may be wrong if DataFrame was modified)
                 start_frame = int(VideoData2["frame_idx"].iloc[start_idx])
                 end_frame = int(VideoData2["frame_idx"].iloc[end_idx])
             else:
@@ -1318,16 +1328,21 @@ if "VideoData1_Has_Sleap" in globals() and VideoData1_Has_Sleap:
             manual_blinks_for_csv = manual_blinks_v1
 
         for i, blink in enumerate(blink_segments_v1, 1):
-            start_idx = blink["start_idx"]
-            end_idx = blink["end_idx"]
-
-            # Get actual frame numbers from frame_idx column
-            if "frame_idx" in VideoData1.columns:
-                first_frame = int(VideoData1["frame_idx"].iloc[start_idx])
-                last_frame = int(VideoData1["frame_idx"].iloc[end_idx])
+            # CRITICAL FIX: Use stored frame_idx values from blink detection
+            # These were captured before any DataFrame modifications (e.g., merge operations)
+            if "start_frame_idx" in blink and "end_frame_idx" in blink:
+                first_frame = int(blink["start_frame_idx"]) if pd.notna(blink["start_frame_idx"]) else blink["start_idx"]
+                last_frame = int(blink["end_frame_idx"]) if pd.notna(blink["end_frame_idx"]) else blink["end_idx"]
             else:
-                first_frame = start_idx
-                last_frame = end_idx
+                # Fallback to old method if frame_idx not stored (for backward compatibility)
+                start_idx = blink["start_idx"]
+                end_idx = blink["end_idx"]
+                if "frame_idx" in VideoData1.columns:
+                    first_frame = int(VideoData1["frame_idx"].iloc[start_idx])
+                    last_frame = int(VideoData1["frame_idx"].iloc[end_idx])
+                else:
+                    first_frame = start_idx
+                    last_frame = end_idx
 
             # Check if this blink matches a manual one (using function from
             # processing_functions)
@@ -1362,16 +1377,21 @@ if "VideoData2_Has_Sleap" in globals() and VideoData2_Has_Sleap:
             manual_blinks_for_csv = manual_blinks_v2
 
         for i, blink in enumerate(blink_segments_v2, 1):
-            start_idx = blink["start_idx"]
-            end_idx = blink["end_idx"]
-
-            # Get actual frame numbers from frame_idx column
-            if "frame_idx" in VideoData2.columns:
-                first_frame = int(VideoData2["frame_idx"].iloc[start_idx])
-                last_frame = int(VideoData2["frame_idx"].iloc[end_idx])
+            # CRITICAL FIX: Use stored frame_idx values from blink detection
+            # These were captured before any DataFrame modifications (e.g., merge operations)
+            if "start_frame_idx" in blink and "end_frame_idx" in blink:
+                first_frame = int(blink["start_frame_idx"]) if pd.notna(blink["start_frame_idx"]) else blink["start_idx"]
+                last_frame = int(blink["end_frame_idx"]) if pd.notna(blink["end_frame_idx"]) else blink["end_idx"]
             else:
-                first_frame = start_idx
-                last_frame = end_idx
+                # Fallback to old method if frame_idx not stored (for backward compatibility)
+                start_idx = blink["start_idx"]
+                end_idx = blink["end_idx"]
+                if "frame_idx" in VideoData2.columns:
+                    first_frame = int(VideoData2["frame_idx"].iloc[start_idx])
+                    last_frame = int(VideoData2["frame_idx"].iloc[end_idx])
+                else:
+                    first_frame = start_idx
+                    last_frame = end_idx
 
             # Check if this blink matches a manual one (using function from
             # processing_functions)
@@ -2240,6 +2260,15 @@ if VideoData1_Has_Sleap is True:
     else:
         VideoData1 = VideoData1.merge(SleapVideoData1, on="Seconds", how="outer")
         del SleapVideoData1
+        # CRITICAL FIX: Validate frame_idx after merge
+        if "frame_idx" in VideoData1.columns:
+            if VideoData1['frame_idx'].duplicated().any():
+                dup_count = VideoData1['frame_idx'].duplicated().sum()
+                print(f"   ⚠️ WARNING: VideoData1 has {dup_count} duplicate frame_idx values after merge with SleapVideoData1!")
+                print(f"      This should not happen. Frame_idx should be unique.")
+            if not VideoData1['frame_idx'].is_monotonic_increasing:
+                print(f"   ⚠️ WARNING: VideoData1 frame_idx is not monotonic after merge with SleapVideoData1!")
+                print(f"      This should not happen. Frame_idx should be strictly increasing.")
 
 if VideoData2_Has_Sleap is True:
     if VideoData2["Seconds"].equals(SleapVideoData2["Seconds"]) is False:
@@ -2249,6 +2278,15 @@ if VideoData2_Has_Sleap is True:
     else:
         VideoData2 = VideoData2.merge(SleapVideoData2, on="Seconds", how="outer")
         del SleapVideoData2
+        # CRITICAL FIX: Validate frame_idx after merge
+        if "frame_idx" in VideoData2.columns:
+            if VideoData2['frame_idx'].duplicated().any():
+                dup_count = VideoData2['frame_idx'].duplicated().sum()
+                print(f"   ⚠️ WARNING: VideoData2 has {dup_count} duplicate frame_idx values after merge with SleapVideoData2!")
+                print(f"      This should not happen. Frame_idx should be unique.")
+            if not VideoData2['frame_idx'].is_monotonic_increasing:
+                print(f"   ⚠️ WARNING: VideoData2 frame_idx is not monotonic after merge with SleapVideoData2!")
+                print(f"      This should not happen. Frame_idx should be strictly increasing.")
 gc.collect()
 None
 
