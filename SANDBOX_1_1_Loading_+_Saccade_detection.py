@@ -6,12 +6,29 @@
 #       extension: .py
 #       format_name: light
 #       format_version: '1.5'
-#       jupytext_version: 1.16.7
+#       jupytext_version: 1.18.1
 #   kernelspec:
-#     display_name: aeon
+#     display_name: aeon2
 #     language: python
 #     name: python3
 # ---
+
+# +
+# Safe Jupyter startup on Linux only
+import os, sys
+
+if sys.platform.startswith("linux"):
+    os.environ.setdefault("MPLBACKEND", "Agg")        # avoids Qt/OpenGL issues
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    #os.environ.setdefault("OMP_NUM_THREADS", "1")     # tames OpenMP storms
+    os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+    #os.environ.setdefault("CUDA_VISIBLE_DEVICES", "") # comment out if you WANT GPU
+else:
+    # macOS/Windows: leave defaults; optionally keep OMP cap
+    #os.environ.setdefault("OMP_NUM_THREADS", "1")
+    pass
+
+# -
 
 # ## Setup - NOTEBOOK FROZEN UNTIL POST SfN, only reporen if stricktly necessary
 
@@ -49,7 +66,7 @@ from sleap.ml_feature_extraction import extract_ml_features
 # Set force_reload_modules = True to always reload, or False to use cached
 # versions
 # Set to False for faster execution when modules haven't changed
-force_reload_modules = True
+force_reload_modules = False
 if force_reload_modules:
     import importlib
     import sleap.load_and_process
@@ -258,7 +275,7 @@ NaNs_removed = False
 ##########################################################################
 
 data_path = Path(
-    "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4/B6J2780-2025-04-28T13-10-18"
+    "/home/ikharitonov/RANCZLAB-NAS/data/ONIX/20241125_Cohort1_rotation/Visual_mismatch_day3/B6J2717-2024-12-10T12-17-03"
 )
 # data_path =
 # Path('/Users/rancze/Documents/Data/vestVR/Cohort1/No_iso_correction/Visual_mismatch_day3/B6J2717-2024-12-10T12-17-03') only has sleap data 1 for testing purposes
@@ -367,7 +384,8 @@ columns_of_interest = [
 
 if VideoData1_Has_Sleap:
     # drop the track column as it is empty
-    VideoData1 = VideoData1.drop(columns=["track"])
+    if "track" in VideoData1.columns:
+        VideoData1 = VideoData1.drop(columns=["track"])
     coordinates_dict1_raw = lp.get_coordinates_dict(VideoData1, columns_of_interest)
     # frame rate for VideoData1 TODO where to save it, is it useful?
     FPS_1 = 1 / VideoData1["Seconds"].diff().mean()
@@ -376,7 +394,8 @@ if VideoData1_Has_Sleap:
 
 if VideoData2_Has_Sleap:
     # drop the track column as it is empty
-    VideoData2 = VideoData2.drop(columns=["track"])
+    if "track" in VideoData2.columns:
+        VideoData2 = VideoData2.drop(columns=["track"])
     coordinates_dict2_raw = lp.get_coordinates_dict(VideoData2, columns_of_interest)
     # frame rate for VideoData2
     FPS_2 = 1 / VideoData2["Seconds"].diff().mean()
