@@ -2513,7 +2513,7 @@ def baseline_aligned_data_simple(aligned_df, left_turns_df, right_turns_df, base
         ))
         ax2.yaxis.label.set_color('green')
 
-        # Motor velocity
+        # Motor velocity 
         ax3 = ax.twinx()
         ax3.spines['right'].set_position(('outward', 50))
         ax3.plot(mean_baseline_df.index, mean_baseline_df["Motor_Velocity_Baseline"], color='#00008B', alpha=0.8, linewidth=2)
