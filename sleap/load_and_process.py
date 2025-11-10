@@ -79,10 +79,21 @@ def load_videography_data(path, debug=False):
     sorted_vd1_files = pd.to_datetime(pd.Series([x.split('_')[1].split('.')[0] for x in vd1_files]), format='%Y-%m-%dT%H-%M-%S').sort_values()
     sorted_vd2_files = pd.to_datetime(pd.Series([x.split('_')[1].split('.')[0] for x in vd2_files]), format='%Y-%m-%dT%H-%M-%S').sort_values()
     
+    # DEBUG: Print files in CHRONOLOGICAL ORDER (as they will be loaded)
     if debug:
-        print(f'Found .csv VideoData logs timestamped at:')
-        for ts in sorted_vd1_files.values:
-            print('-',ts)
+        print(f'\n🔍 DEBUG: VideoData1 files (will be loaded in this chronological order):')
+        for i, ts in enumerate(sorted_vd1_files.values, 1):
+            # Convert numpy datetime64 to pandas Timestamp for strftime
+            ts_pd = pd.Timestamp(ts)
+            filename = f"VideoData1_{ts_pd.strftime('%Y-%m-%dT%H-%M-%S')}.csv"
+            print(f'  {i}. {filename} (timestamp: {ts_pd})')
+        
+        print(f'\n🔍 DEBUG: VideoData2 files (will be loaded in this chronological order):')
+        for i, ts in enumerate(sorted_vd2_files.values, 1):
+            # Convert numpy datetime64 to pandas Timestamp for strftime
+            ts_pd = pd.Timestamp(ts)
+            filename = f"VideoData2_{ts_pd.strftime('%Y-%m-%dT%H-%M-%S')}.csv"
+            print(f'  {i}. {filename} (timestamp: {ts_pd})')
     
     print(f'\n📋 LOADING {len(sorted_vd1_files)} VideoData1 file(s) and {len(sorted_vd2_files)} VideoData2 file(s)\n')
     
@@ -233,6 +244,52 @@ def load_videography_data(path, debug=False):
     # Now concatenate with properly aligned frame_idx values (matching concatenated video frame numbers)
     read_vd1_dfs = pd.concat(read_vd1_dfs).reset_index().drop(columns='index')
     read_vd2_dfs = pd.concat(read_vd2_dfs).reset_index().drop(columns='index')
+    
+    # CRITICAL FIX: Gap-fill VideoData frame_idx to ensure consecutive values [0, 1, 2, ..., N-1]
+    # This fixes issues where Value.ChunkData.FrameID had gaps or duplicates
+    if len(read_vd1_dfs) > 0:
+        max_frame_idx_vd1 = read_vd1_dfs['frame_idx'].max()
+        expected_rows = max_frame_idx_vd1 + 1
+        if len(read_vd1_dfs) < expected_rows:
+            # Gap-fill missing frame_idx values
+            missing_frames = expected_rows - len(read_vd1_dfs)
+            if debug:
+                print(f"ℹ️ VideoData1: Gap-filling {missing_frames} missing frame_idx values (max frame_idx: {max_frame_idx_vd1}, rows: {len(read_vd1_dfs)})")
+            read_vd1_dfs = fill_with_empty_rows_based_on_index(read_vd1_dfs, 'frame_idx')
+        # Validate monotonicity and check for duplicates
+        if read_vd1_dfs['frame_idx'].duplicated().any():
+            dup_count = read_vd1_dfs['frame_idx'].duplicated().sum()
+            print(f"   ⚠️ WARNING: VideoData1 has {dup_count} duplicate frame_idx values after gap-filling!")
+            print(f"      This should not happen. Frame_idx should be unique.")
+        if not read_vd1_dfs['frame_idx'].is_monotonic_increasing:
+            print(f"   ⚠️ WARNING: VideoData1 frame_idx is not monotonic after gap-filling!")
+            print(f"      This should not happen. Frame_idx should be strictly increasing.")
+        # Re-index to ensure consecutive [0, 1, 2, ..., N-1]
+        read_vd1_dfs = read_vd1_dfs.sort_values('frame_idx').reset_index(drop=True)
+        # Replace frame_idx with consecutive values to ensure [0, 1, 2, ..., N-1]
+        read_vd1_dfs['frame_idx'] = range(len(read_vd1_dfs))
+    
+    if len(read_vd2_dfs) > 0:
+        max_frame_idx_vd2 = read_vd2_dfs['frame_idx'].max()
+        expected_rows = max_frame_idx_vd2 + 1
+        if len(read_vd2_dfs) < expected_rows:
+            # Gap-fill missing frame_idx values
+            missing_frames = expected_rows - len(read_vd2_dfs)
+            if debug:
+                print(f"ℹ️ VideoData2: Gap-filling {missing_frames} missing frame_idx values (max frame_idx: {max_frame_idx_vd2}, rows: {len(read_vd2_dfs)})")
+            read_vd2_dfs = fill_with_empty_rows_based_on_index(read_vd2_dfs, 'frame_idx')
+        # Validate monotonicity and check for duplicates
+        if read_vd2_dfs['frame_idx'].duplicated().any():
+            dup_count = read_vd2_dfs['frame_idx'].duplicated().sum()
+            print(f"   ⚠️ WARNING: VideoData2 has {dup_count} duplicate frame_idx values after gap-filling!")
+            print(f"      This should not happen. Frame_idx should be unique.")
+        if not read_vd2_dfs['frame_idx'].is_monotonic_increasing:
+            print(f"   ⚠️ WARNING: VideoData2 frame_idx is not monotonic after gap-filling!")
+            print(f"      This should not happen. Frame_idx should be strictly increasing.")
+        # Re-index to ensure consecutive [0, 1, 2, ..., N-1]
+        read_vd2_dfs = read_vd2_dfs.sort_values('frame_idx').reset_index(drop=True)
+        # Replace frame_idx with consecutive values to ensure [0, 1, 2, ..., N-1]
+        read_vd2_dfs['frame_idx'] = range(len(read_vd2_dfs))
     if vd1_has_sleap: read_vd1_sleap_dfs = pd.concat(read_vd1_sleap_dfs).reset_index().drop(columns='index')
     if vd2_has_sleap: read_vd2_sleap_dfs = pd.concat(read_vd2_sleap_dfs).reset_index().drop(columns='index')
         
@@ -298,6 +355,14 @@ def load_videography_data(path, debug=False):
             print(f"      Original VideoData: {len(read_vd1_dfs)} rows")
             print(f"      After merge: {len(vd1_out)} rows")
             print(f"      Difference: {len(vd1_out) - len(read_vd1_dfs)} rows")
+        # CRITICAL FIX: Validate frame_idx after merge
+        if vd1_out['frame_idx'].duplicated().any():
+            dup_count = vd1_out['frame_idx'].duplicated().sum()
+            print(f"   ⚠️ WARNING: VideoData1 has {dup_count} duplicate frame_idx values after merge!")
+            print(f"      This should not happen. Frame_idx should be unique.")
+        if not vd1_out['frame_idx'].is_monotonic_increasing:
+            print(f"   ⚠️ WARNING: VideoData1 frame_idx is not monotonic after merge!")
+            print(f"      This should not happen. Frame_idx should be strictly increasing.")
     if vd2_has_sleap: 
         read_vd2_sleap_dfs_sorted = read_vd2_sleap_dfs.sort_values('frame_idx').reset_index(drop=True)
         vd2_out = pd.merge(read_vd2_dfs[['frame_idx', 'Seconds']], read_vd2_sleap_dfs_sorted, on='frame_idx', how='left')
@@ -307,6 +372,14 @@ def load_videography_data(path, debug=False):
             print(f"      Original VideoData: {len(read_vd2_dfs)} rows")
             print(f"      After merge: {len(vd2_out)} rows")
             print(f"      Difference: {len(vd2_out) - len(read_vd2_dfs)} rows")
+        # CRITICAL FIX: Validate frame_idx after merge
+        if vd2_out['frame_idx'].duplicated().any():
+            dup_count = vd2_out['frame_idx'].duplicated().sum()
+            print(f"   ⚠️ WARNING: VideoData2 has {dup_count} duplicate frame_idx values after merge!")
+            print(f"      This should not happen. Frame_idx should be unique.")
+        if not vd2_out['frame_idx'].is_monotonic_increasing:
+            print(f"   ⚠️ WARNING: VideoData2 frame_idx is not monotonic after merge!")
+            print(f"      This should not happen. Frame_idx should be strictly increasing.")
     
     if debug:
         print('\n' + '='*80)

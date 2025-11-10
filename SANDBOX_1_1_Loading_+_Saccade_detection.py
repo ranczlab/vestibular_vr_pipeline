@@ -99,6 +99,81 @@ _SLEAP_EYE_PREFIXES = (
     "Ellipse",
 )
 
+RESAMPLED_DROP_COLUMNS = [
+    "pre_saccade_mean_velocity",
+    "pre_saccade_position_drift",
+    "post_saccade_position_variance",
+    "post_saccade_position_change",
+    "saccade_start_position",
+    "saccade_end_position",
+    "Ellipse.Angle",
+    "Ellipse.Diameter",
+    "instance.score",
+    "left.x",
+    "left.y",
+    "left.score",
+    "right.x",
+    "right.y",
+    "right.score",
+    "p1.x",
+    "p1.y",
+    "p1.score",
+    "p2.x",
+    "p2.y",
+    "p2.score",
+    "p3.x",
+    "p3.y",
+    "p3.score",
+    "p4.x",
+    "p4.y",
+    "p4.score",
+    "p5.x",
+    "p5.y",
+    "p5.score",
+    "p6.x",
+    "p6.y",
+    "p6.score",
+    "p7.x",
+    "p7.y",
+    "p7.score",
+    "p8.x",
+    "p8.y",
+    "p8.score",
+    "center.x",
+    "center.y",
+    "center.score",
+]
+
+SACCADE_EXPORT_DROP_COLUMNS = {
+    "saccade_id",
+    "video_key",
+    "eye",
+    "direction",
+    "direction_label",
+    "saccade_start_time",
+    "saccade_end_time",
+    "saccade_peak_time",
+    "saccade_start_frame_idx",
+    "saccade_peak_frame_idx",
+    "saccade_end_frame_idx",
+    "saccade_peak_velocity",
+    "saccade_amplitude",
+    "saccade_displacement",
+    "saccade_duration",
+    "saccade_start_position",
+    "saccade_end_position",
+    "saccade_type",
+    "bout_id",
+    "bout_size",
+    "pre_saccade_mean_velocity",
+    "pre_saccade_position_drift",
+    "post_saccade_position_variance",
+    "post_saccade_position_change",
+    "classification_confidence",
+    "rule_based_class",
+    "rule_based_confidence",
+    "merge_frame_idx",
+}
 
 def _needs_eye_suffix(column: str) -> bool:
     """Return True if the column should be tagged as eye data during resampling."""
@@ -182,209 +257,77 @@ NaNs_removed = False
 # set up variables and load data
 ##########################################################################
 
-# User-editable friendly labels for plotting and console output:
+data_path = Path(
+    "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4/B6J2780-2025-04-28T13-10-18"
+)
+# data_path =
+# Path('/Users/rancze/Documents/Data/vestVR/Cohort1/No_iso_correction/Visual_mismatch_day3/B6J2717-2024-12-10T12-17-03') only has sleap data 1 for testing purposes
 
-# Set to True to enable debug output across all cells (file loading,
-# processing, etc.)
-debug = False
-plot_saccade_detection_QC = False
+### MOST commonly changed params for tuning
+video1_eye = "L" # Options: 'L' or 'R'; which eye does VideoData1 represent? ('L' = Left,'R' = Right)
+debug = True # Set to True to enable debug output and QC plots across all cells (file loading, processing, etc.)
+plot_QC_timeseries = True # plots pop up in new windows, code hangs until plot window is closed - issue for batch processing, but shouldn't be used there anyway 
+plot_saccade_detection_QC = False # plots pop up in new windows, code hangs until plot window is closed - issue for batch processing, but shouldn't be used there anyway 
+blink_instance_score_threshold = 3.8 # hard threshold for blink detection - frames with instance.score below this value are considered blinks
+k1 = 4.5  # adaptive saccade detction threshold (k * SD) for VideoData1 - 3-6 works well
+k2 = 4.5  # adaptive saccade detction threshold (k * SD) for VideoData1 - 3-6 works well
+refractory_period = 0.1  # seconds, refractory period for saccade detection
+bout_window = 1.5  # Time window (seconds) for grouping saccades into bouts
 
-# Options: 'L' or 'R'; which eye does VideoData1 represent? ('L' = Left,
-# 'R' = Right)
-video1_eye = "L"
-plot_QC_timeseries = False
-# for filtering out inferred points with low confidence, they get interpolated
-score_cutoff = 0.2
+### SLEAP raw data filtering 
+score_cutoff = 0.2 # for filtering out inferred points with low confidence, they get interpolated
 outlier_sd_threshold = 10  # for removing outliers from the data, they get interpolated
 
-# Common resampling rate (Hz) used for alignment with other modalities
-COMMON_RESAMPLED_RATE = 1000
-
-RESAMPLED_DROP_COLUMNS = [
-    "pre_saccade_mean_velocity",
-    "pre_saccade_position_drift",
-    "post_saccade_position_variance",
-    "post_saccade_position_change",
-    "saccade_start_position",
-    "saccade_end_position",
-    "Ellipse.Angle",
-    "Ellipse.Diameter",
-    "instance.score",
-    "left.x",
-    "left.y",
-    "left.score",
-    "right.x",
-    "right.y",
-    "right.score",
-    "p1.x",
-    "p1.y",
-    "p1.score",
-    "p2.x",
-    "p2.y",
-    "p2.score",
-    "p3.x",
-    "p3.y",
-    "p3.score",
-    "p4.x",
-    "p4.y",
-    "p4.score",
-    "p5.x",
-    "p5.y",
-    "p5.score",
-    "p6.x",
-    "p6.y",
-    "p6.score",
-    "p7.x",
-    "p7.y",
-    "p7.score",
-    "p8.x",
-    "p8.y",
-    "p8.score",
-    "center.x",
-    "center.y",
-    "center.score",
-]
-
-SACCADE_EXPORT_DROP_COLUMNS = {
-    "saccade_id",
-    "video_key",
-    "eye",
-    "direction",
-    "direction_label",
-    "saccade_start_time",
-    "saccade_end_time",
-    "saccade_peak_time",
-    "saccade_start_frame_idx",
-    "saccade_peak_frame_idx",
-    "saccade_end_frame_idx",
-    "saccade_peak_velocity",
-    "saccade_amplitude",
-    "saccade_displacement",
-    "saccade_duration",
-    "saccade_start_position",
-    "saccade_end_position",
-    "saccade_type",
-    "bout_id",
-    "bout_size",
-    "pre_saccade_mean_velocity",
-    "pre_saccade_position_drift",
-    "post_saccade_position_variance",
-    "post_saccade_position_change",
-    "classification_confidence",
-    "rule_based_class",
-    "rule_based_confidence",
-    "merge_frame_idx",
-}
-
-# Pupil diameter filter settings (Butterworth low-pass)
-pupil_filter_cutoff_hz = 10  # Hz
+pupil_filter_cutoff_hz = 10  # Hz, Pupil diameter filter settings (Butterworth low-pass)
 pupil_filter_order = 6
 
-# Parameters for blink detection
+### Parameters for blink detection
 min_blink_duration_ms = 50  # minimum blink duration in milliseconds
-# NOT CURRENTLY USED: merge window was removed to preserve good data
-# between separate blinks
-blink_merge_window_ms = 100
-# warn if blinks exceed this duration (in ms) - user should verify these
-# are real blinks
-long_blink_warning_ms = 2000
-# hard threshold for blink detection - frames with instance.score below
-# this value are considered blinks, calculated as 9 pupil points *0.2 +
-# left/right as 1
-blink_instance_score_threshold = 3.8
+blink_merge_window_ms = 100 # NOT CURRENTLY USED: merge window was removed to preserve good data between separate blinks
+long_blink_warning_ms = 2000 # warn if blinks exceed this duration (in ms) - user should verify these are real blinks
 
-# for saccades
-refractory_period = 0.1  # sec
-# Separate adaptive saccade threshold (k) for each video:
-k1 = 4.5  # for VideoData1 (L) - 3-6 works well
-k2 = 4.5  # for VideoData2 (R) - 3-6 works well
-
-# for adaptive saccade threshold - Number of standard deviations
-# (adjustable: 2-4 range works well)
-# to determine saccade onset and offset, i.e. o.2 is 20% of the peak velocity
-onset_offset_fraction = 0.2
+### params for for saccade detection and classification 
+onset_offset_fraction = 0.2 # to determine saccade onset and offset, i.e. 0.2 is 20% of the peak velocity
 
 # Saccade detection parameters (time-based for FPS independence)
-# Time (seconds) before threshold crossing to extract
-pre_saccade_window_time = 0.15
-# Time (seconds) after threshold crossing to extract
-post_saccade_window_time = 0.5
-# Start time (seconds) relative to threshold crossing for baseline window
-# (e.g., -0.1 = 100ms before)
-baseline_window_start_time = -0.06
-# End time (seconds) relative to threshold crossing for baseline window
-# (e.g., -0.02 = 20ms before)
-baseline_window_end_time = -0.02
-# Time (seconds) for position smoothing window (rolling median)
-smoothing_window_time = 0.08
-# Minimum peak width (seconds) for find_peaks - typically 5-20ms for saccades
-peak_width_time = 0.005
-# Minimum saccade segment duration (seconds) - segments shorter than this
-# are excluded (typically truncated at recording edges)
-min_saccade_duration = 0.2
 
-# Backward compatibility: old point-based parameters (deprecated, will be
-# converted automatically)
-n_before = None  # Deprecated: use pre_saccade_window_time instead
-n_after = None  # Deprecated: use post_saccade_window_time instead
-# Deprecated: use baseline_window_start_time and baseline_window_end_time
-# instead
-baseline_n_points = None
-# Deprecated: use baseline_window_start_time and baseline_window_end_time
-# instead
-baseline_window_time = None
-saccade_smoothing_window = None  # Deprecated: use smoothing_window_time instead
-saccade_peak_width = None  # Deprecated: use peak_width_time instead
+pre_saccade_window_time = 0.15 # Time (seconds) before threshold crossing to extract peri-saccade segment
+post_saccade_window_time = 0.5
+
+baseline_window_start_time = -0.06 # Start time (seconds) relative to threshold crossing for baseline window (e.g., -0.1 = 100ms before)
+baseline_window_end_time = -0.02 # End time (seconds) relative to threshold crossing for baseline window (e.g., -0.02 = 20ms before)
+smoothing_window_time = 0.08 # Time (seconds) for position smoothing window (rolling median)
+peak_width_time = 0.005 # Minimum peak width (seconds) for find_peaks - typically 5-20ms for saccades
+min_saccade_duration = 0.2 # Minimum saccade segment duration (seconds) - segments shorter than this are excluded (typically truncated at recording edges)
 
 # Parameters for orienting vs compensatory saccade classification
-# Set to True to classify saccades as orienting vs compensatory
-classify_orienting_compensatory = True
-bout_window = 1.5  # Time window (seconds) for grouping saccades into bouts
-# Time window (seconds) before saccade onset to analyze
-pre_saccade_window = 0.3
-# Maximum time (seconds) to extend post-saccade window until next saccade
-# for classification
-max_intersaccade_interval_for_classification = 5.0
-# Velocity threshold (px/s) for detecting pre-saccade drift
-pre_saccade_velocity_threshold = 50.0
-# Position drift threshold (px) before saccade for compensatory classification
-pre_saccade_drift_threshold = 10.0
-# Position variance threshold (px²) after saccade for orienting classification
-post_saccade_variance_threshold = 100.0
-# Position change threshold (% of saccade amplitude) - if post-saccade
-# change > amplitude * this%, classify as compensatory
-post_saccade_position_change_threshold_percent = 50.0
+classify_orienting_compensatory = True # this is the rule-based, not ML based, we generally use it 
+pre_saccade_window = 0.3 # Time window (seconds) before saccade onset to analyze
+max_intersaccade_interval_for_classification = 1.0 # Maximum time (seconds) to extend post-saccade window until next saccade for classification for feature extraction
+pre_saccade_velocity_threshold = 50.0 # Velocity threshold (px/s) for detecting pre-saccade drift for feature extraction
+pre_saccade_drift_threshold = 10.0 # Position drift threshold (px) before saccade for compensatory classification for feature extraction
+post_saccade_variance_threshold = 100.0 # Position variance threshold (px²) after saccade for orienting classification for feature extraction
+post_saccade_position_change_threshold_percent = 50.0 # Position change threshold (% of saccade amplitude) - if post-saccade change > amplitude * this%, classify as compensatory for feature extraction
 
-# Adaptive threshold parameters (percentile-based)
-# Set to True to use adaptive thresholds based on feature distributions,
-# False to use fixed thresholds
+# Adaptive threshold parameters (percentile-based) for 
+# Set to True to use adaptive thresholds based on feature distributions, False to use fixed thresholds
 use_adaptive_thresholds = True
-# Percentile for pre-saccade velocity threshold (upper percentile for
-# compensatory detection)
-adaptive_percentile_pre_velocity = 75
-# Percentile for pre-saccade drift threshold (upper percentile for
-# compensatory detection)
-adaptive_percentile_pre_drift = 75
-# Percentile for post-saccade variance threshold (lower percentile for
-# orienting detection - low variance = stable)
-adaptive_percentile_post_variance = 25
+adaptive_percentile_pre_velocity = 75 # Percentile for pre-saccade velocity threshold (upper percentile for compensatory detection)
+adaptive_percentile_pre_drift = 75 # Percentile for pre-saccade drift threshold (upper percentile for compensatory detection)
+adaptive_percentile_post_variance = 25 # Percentile for post-saccade variance threshold (lower percentile for orienting detection - low variance = stable)
+
+COMMON_RESAMPLED_RATE = 1000 # Common resampling rate (Hz) used for alignment with other modalities, like photometry, HARP streams, etc. 
+
+
 
 # Automatically assign eye for VideoData2
 video2_eye = "R" if video1_eye == "L" else "L"
-# Map for full names (used in labels)
-eye_fullname = {"L": "Left", "R": "Right"}
-# Update VIDEO_LABELS based on selection
-VIDEO_LABELS = {
+eye_fullname = {"L": "Left", "R": "Right"} # Map for full names (used in labels)
+VIDEO_LABELS = { # Update VIDEO_LABELS based on selection
     "VideoData1": f"VideoData1 ({video1_eye}: {eye_fullname[video1_eye]})",
     "VideoData2": f"VideoData2 ({video2_eye}: {eye_fullname[video2_eye]})",
 }
 
-data_path = Path(
-    "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4/B6J2782-2025-04-28T14-22-03"
-)
-# data_path =
-# Path('/Users/rancze/Documents/Data/vestVR/Cohort1/No_iso_correction/Visual_mismatch_day3/B6J2717-2024-12-10T12-17-03')
-# # only has sleap data 1
 save_path = data_path.parent / f"{data_path.name}_processedData"
 qc_debug_dir = save_path / "QC_and_debug"
 qc_debug_dir.mkdir(parents=True, exist_ok=True)
@@ -1207,7 +1150,12 @@ if (
         for i, bout in enumerate(blink_bouts_v1, 1):
             start_idx = bout["start_idx"]
             end_idx = bout["end_idx"]
-            if "frame_idx" in VideoData1.columns:
+            # CRITICAL FIX: Use stored frame_idx values if available (from merge_nearby_blinks)
+            if "start_frame_idx" in bout and "end_frame_idx" in bout:
+                start_frame = int(bout["start_frame_idx"]) if pd.notna(bout["start_frame_idx"]) else start_idx
+                end_frame = int(bout["end_frame_idx"]) if pd.notna(bout["end_frame_idx"]) else end_idx
+            elif "frame_idx" in VideoData1.columns:
+                # Fallback: look up from DataFrame (may be wrong if DataFrame was modified)
                 start_frame = int(VideoData1["frame_idx"].iloc[start_idx])
                 end_frame = int(VideoData1["frame_idx"].iloc[end_idx])
             else:
@@ -1228,7 +1176,12 @@ if (
         for i, bout in enumerate(blink_bouts_v2, 1):
             start_idx = bout["start_idx"]
             end_idx = bout["end_idx"]
-            if "frame_idx" in VideoData2.columns:
+            # CRITICAL FIX: Use stored frame_idx values if available (from merge_nearby_blinks)
+            if "start_frame_idx" in bout and "end_frame_idx" in bout:
+                start_frame = int(bout["start_frame_idx"]) if pd.notna(bout["start_frame_idx"]) else start_idx
+                end_frame = int(bout["end_frame_idx"]) if pd.notna(bout["end_frame_idx"]) else end_idx
+            elif "frame_idx" in VideoData2.columns:
+                # Fallback: look up from DataFrame (may be wrong if DataFrame was modified)
                 start_frame = int(VideoData2["frame_idx"].iloc[start_idx])
                 end_frame = int(VideoData2["frame_idx"].iloc[end_idx])
             else:
@@ -1375,16 +1328,21 @@ if "VideoData1_Has_Sleap" in globals() and VideoData1_Has_Sleap:
             manual_blinks_for_csv = manual_blinks_v1
 
         for i, blink in enumerate(blink_segments_v1, 1):
-            start_idx = blink["start_idx"]
-            end_idx = blink["end_idx"]
-
-            # Get actual frame numbers from frame_idx column
-            if "frame_idx" in VideoData1.columns:
-                first_frame = int(VideoData1["frame_idx"].iloc[start_idx])
-                last_frame = int(VideoData1["frame_idx"].iloc[end_idx])
+            # CRITICAL FIX: Use stored frame_idx values from blink detection
+            # These were captured before any DataFrame modifications (e.g., merge operations)
+            if "start_frame_idx" in blink and "end_frame_idx" in blink:
+                first_frame = int(blink["start_frame_idx"]) if pd.notna(blink["start_frame_idx"]) else blink["start_idx"]
+                last_frame = int(blink["end_frame_idx"]) if pd.notna(blink["end_frame_idx"]) else blink["end_idx"]
             else:
-                first_frame = start_idx
-                last_frame = end_idx
+                # Fallback to old method if frame_idx not stored (for backward compatibility)
+                start_idx = blink["start_idx"]
+                end_idx = blink["end_idx"]
+                if "frame_idx" in VideoData1.columns:
+                    first_frame = int(VideoData1["frame_idx"].iloc[start_idx])
+                    last_frame = int(VideoData1["frame_idx"].iloc[end_idx])
+                else:
+                    first_frame = start_idx
+                    last_frame = end_idx
 
             # Check if this blink matches a manual one (using function from
             # processing_functions)
@@ -1419,16 +1377,21 @@ if "VideoData2_Has_Sleap" in globals() and VideoData2_Has_Sleap:
             manual_blinks_for_csv = manual_blinks_v2
 
         for i, blink in enumerate(blink_segments_v2, 1):
-            start_idx = blink["start_idx"]
-            end_idx = blink["end_idx"]
-
-            # Get actual frame numbers from frame_idx column
-            if "frame_idx" in VideoData2.columns:
-                first_frame = int(VideoData2["frame_idx"].iloc[start_idx])
-                last_frame = int(VideoData2["frame_idx"].iloc[end_idx])
+            # CRITICAL FIX: Use stored frame_idx values from blink detection
+            # These were captured before any DataFrame modifications (e.g., merge operations)
+            if "start_frame_idx" in blink and "end_frame_idx" in blink:
+                first_frame = int(blink["start_frame_idx"]) if pd.notna(blink["start_frame_idx"]) else blink["start_idx"]
+                last_frame = int(blink["end_frame_idx"]) if pd.notna(blink["end_frame_idx"]) else blink["end_idx"]
             else:
-                first_frame = start_idx
-                last_frame = end_idx
+                # Fallback to old method if frame_idx not stored (for backward compatibility)
+                start_idx = blink["start_idx"]
+                end_idx = blink["end_idx"]
+                if "frame_idx" in VideoData2.columns:
+                    first_frame = int(VideoData2["frame_idx"].iloc[start_idx])
+                    last_frame = int(VideoData2["frame_idx"].iloc[end_idx])
+                else:
+                    first_frame = start_idx
+                    last_frame = end_idx
 
             # Check if this blink matches a manual one (using function from
             # processing_functions)
@@ -2297,6 +2260,15 @@ if VideoData1_Has_Sleap is True:
     else:
         VideoData1 = VideoData1.merge(SleapVideoData1, on="Seconds", how="outer")
         del SleapVideoData1
+        # CRITICAL FIX: Validate frame_idx after merge
+        if "frame_idx" in VideoData1.columns:
+            if VideoData1['frame_idx'].duplicated().any():
+                dup_count = VideoData1['frame_idx'].duplicated().sum()
+                print(f"   ⚠️ WARNING: VideoData1 has {dup_count} duplicate frame_idx values after merge with SleapVideoData1!")
+                print(f"      This should not happen. Frame_idx should be unique.")
+            if not VideoData1['frame_idx'].is_monotonic_increasing:
+                print(f"   ⚠️ WARNING: VideoData1 frame_idx is not monotonic after merge with SleapVideoData1!")
+                print(f"      This should not happen. Frame_idx should be strictly increasing.")
 
 if VideoData2_Has_Sleap is True:
     if VideoData2["Seconds"].equals(SleapVideoData2["Seconds"]) is False:
@@ -2306,6 +2278,15 @@ if VideoData2_Has_Sleap is True:
     else:
         VideoData2 = VideoData2.merge(SleapVideoData2, on="Seconds", how="outer")
         del SleapVideoData2
+        # CRITICAL FIX: Validate frame_idx after merge
+        if "frame_idx" in VideoData2.columns:
+            if VideoData2['frame_idx'].duplicated().any():
+                dup_count = VideoData2['frame_idx'].duplicated().sum()
+                print(f"   ⚠️ WARNING: VideoData2 has {dup_count} duplicate frame_idx values after merge with SleapVideoData2!")
+                print(f"      This should not happen. Frame_idx should be unique.")
+            if not VideoData2['frame_idx'].is_monotonic_increasing:
+                print(f"   ⚠️ WARNING: VideoData2 frame_idx is not monotonic after merge with SleapVideoData2!")
+                print(f"      This should not happen. Frame_idx should be strictly increasing.")
 gc.collect()
 None
 
