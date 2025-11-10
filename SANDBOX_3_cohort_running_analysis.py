@@ -18,7 +18,6 @@
 #
 # This notebook analyzes multiple cohort behavioral analysis CSV files (merged together) and generates summary plots showing:
 # - Running velocity (cm/s) with average and SEM per experiment day
-# - Total run distance per experiment day **normalized by session duration (m/minute)**
 # - Time spent running (percentage) per experiment day
 # - Turning velocity (deg/s) with average and SEM per experiment day
 # - Total turn distance per experiment day **normalized by session duration (deg/minute)**
@@ -56,8 +55,8 @@ plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans']
 # Paths to cohort CSV files (can specify multiple cohorts)
 # CSV files should be located 2 levels above _processedData folder
 cohort_csv_paths = [
-    Path('/Users/nora/Desktop/for_poster/cohort_1/cohort_behavioral_analysis.csv').expanduser(),
-    Path('/Users/nora/Desktop/for_poster/cohort_3/cohort_behavioral_analysis.csv').expanduser(),
+    Path('/home/ikharitonov/RANCZLAB-NAS/data/ONIX/20250409_Cohort3_rotation/cohort_behavioral_analysis.csv').expanduser(),
+    # Path('/Users/nora/Desktop/for_poster/cohort_3/cohort_behavioral_analysis.csv').expanduser(),
     # Add more cohort CSV paths here as needed
     # Path('/path/to/cohort2/cohort_behavioral_analysis.csv').expanduser(),
 ]
@@ -174,12 +173,19 @@ if total_time_col is not None:
     else:
         print("⚠️ Warning: 'running_distance_travelled_m' column not found")
     
-    # Normalize turning distance: degrees per minute (note: turning_distance_turned_m is actually in degrees)
-    if 'turning_distance_turned_m' in df.columns:
-        df['turning_distance_turned_deg_per_minute'] = df['turning_distance_turned_m'] / df['total_time_minutes']
+    # Normalize turning distance: degrees per minute (values already stored in degrees)
+    turning_distance_col = None
+    if 'turning_distance_turned_deg' in df.columns:
+        turning_distance_col = 'turning_distance_turned_deg'
+    elif 'turning_distance_turned_m' in df.columns:
+        turning_distance_col = 'turning_distance_turned_m'
+        print("⚠️ Detected legacy column 'turning_distance_turned_m'; treating values as degrees. Please regenerate cohort CSVs to use '_deg'.")
+
+    if turning_distance_col is not None:
+        df['turning_distance_turned_deg_per_minute'] = df[turning_distance_col] / df['total_time_minutes']
         print("✅ Created normalized turning distance (deg/minute)")
     else:
-        print("⚠️ Warning: 'turning_distance_turned_m' column not found")
+        print("⚠️ Warning: turning distance column not found")
     
     # Display summary of session durations
     print(f"\n📊 Session duration summary (minutes):")
@@ -193,7 +199,7 @@ if total_time_col is not None:
 else:
     # Create dummy normalized columns if normalization not possible
     df['running_distance_travelled_m_per_minute'] = df.get('running_distance_travelled_m', np.nan)
-    df['turning_distance_turned_deg_per_minute'] = df.get('turning_distance_turned_m', np.nan)
+    df['turning_distance_turned_deg_per_minute'] = df.get('turning_distance_turned_deg', df.get('turning_distance_turned_m', np.nan))
     print("⚠️ Using non-normalized distances (no time normalization available)")
 
 # Separate visual mismatch experiments if configured
@@ -217,18 +223,21 @@ else:
     df_visual_mismatch = pd.DataFrame()
     print(f"\n⚠️ Visual mismatch exclusion is disabled - all experiments will be included in main analysis")
 
-# Check required columns
-required_cols = ['Animal_ID', 'Experiment_Day', 'running_velocity_avg_cm_per_s', 
-                 'running_distance_travelled_m_per_minute', 'running_time_percentage',
-                 'turning_velocity_avg_deg_per_s', 'turning_distance_turned_deg_per_minute', 
-                 'turning_time_percentage']
-missing_cols = [col for col in required_cols if col not in df_main.columns]
+# Check required columns (only if df_main is not empty)
+if len(df_main) > 0:
+    required_cols = ['Animal_ID', 'Experiment_Day', 'running_velocity_avg_cm_per_s', 
+                     'running_distance_travelled_m_per_minute', 'running_time_percentage',
+                     'turning_velocity_avg_deg_per_s', 'turning_distance_turned_deg_per_minute', 
+                     'turning_time_percentage']
+    missing_cols = [col for col in required_cols if col not in df_main.columns]
 
-if missing_cols:
-    print(f"⚠️ Warning: Missing columns: {missing_cols}")
-    print(f"Available columns: {list(df_main.columns)}")
+    if missing_cols:
+        print(f"⚠️ Warning: Missing columns in df_main: {missing_cols}")
+        print(f"Available columns: {list(df_main.columns)}")
+    else:
+        print("\n✅ All required columns found (including normalized distances)")
 else:
-    print("\n✅ All required columns found (including normalized distances)")
+    print("\n⚠️ df_main is empty - all experiments are visual mismatch (will be analyzed separately)")
 
 
 # %%
@@ -269,17 +278,21 @@ def calculate_cohort_stats(df: pd.DataFrame, experiment_day: str) -> Dict:
     return stats
 
 # Calculate stats for all experiment days (excluding visual mismatch if configured)
-experiment_days = sorted(df_main['Experiment_Day'].unique())
-cohort_stats = []
+if len(df_main) > 0:
+    experiment_days = sorted(df_main['Experiment_Day'].unique())
+    cohort_stats = []
 
-for day in experiment_days:
-    stats = calculate_cohort_stats(df_main, day)
-    if stats:
-        cohort_stats.append(stats)
+    for day in experiment_days:
+        stats = calculate_cohort_stats(df_main, day)
+        if stats:
+            cohort_stats.append(stats)
 
-cohort_stats_df = pd.DataFrame(cohort_stats)
-print("\nCohort Summary Statistics (Mean ± SEM) - Normalized by session duration:")
-print(cohort_stats_df.to_string(index=False))
+    cohort_stats_df = pd.DataFrame(cohort_stats)
+    print("\nCohort Summary Statistics (Mean ± SEM) - Normalized by session duration:")
+    print(cohort_stats_df.to_string(index=False))
+else:
+    cohort_stats_df = pd.DataFrame()
+    print("\n⚠️ No non-visual mismatch experiments to calculate cohort stats")
 
 
 # %%
@@ -299,11 +312,15 @@ def assign_mouse_colors(df: pd.DataFrame) -> Dict[str, str]:
     mouse_colors = {mouse: colors[i] for i, mouse in enumerate(unique_mice)}
     return mouse_colors
 
-mouse_colors = assign_mouse_colors(df_main)
-print(f"✅ Assigned colors to {len(mouse_colors)} mice using gnuplot2 palette")
-print(f"\nMouse colors:")
-for mouse, color in list(mouse_colors.items())[:10]:  # Show first 10
-    print(f"  {mouse}: {color}")
+if len(df_main) > 0:
+    mouse_colors = assign_mouse_colors(df_main)
+    print(f"✅ Assigned colors to {len(mouse_colors)} mice using gnuplot2 palette")
+    print(f"\nMouse colors:")
+    for mouse, color in list(mouse_colors.items())[:10]:  # Show first 10
+        print(f"  {mouse}: {color}")
+else:
+    mouse_colors = {}
+    print(f"⚠️ No mice in df_main to assign colors")
 
 
 # %%
@@ -478,32 +495,38 @@ def plot_cohort_behavioral_analysis(df: pd.DataFrame, cohort_stats_df: pd.DataFr
 
 # Create the plot (using main dataframe, excluding visual mismatch if configured)
 # Use simplified filename based on cohort directory names
-cohort_str = "_".join(cohort_names)
-plot_path = output_dir / f"{cohort_str}_averages.svg"
-plot_cohort_behavioral_analysis(df_main, cohort_stats_df, mouse_colors, plot_path)
+if len(df_main) > 0 and len(cohort_stats_df) > 0:
+    cohort_str = "_".join(cohort_names)
+    plot_path = output_dir / f"{cohort_str}_averages.svg"
+    plot_cohort_behavioral_analysis(df_main, cohort_stats_df, mouse_colors, plot_path)
+else:
+    print("⚠️ Skipping main plot generation (no non-visual mismatch data available)")
 
 
 # %%
 # Save summary statistics to CSV
 #----------------------------
-# Use simplified filename based on cohort directory names
-cohort_str = "_".join(cohort_names)
-summary_csv_path = output_dir / f"{cohort_str}_averages.csv"
-cohort_stats_df.to_csv(summary_csv_path, index=False)
-print(f"✅ Saved summary statistics to: {summary_csv_path}")
+if len(cohort_stats_df) > 0:
+    # Use simplified filename based on cohort directory names
+    cohort_str = "_".join(cohort_names)
+    summary_csv_path = output_dir / f"{cohort_str}_averages.csv"
+    cohort_stats_df.to_csv(summary_csv_path, index=False)
+    print(f"✅ Saved summary statistics to: {summary_csv_path}")
 
-# Display the summary
-print("\nSummary Statistics (Mean ± SEM) - Combined across all cohorts:")
-print(cohort_stats_df.to_string(index=False))
+    # Display the summary
+    print("\nSummary Statistics (Mean ± SEM) - Combined across all cohorts:")
+    print(cohort_stats_df.to_string(index=False))
 
-# Also show breakdown by cohort if multiple cohorts
-if len(cohort_names) > 1:
-    print(f"\n\nBreakdown by Cohort and Experiment Day:")
-    for cohort in cohort_names:
-        cohort_data = df_main[df_main['Cohort'] == cohort]
-        print(f"\n{cohort}:")
-        print(f"  Number of animals: {cohort_data['Animal_ID'].nunique()}")
-        print(f"  Experiment days: {sorted(cohort_data['Experiment_Day'].unique())}")
+    # Also show breakdown by cohort if multiple cohorts
+    if len(cohort_names) > 1 and len(df_main) > 0:
+        print(f"\n\nBreakdown by Cohort and Experiment Day:")
+        for cohort in cohort_names:
+            cohort_data = df_main[df_main['Cohort'] == cohort]
+            print(f"\n{cohort}:")
+            print(f"  Number of animals: {cohort_data['Animal_ID'].nunique()}")
+            print(f"  Experiment days: {sorted(cohort_data['Experiment_Day'].unique())}")
+else:
+    print("⚠️ No summary statistics to save (no non-visual mismatch data)")
 
 
 # %%
@@ -538,29 +561,35 @@ if EXCLUDE_VISUAL_MISMATCH and len(df_visual_mismatch) > 0:
                 df_visual_mismatch['first_block_running_distance_travelled_m'] / 
                 df_visual_mismatch['first_block_total_time_minutes']
             )
-        if 'first_block_turning_distance_turned_m' in df_visual_mismatch.columns:
-            df_visual_mismatch['first_block_turning_distance_deg_per_minute'] = (
-                df_visual_mismatch['first_block_turning_distance_turned_m'] / 
-                df_visual_mismatch['first_block_total_time_minutes']
-            )
+    first_block_turn_col = None
+    if 'first_block_turning_distance_turned_deg' in df_visual_mismatch.columns:
+        first_block_turn_col = 'first_block_turning_distance_turned_deg'
+    elif 'first_block_turning_distance_turned_m' in df_visual_mismatch.columns:
+        first_block_turn_col = 'first_block_turning_distance_turned_m'
+        print("⚠️ Detected legacy column 'first_block_turning_distance_turned_m'; treating values as degrees. Please regenerate cohort CSVs to use '_deg'.")
+
+    if first_block_turn_col is not None:
+        df_visual_mismatch['first_block_turning_distance_deg_per_minute'] = (
+            df_visual_mismatch[first_block_turn_col] / 
+            df_visual_mismatch['first_block_total_time_minutes']
+        )
     
     # For last_block - calculate time and normalize distances
-    # First, ensure we have last_block time
-    if 'last_block_running_time_seconds' in df_visual_mismatch.columns:
-        # Use last_block_running_time_seconds directly if available
-        df_visual_mismatch['last_block_total_time_minutes'] = df_visual_mismatch['last_block_running_time_seconds'] / 60.0
-    elif 'first_block_running_total_time_seconds' in df_visual_mismatch.columns and 'running_total_time_seconds' in df_visual_mismatch.columns:
-        # Calculate as difference between total and first block
+    # Note: With fixed SANDBOX_2, last_block_running_total_time_seconds is the actual duration of last block only
+    if 'last_block_running_total_time_seconds' in df_visual_mismatch.columns:
+        # Use last_block duration directly (no longer cumulative after SANDBOX_2 fix)
         df_visual_mismatch['last_block_total_time_minutes'] = (
-            (df_visual_mismatch['running_total_time_seconds'] - 
-             df_visual_mismatch['first_block_running_total_time_seconds']) / 60.0
+            df_visual_mismatch['last_block_running_total_time_seconds'] / 60.0
         ).clip(lower=0.1)  # Avoid division by zero
+        print(f"✅ Using last_block duration directly from data")
     else:
-        # Fallback: assume equal time distribution
+        # Fallback: use first_block duration as estimate
         if 'first_block_running_total_time_seconds' in df_visual_mismatch.columns:
             df_visual_mismatch['last_block_total_time_minutes'] = df_visual_mismatch['first_block_running_total_time_seconds'] / 60.0
+            print("⚠️ Warning: Using first_block duration as fallback for last_block")
         else:
             df_visual_mismatch['last_block_total_time_minutes'] = 5.0  # Default fallback
+            print("⚠️ Warning: Using default 5 minutes for last_block duration")
     
     # Calculate last_block running distance - prioritize direct column, then calculation
     if 'last_block_running_distance_travelled_m' in df_visual_mismatch.columns:
@@ -582,23 +611,41 @@ if EXCLUDE_VISUAL_MISMATCH and len(df_visual_mismatch) > 0:
         df_visual_mismatch['last_block_running_distance_m_per_minute'] = df_visual_mismatch['last_block_running_distance_m_per_minute'].clip(lower=0)
     
     # Calculate last_block turning distance - prioritize direct column, then calculation
-    if 'last_block_turning_distance_turned_m' in df_visual_mismatch.columns:
+    last_block_turn_col = None
+    if 'last_block_turning_distance_turned_deg' in df_visual_mismatch.columns:
+        last_block_turn_col = 'last_block_turning_distance_turned_deg'
+    elif 'last_block_turning_distance_turned_m' in df_visual_mismatch.columns:
+        last_block_turn_col = 'last_block_turning_distance_turned_m'
+        print("⚠️ Detected legacy column 'last_block_turning_distance_turned_m'; treating values as degrees. Please regenerate cohort CSVs to use '_deg'.")
+
+    if last_block_turn_col is not None:
         # Use direct last_block distance column
         df_visual_mismatch['last_block_turning_distance_deg_per_minute'] = (
-            df_visual_mismatch['last_block_turning_distance_turned_m'] / 
+            df_visual_mismatch[last_block_turn_col] / 
             df_visual_mismatch['last_block_total_time_minutes']
         )
-    elif all(col in df_visual_mismatch.columns for col in ['turning_distance_turned_m', 'first_block_turning_distance_turned_m']):
+    else:
         # Calculate as difference between total and first block
-        last_block_turn_distance = (
-            df_visual_mismatch['turning_distance_turned_m'] - 
-            df_visual_mismatch['first_block_turning_distance_turned_m']
-        )
-        df_visual_mismatch['last_block_turning_distance_deg_per_minute'] = (
-            last_block_turn_distance / df_visual_mismatch['last_block_total_time_minutes']
-        )
-        # Handle negative values (shouldn't happen, but safety check)
-        df_visual_mismatch['last_block_turning_distance_deg_per_minute'] = df_visual_mismatch['last_block_turning_distance_deg_per_minute'].clip(lower=0)
+        total_turn_col = None
+        first_turn_col = None
+        if all(col in df_visual_mismatch.columns for col in ['turning_distance_turned_deg', 'first_block_turning_distance_turned_deg']):
+            total_turn_col = 'turning_distance_turned_deg'
+            first_turn_col = 'first_block_turning_distance_turned_deg'
+        elif all(col in df_visual_mismatch.columns for col in ['turning_distance_turned_m', 'first_block_turning_distance_turned_m']):
+            total_turn_col = 'turning_distance_turned_m'
+            first_turn_col = 'first_block_turning_distance_turned_m'
+            print("⚠️ Detected legacy turning distance columns ('*_m'); treating values as degrees. Please regenerate cohort CSVs to use '_deg'.")
+
+        if total_turn_col and first_turn_col:
+            last_block_turn_distance = (
+                df_visual_mismatch[total_turn_col] - 
+                df_visual_mismatch[first_turn_col]
+            )
+            df_visual_mismatch['last_block_turning_distance_deg_per_minute'] = (
+                last_block_turn_distance / df_visual_mismatch['last_block_total_time_minutes']
+            )
+            # Handle negative values (shouldn't happen, but safety check)
+            df_visual_mismatch['last_block_turning_distance_deg_per_minute'] = df_visual_mismatch['last_block_turning_distance_deg_per_minute'].clip(lower=0)
     
     # Debug: Check if all columns were created
     print(f"\n✅ Prepared visual mismatch data for {len(df_visual_mismatch)} rows")
@@ -648,43 +695,29 @@ if EXCLUDE_VISUAL_MISMATCH and len(df_visual_mismatch) > 0:
     if 'last_block_running_distance_m_per_minute' not in df_visual_mismatch.columns:
         # This shouldn't happen if Cell 9 ran correctly, but handle it just in case
         print("⚠️ Warning: last_block distances not found, attempting to calculate...")
-        # Use the same logic as Cell 9
-        if 'last_block_running_time_seconds' in df_visual_mismatch.columns:
-            if 'first_block_running_total_time_seconds' in df_visual_mismatch.columns and 'running_total_time_seconds' in df_visual_mismatch.columns:
-                df_visual_mismatch['last_block_total_time_minutes'] = (
-                    (df_visual_mismatch['running_total_time_seconds'] - 
-                     df_visual_mismatch['first_block_running_total_time_seconds']) / 60.0
-                ).clip(lower=0.1)
-            else:
-                df_visual_mismatch['last_block_total_time_minutes'] = df_visual_mismatch['last_block_running_time_seconds'] / 60.0
+        # Use the same logic as Cell 9 (simplified after SANDBOX_2 fix)
+        if 'last_block_running_total_time_seconds' in df_visual_mismatch.columns:
+            df_visual_mismatch['last_block_total_time_minutes'] = (
+                df_visual_mismatch['last_block_running_total_time_seconds'] / 60.0
+            ).clip(lower=0.1)
             
             if 'last_block_running_distance_travelled_m' in df_visual_mismatch.columns:
                 df_visual_mismatch['last_block_running_distance_m_per_minute'] = (
                     df_visual_mismatch['last_block_running_distance_travelled_m'] / 
                     df_visual_mismatch['last_block_total_time_minutes']
                 )
-            elif all(col in df_visual_mismatch.columns for col in ['running_distance_travelled_m', 'first_block_running_distance_travelled_m']):
-                last_block_distance = (
-                    df_visual_mismatch['running_distance_travelled_m'] - 
-                    df_visual_mismatch['first_block_running_distance_travelled_m']
-                )
-                df_visual_mismatch['last_block_running_distance_m_per_minute'] = (
-                    last_block_distance / df_visual_mismatch['last_block_total_time_minutes']
-                ).clip(lower=0)
             
-            if 'last_block_turning_distance_turned_m' in df_visual_mismatch.columns:
+            if 'last_block_turning_distance_turned_deg' in df_visual_mismatch.columns:
+                df_visual_mismatch['last_block_turning_distance_deg_per_minute'] = (
+                    df_visual_mismatch['last_block_turning_distance_turned_deg'] / 
+                    df_visual_mismatch['last_block_total_time_minutes']
+                )
+            elif 'last_block_turning_distance_turned_m' in df_visual_mismatch.columns:
+                print("⚠️ Detected legacy column 'last_block_turning_distance_turned_m'; treating values as degrees. Please regenerate cohort CSVs to use '_deg'.")
                 df_visual_mismatch['last_block_turning_distance_deg_per_minute'] = (
                     df_visual_mismatch['last_block_turning_distance_turned_m'] / 
                     df_visual_mismatch['last_block_total_time_minutes']
                 )
-            elif all(col in df_visual_mismatch.columns for col in ['turning_distance_turned_m', 'first_block_turning_distance_turned_m']):
-                last_block_turn_distance = (
-                    df_visual_mismatch['turning_distance_turned_m'] - 
-                    df_visual_mismatch['first_block_turning_distance_turned_m']
-                )
-                df_visual_mismatch['last_block_turning_distance_deg_per_minute'] = (
-                    last_block_turn_distance / df_visual_mismatch['last_block_total_time_minutes']
-                ).clip(lower=0)
     
     # Create a long-format dataframe for easier plotting (first_block vs last_block)
     vm_melted_data = []
