@@ -81,21 +81,56 @@ EVENT_SUFFIXES: List[str] = [
 # Optional subset of mice to analyse (use [] to include every mouse found).
 SELECTED_MICE: List[str] = []
 
-# Columns and time windows used for the velocity check.
+# Data columns
 TIME_COLUMN = "Time (s)"
-VELOCITY_COLUMN = "Motor_Velocity" #"Motor_Velocity_Baseline"
-RUNNING_COLUMN = "Velocity_0X" #"Velocity_0X_Baseline"
-PRE_WINDOW = (-1.0, 0.0)   # seconds relative to alignment (before 0)
-POST_WINDOW = (0.0, 1.0)   # seconds relative to alignment (after 0)
+VELOCITY_COLUMN = "Motor_Velocity"  # Motor turning velocity (deg/s)
+RUNNING_COLUMN = "Velocity_0X"      # Forward running velocity (m/s)
 
-# Threshold in deg/s to treat near-zero averages as no turn (avoid noisy sign flips).
-ZERO_THRESHOLD = 1e-2 #FIXME where is this used?
+# ==================================================================================
+# TIME WINDOW CONFIGURATION
+# ==================================================================================
+# All windows are (start, end) tuples in seconds, relative to turn onset (t=0)
+# 
+# USAGE GUIDE:
+# - BASELINE_WINDOW: Pre-halt baseline for direction change detection & normalization
+# - ANALYSIS_WINDOW_MEAN_PEAK: ⚙️ PRIMARY CONFIGURABLE WINDOW ⚙️
+#   Controls the analysis window for:
+#   • Post-halt mean velocity (turning & running)
+#   • Peak velocity (turning & running)
+#   • AUC calculation
+#   Default: (0.0, 1.0) = analyze the first 1 second after halt onset
+# - EXTENDED_RESPONSE_WINDOW: For mean absolute velocity (combines left/right turns)
+# - FULL_RESPONSE_WINDOW: For exponential decay fitting (longer window needed)
+# - TEMPORAL_DYNAMICS_WINDOWS: Fine-grained windows for temporal pattern analysis
+# ==================================================================================
 
-# Windows used for timing and magnitude metrics.
-PEAK_WINDOW = (0.0, 1.0)     #FIXME THIS GETS OVERWRITTEN LATER ANYWAY TO 0-1s (as shown in plots)
-AUC_WINDOW = (0.0, 1.0)      # integration window for turn area (s)
-DECAY_FIT_WINDOW = (0.0, 3.0)  # window (s) used to estimate decay time constant
-LATENCY_FRACTION = 0.5       #FIXME deprecated but needs to stay here??
+# Baseline (pre-turn) window
+BASELINE_WINDOW = (-1.0, 0.0)  # Used for: direction detection, baseline normalization
+
+# Post-turn response windows (used for primary metrics)
+# ⚙️ USER CONFIGURABLE: Change this window to control mean and peak velocity analysis
+ANALYSIS_WINDOW_MEAN_PEAK = (0.0, 1.0)  # Window for post-halt mean & peak velocity analysis
+
+EARLY_RESPONSE_WINDOW = ANALYSIS_WINDOW_MEAN_PEAK  # Used for: peak velocity, AUC, post-turn mean
+EXTENDED_RESPONSE_WINDOW = (0.0, 2.0)   # Used for: mean absolute velocity (combines left/right)
+FULL_RESPONSE_WINDOW = (0.0, 3.0)       # Used for: exponential decay fitting
+
+# Fine-grained temporal dynamics windows (used for alternative metrics)
+TEMPORAL_EARLY_WINDOW = (0.0, 0.5)   # Immediate response phase
+TEMPORAL_MID_WINDOW = (0.5, 1.0)     # Mid response phase
+TEMPORAL_LATE_WINDOW = (1.0, 2.0)    # Sustained response phase
+TEMPORAL_FULL_WINDOW = (0.0, 2.0)    # Full temporal analysis window
+
+# Legacy compatibility (kept for function signatures, but values derived from above)
+PRE_WINDOW = BASELINE_WINDOW           # Alias for backward compatibility
+POST_WINDOW = EARLY_RESPONSE_WINDOW   # Alias for backward compatibility
+PEAK_WINDOW = EARLY_RESPONSE_WINDOW   # Peak finding window (same as early response)
+AUC_WINDOW = EARLY_RESPONSE_WINDOW    # Primary AUC window (same as early response)
+DECAY_FIT_WINDOW = FULL_RESPONSE_WINDOW  # Decay fitting window
+
+# Other thresholds
+ZERO_THRESHOLD = 1e-2      # Threshold (deg/s) to treat near-zero values as zero
+LATENCY_FRACTION = 0.5     # [DEPRECATED] Fraction of peak for latency calculation
 
 # Mapping from inferred turn direction to expected velocity sign after time 0.
 # Here we expect the actual turn to be opposite the label in the filename.
@@ -1228,8 +1263,8 @@ else:
 # ----------------------------------------------------------------------
 
 running_metric_specs = [
-    ("post_mean", "Post-turn mean velocity (cm/s)"),
-    ("peak_velocity_abs_1s", "Peak running velocity 0-1 s (cm/s)"),
+    ("post_mean", f"Post-halt mean velocity {ANALYSIS_WINDOW_MEAN_PEAK[0]}-{ANALYSIS_WINDOW_MEAN_PEAK[1]}s (cm/s)"),
+    ("peak_velocity_abs_1s", f"Peak running velocity {ANALYSIS_WINDOW_MEAN_PEAK[0]}-{ANALYSIS_WINDOW_MEAN_PEAK[1]}s (cm/s)"),
 ]
 running_plot_groups = ["No halt", "Apply halt"]
 running_stats_df = pd.DataFrame()
@@ -1440,12 +1475,41 @@ else:
 
 
 # %%
+# Compute mean absolute velocity 0-2s (for combining left and right turns)
+# ----------------------------------------------------------------------
+
+if trace_samples_df.empty:
+    mean_abs_velocity_by_mouse = pd.DataFrame()
+else:
+    mean_abs_records = []
+    
+    for (group, mouse), group_df in trace_samples_df.groupby(["group", "mouse"]):
+        window_mask = (group_df["time"] >= EXTENDED_RESPONSE_WINDOW[0]) & (group_df["time"] <= EXTENDED_RESPONSE_WINDOW[1])
+        window_df = group_df.loc[window_mask].copy()
+        
+        if not window_df.empty:
+            mean_abs_vel = float(window_df["velocity"].abs().mean())
+            mean_abs_records.append({
+                "group": group,
+                "mouse": mouse,
+                "mean_abs_velocity_0_2s": mean_abs_vel,
+            })
+    
+    mean_abs_velocity_by_mouse = pd.DataFrame(mean_abs_records)
+
+
+# %%
 # Turning metric comparisons in a single figure (Apply halt vs No halt)
 # ----------------------------------------------------------------------
 
+# Build metric labels with actual window durations from configuration
+analysis_window_duration = ANALYSIS_WINDOW_MEAN_PEAK[1] - ANALYSIS_WINDOW_MEAN_PEAK[0]
+extended_window_duration = EXTENDED_RESPONSE_WINDOW[1] - EXTENDED_RESPONSE_WINDOW[0]
+
 metric_specs = [
-    ("peak_velocity_abs_1s", "Peak velocity 0-1 s (deg/s)"),
-    ("auc_abs", "AUC 0-1 s (deg·s)"),
+    ("peak_velocity_abs_1s", f"Peak velocity {ANALYSIS_WINDOW_MEAN_PEAK[0]}-{ANALYSIS_WINDOW_MEAN_PEAK[1]}s (deg/s)"),
+    ("mean_abs_velocity_0_2s", f"Mean |velocity| {EXTENDED_RESPONSE_WINDOW[0]}-{EXTENDED_RESPONSE_WINDOW[1]}s (deg/s)"),
+    ("auc_abs", f"AUC {ANALYSIS_WINDOW_MEAN_PEAK[0]}-{ANALYSIS_WINDOW_MEAN_PEAK[1]}s (deg·s)"),
     ("decay_tau", "Decay time constant τ (s)"),
 ]
 plot_groups = ["No halt", "Apply halt"]
@@ -1464,6 +1528,17 @@ else:
         )
     else:
         combined = pd.DataFrame()
+    
+    # Merge in mean absolute velocity 0-2s
+    if not mean_abs_velocity_by_mouse.empty and not combined.empty:
+        combined = pd.merge(
+            combined,
+            mean_abs_velocity_by_mouse,
+            on=["mouse", "group"],
+            how="outer",
+        )
+    elif not mean_abs_velocity_by_mouse.empty:
+        combined = mean_abs_velocity_by_mouse.copy()
 
 if combined.empty:
     print("⚠️ No turning metrics available for comparison")
@@ -1472,7 +1547,7 @@ else:
     if not available_specs:
         print("⚠️ Metrics not found in aggregated data")
     else:
-        subplot_width_cm = 7.5
+        subplot_width_cm = 6.5
         subplot_height_cm = 7
         fig_width = len(available_specs) * subplot_width_cm / 2.54
         fig_height = subplot_height_cm / 2.54
@@ -1607,7 +1682,6 @@ else:
             display(turning_stats_df)
             if OUTPUT_DIR is not None:
                 turning_stats_df.to_csv(OUTPUT_DIR / "turning_metrics_ttests.csv", index=False)
-
 
 
 # %%
