@@ -66,6 +66,10 @@ DATA_DIRS: List[Path] = [
 
 OUTPUT_SUBDIR_NAME = "turning_analysis"
 
+# Diagnostic settings
+ENABLE_DECAY_DIAGNOSTICS = False  # Set True to run detailed diagnostics on decay fit failures
+MAX_DIAGNOSTIC_EXAMPLES = 3       # Maximum number of failed fits to diagnose in detail
+
 # Event file suffixes that encode turn direction in their names.
 EVENT_SUFFIXES: List[str] = [
     "_Apply halt_2s_right_turns_baselined_data.csv",
@@ -77,21 +81,56 @@ EVENT_SUFFIXES: List[str] = [
 # Optional subset of mice to analyse (use [] to include every mouse found).
 SELECTED_MICE: List[str] = []
 
-# Columns and time windows used for the velocity check.
+# Data columns
 TIME_COLUMN = "Time (s)"
-VELOCITY_COLUMN = "Motor_Velocity" #"Motor_Velocity_Baseline"
-RUNNING_COLUMN = "Velocity_0X" #"Velocity_0X_Baseline"
-PRE_WINDOW = (-1.0, 0.0)   # seconds relative to alignment (before 0)
-POST_WINDOW = (0.0, 1.0)   # seconds relative to alignment (after 0)
+VELOCITY_COLUMN = "Motor_Velocity"  # Motor turning velocity (deg/s)
+RUNNING_COLUMN = "Velocity_0X"      # Forward running velocity (m/s)
 
-# Threshold in deg/s to treat near-zero averages as no turn (avoid noisy sign flips).
-ZERO_THRESHOLD = 1e-2 #FIXME where is this used?
+# ==================================================================================
+# TIME WINDOW CONFIGURATION
+# ==================================================================================
+# All windows are (start, end) tuples in seconds, relative to turn onset (t=0)
+# 
+# USAGE GUIDE:
+# - BASELINE_WINDOW: Pre-halt baseline for direction change detection & normalization
+# - ANALYSIS_WINDOW_MEAN_PEAK: ⚙️ PRIMARY CONFIGURABLE WINDOW ⚙️
+#   Controls the analysis window for:
+#   • Post-halt mean velocity (turning & running)
+#   • Peak velocity (turning & running)
+#   • AUC calculation
+#   Default: (0.0, 1.0) = analyze the first 1 second after halt onset
+# - EXTENDED_RESPONSE_WINDOW: For mean absolute velocity (combines left/right turns)
+# - FULL_RESPONSE_WINDOW: For exponential decay fitting (longer window needed)
+# - TEMPORAL_DYNAMICS_WINDOWS: Fine-grained windows for temporal pattern analysis
+# ==================================================================================
 
-# Windows used for timing and magnitude metrics.
-PEAK_WINDOW = (0.0, 1.0)     #FIXME THIS GETS OVERWRITTEN LATER ANYWAY TO 0-1s (as shown in plots)
-AUC_WINDOW = (0.0, 1.0)      # integration window for turn area (s)
-DECAY_FIT_WINDOW = (0.0, 3.0)  # window (s) used to estimate decay time constant
-LATENCY_FRACTION = 0.5       #FIXME deprecated but needs to stay here??
+# Baseline (pre-turn) window
+BASELINE_WINDOW = (-1.0, 0.0)  # Used for: direction detection, baseline normalization
+
+# Post-turn response windows (used for primary metrics)
+# ⚙️ USER CONFIGURABLE: Change this window to control mean and peak velocity analysis
+ANALYSIS_WINDOW_MEAN_PEAK = (0.0, 1.0)  # Window for post-halt mean & peak velocity analysis
+
+EARLY_RESPONSE_WINDOW = ANALYSIS_WINDOW_MEAN_PEAK  # Used for: peak velocity, AUC, post-turn mean
+EXTENDED_RESPONSE_WINDOW = (0.0, 2.0)   # Used for: mean absolute velocity (combines left/right)
+FULL_RESPONSE_WINDOW = (0.0, 3.0)       # Used for: exponential decay fitting
+
+# Fine-grained temporal dynamics windows (used for alternative metrics)
+TEMPORAL_EARLY_WINDOW = (0.0, 0.5)   # Immediate response phase
+TEMPORAL_MID_WINDOW = (0.5, 1.0)     # Mid response phase
+TEMPORAL_LATE_WINDOW = (1.0, 2.0)    # Sustained response phase
+TEMPORAL_FULL_WINDOW = (0.0, 2.0)    # Full temporal analysis window
+
+# Legacy compatibility (kept for function signatures, but values derived from above)
+PRE_WINDOW = BASELINE_WINDOW           # Alias for backward compatibility
+POST_WINDOW = EARLY_RESPONSE_WINDOW   # Alias for backward compatibility
+PEAK_WINDOW = EARLY_RESPONSE_WINDOW   # Peak finding window (same as early response)
+AUC_WINDOW = EARLY_RESPONSE_WINDOW    # Primary AUC window (same as early response)
+DECAY_FIT_WINDOW = FULL_RESPONSE_WINDOW  # Decay fitting window
+
+# Other thresholds
+ZERO_THRESHOLD = 1e-2      # Threshold (deg/s) to treat near-zero values as zero
+LATENCY_FRACTION = 0.5     # [DEPRECATED] Fraction of peak for latency calculation
 
 # Mapping from inferred turn direction to expected velocity sign after time 0.
 # Here we expect the actual turn to be opposite the label in the filename.
@@ -247,26 +286,47 @@ def sem(values) -> float:
     return float(arr.std(ddof=1) / np.sqrt(n))
 
 
-def fit_exponential_decay(time_values: Iterable[float], amplitude_values: Iterable[float]) -> float:
+def fit_exponential_decay(time_values: Iterable[float], amplitude_values: Iterable[float], verbose: bool = False) -> float:
+    """
+    Fit exponential decay: y = A * exp(-t/tau)
+    
+    NOTE: This often fails because motor velocity doesn't always show clean exponential decay.
+    The velocity may:
+    - Stay elevated (sustained turning)
+    - Show complex multi-phase dynamics
+    - Have noise that breaks the exponential assumption
+    
+    Consider using alternative metrics like AUC in different time windows instead.
+    """
     time_arr = np.asarray(time_values, dtype=float)
     amp_arr = np.asarray(amplitude_values, dtype=float)
     mask = np.isfinite(time_arr) & np.isfinite(amp_arr)
     if mask.sum() < 3:
+        if verbose:
+            print(f"Decay fit failed: Only {mask.sum()} finite points")
         return float("nan")
     time_arr = time_arr[mask]
     amp_arr = amp_arr[mask]
     amp_arr = np.abs(amp_arr)
     positive_mask = amp_arr > 0
     if positive_mask.sum() < 3:
+        if verbose:
+            print(f"Decay fit failed: Only {positive_mask.sum()} positive amplitude points")
         return float("nan")
     time_arr = time_arr[positive_mask]
     amp_arr = amp_arr[positive_mask]
     time_arr = time_arr - time_arr.min()
     if time_arr.ptp() <= 0:
+        if verbose:
+            print("Decay fit failed: No time variation")
         return float("nan")
     log_amp = np.log(amp_arr)
     slope, intercept = np.polyfit(time_arr, log_amp, 1)
     if slope >= 0:
+        if verbose:
+            print(f"Decay fit failed: Non-decaying (slope={slope:.6f})")
+            print(f"  → Signal is increasing or flat, not exponentially decaying")
+            print(f"  → Consider using AUC or sustained response metrics instead")
         return float("nan")
     tau = -1.0 / slope
     return float(tau)
@@ -279,6 +339,265 @@ def assign_mouse_colors_consistent(mouse_ids: Iterable[str]) -> Dict[str, tuple]
         return OrderedDict()
     palette = sns.color_palette("gnuplot2", len(unique_mice))
     return OrderedDict((mouse, palette[idx]) for idx, mouse in enumerate(unique_mice))
+
+
+def compute_windowed_auc(
+    df: pd.DataFrame,
+    windows: List[Tuple[float, float]],
+    time_col: str = "time",
+    value_col: str = "velocity",
+) -> Dict[str, float]:
+    """
+    Compute area under curve for multiple time windows.
+    
+    This is often more robust than decay fitting for characterizing response dynamics.
+    Different windows capture different phases of the response:
+    - Early (0-0.5s): Initial response magnitude
+    - Mid (0.5-1s): Sustained response
+    - Late (1-2s): Extended dynamics
+    """
+    auc_results = {}
+    for start, end in windows:
+        window_df = df[(df[time_col] >= start) & (df[time_col] <= end)]
+        if not window_df.empty and len(window_df) > 1:
+            auc = float(np.trapz(
+                np.abs(window_df[value_col].to_numpy()),
+                window_df[time_col].to_numpy()
+            ))
+            auc_results[f"auc_{start}_{end}s"] = auc
+        else:
+            auc_results[f"auc_{start}_{end}s"] = float("nan")
+    return auc_results
+
+
+def compute_sustained_response_ratio(
+    df: pd.DataFrame,
+    early_window: Tuple[float, float] = (0.0, 0.5),
+    late_window: Tuple[float, float] = (1.0, 2.0),
+    time_col: str = "time",
+    value_col: str = "velocity",
+) -> float:
+    """
+    Compute ratio of late to early response magnitude.
+    
+    Ratio < 1: Response decays
+    Ratio ~ 1: Response is sustained
+    Ratio > 1: Response increases over time
+    
+    This can distinguish between transient vs sustained turning responses.
+    """
+    early_auc = compute_window_mean(df.rename(columns={time_col: "time", value_col: "velocity"}), early_window)
+    late_auc = compute_window_mean(df.rename(columns={time_col: "time", value_col: "velocity"}), late_window)
+    
+    if math.isfinite(early_auc) and math.isfinite(late_auc) and abs(early_auc) > 1e-6:
+        return float(abs(late_auc) / abs(early_auc))
+    return float("nan")
+
+
+def compute_time_to_baseline(
+    df: pd.DataFrame,
+    baseline_window: Tuple[float, float] = (-1.0, 0.0),
+    post_start: float = 0.0,
+    n_std: float = 2.0,
+    time_col: str = "time",
+    value_col: str = "velocity",
+) -> float:
+    """
+    Compute time for response to return to baseline level (mean + n_std).
+    
+    Returns NaN if response never returns to baseline in the available data.
+    This is more interpretable than tau for non-exponential dynamics.
+    """
+    baseline_df = df[(df[time_col] >= baseline_window[0]) & (df[time_col] < baseline_window[1])]
+    if baseline_df.empty:
+        return float("nan")
+    
+    baseline_mean = float(baseline_df[value_col].abs().mean())
+    baseline_std = float(baseline_df[value_col].abs().std())
+    threshold = baseline_mean + n_std * baseline_std
+    
+    post_df = df[df[time_col] >= post_start].sort_values(time_col)
+    if post_df.empty:
+        return float("nan")
+    
+    post_abs = post_df[value_col].abs()
+    below_threshold = post_abs < threshold
+    
+    if not below_threshold.any():
+        return float("nan")
+    
+    # Find first sustained return (at least 3 consecutive points below threshold)
+    below_indices = post_df.index[below_threshold].tolist()
+    if len(below_indices) < 3:
+        return float("nan")
+    
+    for i in range(len(below_indices) - 2):
+        if (below_indices[i+1] == below_indices[i] + 1 and 
+            below_indices[i+2] == below_indices[i] + 2):
+            return float(post_df.loc[below_indices[i], time_col])
+    
+    return float("nan")
+
+
+def diagnostic_exponential_fit(
+    time_values: Iterable[float],
+    amplitude_values: Iterable[float],
+    title: str = "Decay Fit Diagnostic",
+    show_plots: bool = True,
+) -> Tuple[float, Dict[str, object]]:
+    """
+    Detailed diagnostic of exponential decay fitting.
+    
+    Returns:
+        tau: The decay time constant (NaN if fit fails)
+        diagnostics: Dictionary with diagnostic information
+    """
+    time_arr = np.asarray(time_values, dtype=float)
+    amp_arr = np.asarray(amplitude_values, dtype=float)
+    
+    diagnostics = {
+        "title": title,
+        "n_points_initial": len(time_arr),
+        "time_range": (float(time_arr.min()), float(time_arr.max())) if len(time_arr) > 0 else (np.nan, np.nan),
+        "amp_range": (float(amp_arr.min()), float(amp_arr.max())) if len(amp_arr) > 0 else (np.nan, np.nan),
+        "failure_reason": None,
+    }
+    
+    print(f"\n{'='*60}")
+    print(f"{title}")
+    print(f"{'='*60}")
+    print(f"Initial data points: {len(time_arr)}")
+    if len(time_arr) > 0:
+        print(f"Time range: {time_arr.min():.3f} to {time_arr.max():.3f}")
+        print(f"Amplitude range: {amp_arr.min():.3f} to {amp_arr.max():.3f}")
+    
+    # Check 1: Finite values
+    mask = np.isfinite(time_arr) & np.isfinite(amp_arr)
+    if mask.sum() < 3:
+        diagnostics["failure_reason"] = f"Only {mask.sum()} finite points (need ≥3)"
+        print(f"❌ FAIL: {diagnostics['failure_reason']}")
+        return float("nan"), diagnostics
+    
+    time_arr = time_arr[mask]
+    amp_arr = amp_arr[mask]
+    diagnostics["n_points_finite"] = int(mask.sum())
+    print(f"After finite check: {len(time_arr)} points")
+    
+    # Check 2: Absolute values
+    amp_arr = np.abs(amp_arr)
+    positive_mask = amp_arr > 0
+    if positive_mask.sum() < 3:
+        diagnostics["failure_reason"] = f"Only {positive_mask.sum()} positive amplitude points"
+        print(f"❌ FAIL: {diagnostics['failure_reason']}")
+        return float("nan"), diagnostics
+    
+    time_arr = time_arr[positive_mask]
+    amp_arr = amp_arr[positive_mask]
+    diagnostics["n_points_positive"] = int(positive_mask.sum())
+    print(f"After positive check: {len(time_arr)} points")
+    
+    # Check 3: Time normalization
+    time_arr = time_arr - time_arr.min()
+    if time_arr.ptp() <= 0:
+        diagnostics["failure_reason"] = f"No time variation (ptp={time_arr.ptp()})"
+        print(f"❌ FAIL: {diagnostics['failure_reason']}")
+        return float("nan"), diagnostics
+    
+    diagnostics["time_ptp"] = float(time_arr.ptp())
+    print(f"Time variation (ptp): {time_arr.ptp():.3f}")
+    
+    # Check 4: Log transform and linear fit
+    log_amp = np.log(amp_arr)
+    slope, intercept = np.polyfit(time_arr, log_amp, 1)
+    diagnostics["slope"] = float(slope)
+    diagnostics["intercept"] = float(intercept)
+    print(f"Log-linear fit: slope={slope:.6f}, intercept={intercept:.3f}")
+    
+    if slope >= 0:
+        diagnostics["failure_reason"] = f"Non-decaying (slope={slope:.6f})"
+        diagnostics["amp_start"] = float(amp_arr[0])
+        diagnostics["amp_end"] = float(amp_arr[-1])
+        diagnostics["amp_mean"] = float(amp_arr.mean())
+        diagnostics["trend"] = "increasing" if amp_arr[-1] > amp_arr[0] else "decreasing"
+        
+        print(f"❌ FAIL: Positive or zero slope ({slope:.6f}) - not decaying!")
+        print(f"   This means the signal is INCREASING or flat, not decaying.")
+        print(f"\n   Amplitude at start: {amp_arr[0]:.3f}")
+        print(f"   Amplitude at end: {amp_arr[-1]:.3f}")
+        print(f"   Mean amplitude: {amp_arr.mean():.3f}")
+        print(f"   Amplitude trend: {diagnostics['trend']}")
+        
+        if show_plots:
+            # Create diagnostic plot
+            fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+            
+            # Plot 1: Actual data
+            axes[0].plot(time_arr, amp_arr, 'o-', label='Data', color='#1f77b4')
+            axes[0].set_xlabel('Time (s)')
+            axes[0].set_ylabel('|Velocity| (deg/s)')
+            axes[0].set_title('Absolute Velocity vs Time')
+            axes[0].legend()
+            axes[0].grid(True, alpha=0.3)
+            
+            # Plot 2: Log scale
+            axes[1].plot(time_arr, log_amp, 'o-', label='Log(amplitude)', color='#1f77b4')
+            axes[1].plot(time_arr, slope * time_arr + intercept, 'r--', 
+                        label=f'Fit: slope={slope:.4f}', linewidth=2)
+            axes[1].set_xlabel('Time (s)')
+            axes[1].set_ylabel('Log(|Velocity|)')
+            axes[1].set_title('Log Scale (should be linear for exponential decay)')
+            axes[1].legend()
+            axes[1].grid(True, alpha=0.3)
+            
+            plt.suptitle(f"{title} - Decay Fit Failed", fontsize=12)
+            plt.tight_layout()
+            plt.show()
+        
+        return float("nan"), diagnostics
+    
+    tau = -1.0 / slope
+    diagnostics["tau"] = float(tau)
+    diagnostics["failure_reason"] = None
+    print(f"✅ SUCCESS: τ = {tau:.3f} s")
+    
+    if show_plots:
+        # Create diagnostic plot for successful fit
+        fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+        
+        # Plot 1: Actual data with exponential fit
+        fitted_curve = np.exp(intercept) * np.exp(slope * time_arr)
+        axes[0].plot(time_arr, amp_arr, 'o', label='Data', alpha=0.6, color='#1f77b4')
+        axes[0].plot(time_arr, fitted_curve, 'r-', label=f'Fit: τ={tau:.3f}s', linewidth=2)
+        axes[0].set_xlabel('Time (s)')
+        axes[0].set_ylabel('|Velocity| (deg/s)')
+        axes[0].set_title('Exponential Decay Fit')
+        axes[0].legend()
+        axes[0].grid(True, alpha=0.3)
+        
+        # Plot 2: Log scale
+        axes[1].plot(time_arr, log_amp, 'o', label='Log(amplitude)', color='#1f77b4')
+        axes[1].plot(time_arr, slope * time_arr + intercept, 'r--', 
+                    label=f'Fit: slope={slope:.4f}', linewidth=2)
+        axes[1].set_xlabel('Time (s)')
+        axes[1].set_ylabel('Log(|Velocity|)')
+        axes[1].set_title('Log Scale')
+        axes[1].legend()
+        axes[1].grid(True, alpha=0.3)
+        
+        # Plot 3: Residuals
+        residuals = log_amp - (slope * time_arr + intercept)
+        axes[2].plot(time_arr, residuals, 'o', color='#1f77b4')
+        axes[2].axhline(0, color='r', linestyle='--', linewidth=2)
+        axes[2].set_xlabel('Time (s)')
+        axes[2].set_ylabel('Residuals')
+        axes[2].set_title('Fit Residuals')
+        axes[2].grid(True, alpha=0.3)
+        
+        plt.suptitle(f"{title} - Decay Fit Successful", fontsize=12)
+        plt.tight_layout()
+        plt.show()
+    
+    return float(tau), diagnostics
 
 
 def _sanitize_label(value: str) -> str:
@@ -617,6 +936,102 @@ errors
 
 
 # %% [markdown]
+# ### Decay fit diagnostics (optional)
+# If enabled, diagnose why exponential decay fitting fails for specific examples
+
+# %%
+# Run detailed diagnostics on failed decay fits
+# ----------------------------------------------------------------------
+
+if ENABLE_DECAY_DIAGNOSTICS and not results_df.empty:
+    print("\n" + "="*60)
+    print("DECAY FIT DIAGNOSTICS")
+    print("="*60)
+    
+    # Find files where decay fit failed (tau is NaN)
+    failed_fits = results_df[results_df["decay_tau"].isna()].copy()
+    
+    if failed_fits.empty:
+        print("✅ All decay fits succeeded (no NaN values)")
+    else:
+        n_failed = len(failed_fits)
+        print(f"⚠️ Found {n_failed} failed decay fits out of {len(results_df)} total")
+        print(f"   ({100 * n_failed / len(results_df):.1f}% failure rate)\n")
+        
+        # Analyze distribution of failures
+        print("Failure distribution:")
+        for group_name, group_df in failed_fits.groupby("group", dropna=False):
+            n_group = len(group_df)
+            n_group_total = len(results_df[results_df["group"] == group_name])
+            print(f"  {group_name}: {n_group}/{n_group_total} failed ({100*n_group/n_group_total:.1f}%)")
+        
+        # Run detailed diagnostics on a few examples
+        n_to_diagnose = min(MAX_DIAGNOSTIC_EXAMPLES, len(failed_fits))
+        print(f"\nRunning detailed diagnostics on {n_to_diagnose} examples...")
+        
+        diagnostic_results = []
+        
+        for idx, row in failed_fits.head(n_to_diagnose).iterrows():
+            csv_path = Path(row["csv_path"])
+            try:
+                df = load_motor_velocity(csv_path, TIME_COLUMN, VELOCITY_COLUMN)
+            except Exception as exc:
+                print(f"⚠️ Could not load {csv_path}: {exc}")
+                continue
+            
+            # Extract decay window data
+            decay_mask = (df["time"] >= DECAY_FIT_WINDOW[0]) & (df["time"] <= DECAY_FIT_WINDOW[1])
+            decay_data = df.loc[decay_mask].copy()
+            
+            if decay_data.empty:
+                print(f"⚠️ No data in decay window for {row['mouse']} - {row['group']}")
+                continue
+            
+            # Group by time and average (same as original analysis)
+            decay_data["abs_velocity"] = decay_data["velocity"].abs()
+            per_time = (
+                decay_data.groupby("time", dropna=False)["abs_velocity"]
+                .mean()
+                .reset_index()
+                .sort_values("time")
+            )
+            
+            # Run diagnostic
+            title = f"{row['mouse']} | {row['group']} | {row['direction']} turn"
+            tau, diag_info = diagnostic_exponential_fit(
+                per_time["time"].values,
+                per_time["abs_velocity"].values,
+                title=title,
+                show_plots=True,
+            )
+            
+            diagnostic_results.append({
+                "mouse": row["mouse"],
+                "group": row["group"],
+                "direction": row["direction"],
+                "csv_path": str(csv_path),
+                **diag_info,
+            })
+        
+        # Save diagnostic results
+        if diagnostic_results:
+            diagnostic_df = pd.DataFrame(diagnostic_results)
+            if OUTPUT_DIR is not None:
+                diagnostic_df.to_csv(OUTPUT_DIR / "decay_fit_diagnostics.csv", index=False)
+                print(f"\n✅ Saved diagnostic results to: {OUTPUT_DIR / 'decay_fit_diagnostics.csv'}")
+            
+            # Summary of failure reasons
+            print("\n" + "-"*60)
+            print("Summary of failure reasons:")
+            if "failure_reason" in diagnostic_df.columns:
+                for reason, count_df in diagnostic_df.groupby("failure_reason"):
+                    if pd.notna(reason):
+                        print(f"  {reason}: {len(count_df)} cases")
+elif ENABLE_DECAY_DIAGNOSTICS:
+    print("⚠️ Decay diagnostics enabled but no results available to diagnose")
+
+
+# %% [markdown]
 # ### Running velocity summary
 #
 
@@ -848,8 +1263,8 @@ else:
 # ----------------------------------------------------------------------
 
 running_metric_specs = [
-    ("post_mean", "Post-turn mean velocity (cm/s)"),
-    ("peak_velocity_abs_1s", "Peak running velocity 0-1 s (cm/s)"),
+    ("post_mean", f"Post-halt mean velocity {ANALYSIS_WINDOW_MEAN_PEAK[0]}-{ANALYSIS_WINDOW_MEAN_PEAK[1]}s (cm/s)"),
+    ("peak_velocity_abs_1s", f"Peak running velocity {ANALYSIS_WINDOW_MEAN_PEAK[0]}-{ANALYSIS_WINDOW_MEAN_PEAK[1]}s (cm/s)"),
 ]
 running_plot_groups = ["No halt", "Apply halt"]
 running_stats_df = pd.DataFrame()
@@ -1060,12 +1475,41 @@ else:
 
 
 # %%
+# Compute mean absolute velocity 0-2s (for combining left and right turns)
+# ----------------------------------------------------------------------
+
+if trace_samples_df.empty:
+    mean_abs_velocity_by_mouse = pd.DataFrame()
+else:
+    mean_abs_records = []
+    
+    for (group, mouse), group_df in trace_samples_df.groupby(["group", "mouse"]):
+        window_mask = (group_df["time"] >= EXTENDED_RESPONSE_WINDOW[0]) & (group_df["time"] <= EXTENDED_RESPONSE_WINDOW[1])
+        window_df = group_df.loc[window_mask].copy()
+        
+        if not window_df.empty:
+            mean_abs_vel = float(window_df["velocity"].abs().mean())
+            mean_abs_records.append({
+                "group": group,
+                "mouse": mouse,
+                "mean_abs_velocity_0_2s": mean_abs_vel,
+            })
+    
+    mean_abs_velocity_by_mouse = pd.DataFrame(mean_abs_records)
+
+
+# %%
 # Turning metric comparisons in a single figure (Apply halt vs No halt)
 # ----------------------------------------------------------------------
 
+# Build metric labels with actual window durations from configuration
+analysis_window_duration = ANALYSIS_WINDOW_MEAN_PEAK[1] - ANALYSIS_WINDOW_MEAN_PEAK[0]
+extended_window_duration = EXTENDED_RESPONSE_WINDOW[1] - EXTENDED_RESPONSE_WINDOW[0]
+
 metric_specs = [
-    ("peak_velocity_abs_1s", "Peak velocity 0-1 s (deg/s)"),
-    ("auc_abs", "AUC 0-1 s (deg·s)"),
+    ("peak_velocity_abs_1s", f"Peak velocity {ANALYSIS_WINDOW_MEAN_PEAK[0]}-{ANALYSIS_WINDOW_MEAN_PEAK[1]}s (deg/s)"),
+    ("mean_abs_velocity_0_2s", f"Mean |velocity| {EXTENDED_RESPONSE_WINDOW[0]}-{EXTENDED_RESPONSE_WINDOW[1]}s (deg/s)"),
+    ("auc_abs", f"AUC {ANALYSIS_WINDOW_MEAN_PEAK[0]}-{ANALYSIS_WINDOW_MEAN_PEAK[1]}s (deg·s)"),
     ("decay_tau", "Decay time constant τ (s)"),
 ]
 plot_groups = ["No halt", "Apply halt"]
@@ -1084,6 +1528,17 @@ else:
         )
     else:
         combined = pd.DataFrame()
+    
+    # Merge in mean absolute velocity 0-2s
+    if not mean_abs_velocity_by_mouse.empty and not combined.empty:
+        combined = pd.merge(
+            combined,
+            mean_abs_velocity_by_mouse,
+            on=["mouse", "group"],
+            how="outer",
+        )
+    elif not mean_abs_velocity_by_mouse.empty:
+        combined = mean_abs_velocity_by_mouse.copy()
 
 if combined.empty:
     print("⚠️ No turning metrics available for comparison")
@@ -1092,7 +1547,7 @@ else:
     if not available_specs:
         print("⚠️ Metrics not found in aggregated data")
     else:
-        subplot_width_cm = 7.5
+        subplot_width_cm = 6.5
         subplot_height_cm = 7
         fig_width = len(available_specs) * subplot_width_cm / 2.54
         fig_height = subplot_height_cm / 2.54
@@ -1229,7 +1684,6 @@ else:
                 turning_stats_df.to_csv(OUTPUT_DIR / "turning_metrics_ttests.csv", index=False)
 
 
-
 # %%
 # Average motor velocity traces by condition and turn direction
 # ----------------------------------------------------------------------
@@ -1298,4 +1752,228 @@ else:
 
     plt.tight_layout()
     plt.show()
+
+
+# %% [markdown]
+# ### Alternative temporal dynamics analysis (better than decay fitting)
+#
+# The exponential decay fit often fails because motor velocity shows complex, 
+# non-exponential dynamics. Better approaches:
+# 1. **Windowed AUC**: Quantify response in different time phases
+# 2. **Sustained response ratio**: Compare early vs late response magnitude  
+# 3. **Time to baseline**: When does response return to pre-turn levels
+
+# %%
+# Compute alternative temporal metrics for each mouse
+# ----------------------------------------------------------------------
+
+if not trace_samples_df.empty:
+    print("Computing alternative temporal dynamics metrics...")
+    
+    # Define time windows for AUC analysis
+    AUC_WINDOWS = [
+        (0.0, 0.5),   # Early response
+        (0.5, 1.0),   # Mid response  
+        (1.0, 2.0),   # Late response
+        (0.0, 2.0),   # Total response
+    ]
+    
+    alternative_metrics_records = []
+    
+    for (group, mouse, direction), group_df in trace_samples_df.groupby(["group", "mouse", "direction"]):
+        # Compute windowed AUC
+        auc_metrics = compute_windowed_auc(group_df, AUC_WINDOWS)
+        
+        # Compute sustained response ratio
+        sustained_ratio = compute_sustained_response_ratio(group_df)
+        
+        # Compute time to baseline
+        time_to_baseline = compute_time_to_baseline(group_df)
+        
+        # Compile all metrics
+        alternative_metrics_records.append({
+            "group": group,
+            "mouse": mouse,
+            "direction": direction,
+            **auc_metrics,
+            "sustained_ratio": sustained_ratio,
+            "time_to_baseline": time_to_baseline,
+        })
+    
+    alternative_metrics_df = pd.DataFrame(alternative_metrics_records)
+    
+    # Average across turn directions per mouse
+    alt_metrics_by_mouse = (
+        alternative_metrics_df.groupby(["group", "mouse"], dropna=False)
+        .mean(numeric_only=True)
+        .reset_index()
+    )
+    
+    print(f"✅ Computed alternative metrics for {len(alt_metrics_by_mouse)} mouse-group combinations")
+    display(Markdown("#### Alternative temporal dynamics metrics (per mouse)"))
+    display(alt_metrics_by_mouse)
+    
+    if OUTPUT_DIR is not None:
+        alt_metrics_by_mouse.to_csv(OUTPUT_DIR / "alternative_temporal_metrics.csv", index=False)
+else:
+    alternative_metrics_df = pd.DataFrame()
+    alt_metrics_by_mouse = pd.DataFrame()
+    print("⚠️ No trace data available for alternative metrics")
+
+
+# %%
+# Statistical comparison of alternative metrics: Apply halt vs No halt
+# ----------------------------------------------------------------------
+
+if not alt_metrics_by_mouse.empty:
+    print("\n" + "="*60)
+    print("STATISTICAL COMPARISON: Apply halt vs No halt")
+    print("="*60)
+    
+    # Define metrics to compare
+    alt_metrics_to_compare = [
+        ("auc_0.0_0.5s", "Early AUC 0-0.5s (deg)"),
+        ("auc_0.5_1.0s", "Mid AUC 0.5-1s (deg)"),
+        ("auc_1.0_2.0s", "Late AUC 1-2s (deg)"),
+        ("auc_0.0_2.0s", "Total AUC 0-2s (deg)"),
+        ("sustained_ratio", "Sustained response ratio (late/early)"),
+        ("time_to_baseline", "Time to baseline (s)"),
+    ]
+    
+    alt_stats_records = []
+    
+    for metric, label in alt_metrics_to_compare:
+        if metric not in alt_metrics_by_mouse.columns:
+            continue
+        
+        # Create pivot table
+        pivot = alt_metrics_by_mouse.pivot(index="mouse", columns="group", values=metric)
+        
+        if "No halt" in pivot.columns and "Apply halt" in pivot.columns:
+            stats_result = compute_paired_t_test(pivot, "No halt", "Apply halt")
+            
+            # Add descriptive statistics
+            no_halt_vals = pivot["No halt"].dropna()
+            apply_halt_vals = pivot["Apply halt"].dropna()
+            
+            stats_result.update({
+                "metric": metric,
+                "metric_label": label,
+                "no_halt_mean": float(no_halt_vals.mean()) if len(no_halt_vals) > 0 else float("nan"),
+                "no_halt_sem": float(sem(no_halt_vals)) if len(no_halt_vals) > 1 else float("nan"),
+                "apply_halt_mean": float(apply_halt_vals.mean()) if len(apply_halt_vals) > 0 else float("nan"),
+                "apply_halt_sem": float(sem(apply_halt_vals)) if len(apply_halt_vals) > 1 else float("nan"),
+            })
+            
+            alt_stats_records.append(stats_result)
+    
+    if alt_stats_records:
+        alt_stats_df = pd.DataFrame(alt_stats_records)
+        
+        # Reorder columns for clarity
+        col_order = [
+            "metric_label", 
+            "no_halt_mean", "no_halt_sem",
+            "apply_halt_mean", "apply_halt_sem",
+            "mean_difference", "t_statistic", "p_value", "n_pairs"
+        ]
+        alt_stats_df = alt_stats_df[[col for col in col_order if col in alt_stats_df.columns]]
+        
+        display(Markdown("#### Paired t-tests for alternative temporal metrics"))
+        display(alt_stats_df)
+        
+        if OUTPUT_DIR is not None:
+            alt_stats_df.to_csv(OUTPUT_DIR / "alternative_metrics_ttests.csv", index=False)
+        
+        # Highlight significant results
+        if "p_value" in alt_stats_df.columns:
+            sig_results = alt_stats_df[alt_stats_df["p_value"] < 0.05]
+            if not sig_results.empty:
+                display(Markdown("#### Significant differences (p < 0.05)"))
+                display(sig_results)
+    else:
+        alt_stats_df = pd.DataFrame()
+        print("⚠️ Could not perform statistical comparisons")
+else:
+    alt_stats_df = pd.DataFrame()
+
+
+# %%
+# Visualization: Alternative metrics comparison
+# ----------------------------------------------------------------------
+
+if not alt_metrics_by_mouse.empty:
+    # Select key metrics to visualize
+    viz_metrics = [
+        ("auc_0.0_0.5s", "Early AUC 0-0.5s"),
+        ("auc_1.0_2.0s", "Late AUC 1-2s"),  
+        ("sustained_ratio", "Sustained ratio\n(late/early)"),
+    ]
+    
+    # Filter to metrics that exist
+    viz_metrics = [(m, l) for m, l in viz_metrics if m in alt_metrics_by_mouse.columns]
+    
+    if viz_metrics:
+        fig, axes = plt.subplots(1, len(viz_metrics), figsize=(4*len(viz_metrics), 4.5))
+        if len(viz_metrics) == 1:
+            axes = [axes]
+        
+        mouse_colors = assign_mouse_colors_consistent(alt_metrics_by_mouse["mouse"].unique())
+        
+        for ax, (metric, label) in zip(axes, viz_metrics):
+            pivot = alt_metrics_by_mouse.pivot(index="mouse", columns="group", values=metric)
+            groups_present = [g for g in ["No halt", "Apply halt"] if g in pivot.columns]
+            
+            if len(groups_present) < 2:
+                ax.text(0.5, 0.5, "Insufficient data", ha="center", va="center")
+                ax.axis("off")
+                continue
+            
+            x_positions = np.arange(len(groups_present))
+            
+            # Plot individual mice
+            for mouse in pivot.index:
+                values = pivot.loc[mouse, groups_present]
+                if values.isna().all():
+                    continue
+                ax.plot(
+                    x_positions,
+                    values.to_numpy(dtype=float),
+                    marker="o",
+                    linewidth=1.1,
+                    alpha=0.65,
+                    color=mouse_colors.get(mouse, "#1f77b4"),
+                    zorder=2,
+                )
+            
+            # Plot group means
+            group_means = pivot[groups_present].mean(axis=0)
+            group_sems = pivot[groups_present].apply(lambda col: sem(col.dropna()), axis=0)
+            
+            ax.errorbar(
+                x_positions,
+                group_means.to_numpy(dtype=float),
+                yerr=group_sems.to_numpy(dtype=float),
+                fmt="o-",
+                color="#333333",
+                linewidth=2.1,
+                capsize=4,
+                label="Mean ± SEM",
+                zorder=3,
+            )
+            
+            ax.set_xticks(x_positions)
+            ax.set_xticklabels(groups_present)
+            ax.set_ylabel(label)
+            ax.set_title(label)
+            ax.grid(True, which="both", axis="y", linestyle=":", linewidth=0.7)
+        
+        plt.suptitle("Alternative Temporal Dynamics Metrics", fontsize=12, y=1.02)
+        plt.tight_layout()
+        
+        if OUTPUT_DIR is not None:
+            fig.savefig(OUTPUT_DIR / "alternative_metrics_comparison.pdf", format="pdf", bbox_inches="tight")
+        
+        plt.show()
+        plt.close(fig)
 
