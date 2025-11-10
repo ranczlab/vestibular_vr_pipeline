@@ -13,7 +13,7 @@
 #     name: python3
 # ---
 
-# ## Setup
+# ## Setup - NOTEBOOK FROZEN UNTIL POST SfN, only reporen if stricktly necessary
 
 # +
 import numpy as np
