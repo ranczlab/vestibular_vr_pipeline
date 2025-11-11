@@ -58,10 +58,10 @@ sns.set_theme(style="whitegrid")
 # Will automatically separate halt and no halt
 # Root directories containing cohort-level folders with aligned data.
 DATA_DIRS: List[Path] = [
-    Path("/Volumes/RanczLab2/Cohort1_rotation/Visual_mismatch_day4/").expanduser(),
-    Path("/Volumes/RanczLab2/Cohort3_rotation/Visual_mismatch_day4/").expanduser(),
-    # Path("/Volumes/RanczLab2/Cohort1_rotation/Visual_mismatch_day3").expanduser(),
-    # Path("/Volumes/RanczLab2/Cohort3_rotation/Visual_mismatch_day3/").expanduser(),
+    # Path("/Volumes/RanczLab2/DATA_NEW/Cohort1_rotation/Visual_mismatch_day4/").expanduser(),
+    # Path("/Volumes/RanczLab2/DATA_NEW/Cohort3_rotation/Visual_mismatch_day4/").expanduser(),
+    Path("/Volumes/RanczLab2/DATA_NEW/Cohort1_rotation/Visual_mismatch_day3").expanduser(),
+    Path("/Volumes/RanczLab2/DATA_NEW/Cohort3_rotation/Visual_mismatch_day3/").expanduser(),
 ]
 
 OUTPUT_SUBDIR_NAME = "turning_analysis"
@@ -84,7 +84,17 @@ SELECTED_MICE: List[str] = []
 # Data columns
 TIME_COLUMN = "Time (s)"
 VELOCITY_COLUMN = "Motor_Velocity"  # Motor turning velocity (deg/s)
-RUNNING_COLUMN = "Velocity_0X"      # Forward running velocity (m/s)
+RUNNING_COLUMN = "Velocity_0X_Baseline"      # Forward running velocity (m/s)
+
+# Eye tracking columns (verify these match your CSV column names!)
+SACCADE_COLUMN = "saccade_probability_eye1"  # Saccade probability - NO SCALING APPLIED, uses raw values from CSV
+PUPIL_COLUMN = "Pupil.Diameter_eye1_Baseline"     # Pupil diameter (COMBINED across all turns)
+EYE_POSITION_COLUMN = "Ellipse.Center.X_eye1_Baseline"  # Eye horizontal position (SEPARATED by turn direction)
+
+# If saccade probability values are very small (< 0.01), check:
+# 1. Is this the correct column name?
+# 2. Are values per-frame probability (naturally small) vs aggregate probability?
+# 3. Set SHOW_AVAILABLE_COLUMNS = True below to see all available columns
 
 # ==================================================================================
 # TIME WINDOW CONFIGURATION
@@ -109,7 +119,7 @@ BASELINE_WINDOW = (-1.0, 0.0)  # Used for: direction detection, baseline normali
 
 # Post-turn response windows (used for primary metrics)
 # ⚙️ USER CONFIGURABLE: Change this window to control mean and peak velocity analysis
-ANALYSIS_WINDOW_MEAN_PEAK = (0.0, 1.0)  # Window for post-halt mean & peak velocity analysis
+ANALYSIS_WINDOW_MEAN_PEAK = (0.0, 2.0)  # Window for post-halt mean & peak velocity analysis
 
 EARLY_RESPONSE_WINDOW = ANALYSIS_WINDOW_MEAN_PEAK  # Used for: peak velocity, AUC, post-turn mean
 EXTENDED_RESPONSE_WINDOW = (0.0, 2.0)   # Used for: mean absolute velocity (combines left/right)
@@ -1103,6 +1113,11 @@ if not running_trace_samples_df.empty:
 
 running_peak_diag_df = pd.DataFrame(running_peak_diagnostics)
 
+# Save running results
+if OUTPUT_DIR is not None and not running_results_df.empty:
+    running_results_df.to_csv(OUTPUT_DIR / "running_velocity_per_file.csv", index=False)
+    print(f"✅ Saved: running_velocity_per_file.csv")
+
 running_results_df
 
 
@@ -1117,6 +1132,7 @@ else:
     )
     if OUTPUT_DIR is not None:
         running_peak_diag_df.to_csv(OUTPUT_DIR / "running_peak_velocity_diagnostic.csv", index=False)
+        print(f"✅ Saved: running_peak_velocity_diagnostic.csv")
 
 
 # %%
@@ -1148,6 +1164,11 @@ else:
     running_mouse_means["direction"] = "All turns"
 
 running_mouse_means
+
+# Save running per-mouse metrics
+if OUTPUT_DIR is not None and not running_mouse_means.empty:
+    running_mouse_means.to_csv(OUTPUT_DIR / "running_velocity_per_mouse.csv", index=False)
+    print(f"✅ Saved: running_velocity_per_mouse.csv")
 
 if running_trace_samples_df.empty:
     running_peak_abs_df = pd.DataFrame()
@@ -1224,6 +1245,11 @@ else:
     n_traces = running_trace_samples_df["csv_path"].nunique()
     n_mice_traces = running_trace_samples_df["mouse"].nunique()
     print(f"✅ Running traces aggregated: {n_traces} files across {n_mice_traces} mice.")
+    
+    # Save running average traces
+    if OUTPUT_DIR is not None:
+        running_avg_traces.to_csv(OUTPUT_DIR / "running_velocity_avg_traces.csv", index=False)
+        print(f"✅ Saved: running_velocity_avg_traces.csv")
 
 running_avg_traces
 
@@ -1394,6 +1420,7 @@ else:
         fig.subplots_adjust(left=0, right=0.84, bottom=0.18, top=0.92, wspace=0.4)
         if OUTPUT_DIR is not None:
             fig.savefig(OUTPUT_DIR / "running_metric_comparisons.pdf", format="pdf", bbox_inches="tight")
+            print(f"✅ Saved: running_metric_comparisons.pdf")
         plt.show()
         plt.close(fig)
 
@@ -1403,8 +1430,777 @@ else:
             display(running_stats_df)
             if OUTPUT_DIR is not None:
                 running_stats_df.to_csv(OUTPUT_DIR / "running_metrics_ttests.csv", index=False)
+                print(f"✅ Saved: running_metrics_ttests.csv")
         else:
             running_stats_df = pd.DataFrame()
+        
+        # Save running combined metrics
+        if OUTPUT_DIR is not None and not running_metrics_combined.empty:
+            running_metrics_combined.to_csv(OUTPUT_DIR / "running_metrics_combined.csv", index=False)
+            print(f"✅ Saved: running_metrics_combined.csv")
+
+
+# %% [markdown]
+# ### Eye tracking metrics (Saccade, Pupil, Eye Position) - Unified Analysis
+#
+# **NOTE**: Eye position analysis keeps left/right turns separate because eye position 
+# direction matters. Saccade and pupil metrics are averaged across turn directions.
+
+# %%
+# Eye tracking analysis - Load all metrics together
+# ----------------------------------------------------------------------
+
+eye_tracking_records: List[Dict[str, object]] = []
+eye_tracking_errors: Dict[str, List[str]] = {
+    "saccade": [],
+    "pupil": [],
+    "eye_position": [],
+}
+
+# Define eye tracking metrics to load
+# Format: (metric_name, column_name, display_name, direction_matters, is_absolute)
+# - direction_matters: whether to separate left/right turns
+# - is_absolute: whether values should be treated as absolute (probability, diameter) vs signed (position, velocity)
+eye_metrics_config = [
+    ("saccade", SACCADE_COLUMN, "Saccade Probability", False, True),  # ✓ COMBINED, ABSOLUTE (probability 0-1)
+    ("pupil", PUPIL_COLUMN, "Pupil Diameter", False, True),           # ✓ COMBINED, ABSOLUTE (size always positive)
+    ("eye_position", EYE_POSITION_COLUMN, "Eye Position (X)", True, False),  # × SEPARATED, SIGNED (position can be + or -)
+]
+
+# Optional: Check available columns in first CSV file (for debugging)
+SHOW_AVAILABLE_COLUMNS = False  # Set to True to see what columns are in your CSV files
+
+if not results_df.empty:
+    n_files_processed = 0
+    n_files_with_data = {"saccade": 0, "pupil": 0, "eye_position": 0}
+    
+    # Show available columns from first file (if requested)
+    if SHOW_AVAILABLE_COLUMNS:
+        first_csv = Path(results_df.iloc[0]["csv_path"])
+        if first_csv.exists():
+            first_df = pd.read_csv(first_csv)
+            print(f"\n📋 Available columns in {first_csv.name}:")
+            eye_related_cols = [col for col in first_df.columns if any(
+                keyword in col.lower() for keyword in ["saccade", "pupil", "eye", "ellipse"]
+            )]
+            if eye_related_cols:
+                print(f"   Eye-related columns found:")
+                for col in eye_related_cols:
+                    sample_vals = first_df[col].dropna().head(5)
+                    if len(sample_vals) > 0:
+                        print(f"      • {col}: range {sample_vals.min():.6f} to {sample_vals.max():.6f}")
+            else:
+                print(f"   No eye-related columns found. All columns:")
+                for col in first_df.columns[:20]:  # Show first 20
+                    print(f"      • {col}")
+    
+    for _, row in results_df.iterrows():
+        csv_path = Path(row["csv_path"])
+        n_files_processed += 1
+        
+        record = {
+            "mouse": row["mouse"],
+            "turn_label": row["direction"],
+            "direction": row["direction"],  # Keep original direction
+            "group": row["group"],
+            "event_suffix": row["event_suffix"],
+            "csv_path": row["csv_path"],
+        }
+        
+        # Load all eye tracking metrics for this file
+        for metric_name, column_name, display_name, direction_matters, is_absolute in eye_metrics_config:
+            try:
+                df = load_time_series(csv_path, TIME_COLUMN, column_name, value_alias="value")
+                
+                if df.empty:
+                    raise ValueError(f"Empty dataframe after loading {column_name}")
+                
+                # For absolute metrics (probability, diameter), use absolute values
+                # - Probability: Always 0-1, no negative values (treat as absolute magnitude)
+                # - Diameter: Always positive (size measure)
+                # For signed metrics (position), keep original sign
+                # - Position: Can be left (-) or right (+) of center
+                if is_absolute:
+                    df["value"] = df["value"].abs()
+                
+                # Calculate pre and post means
+                pre_mask = (df["time"] >= PRE_WINDOW[0]) & (df["time"] < PRE_WINDOW[1])
+                post_mask = (df["time"] >= POST_WINDOW[0]) & (df["time"] < POST_WINDOW[1])
+                
+                pre_mean = float(df.loc[pre_mask, "value"].mean()) if pre_mask.any() else float("nan")
+                post_mean = float(df.loc[post_mask, "value"].mean()) if post_mask.any() else float("nan")
+                
+                # Calculate peak value in analysis window
+                peak_mask = (df["time"] >= ANALYSIS_WINDOW_MEAN_PEAK[0]) & (df["time"] <= ANALYSIS_WINDOW_MEAN_PEAK[1])
+                if peak_mask.any():
+                    if is_absolute:
+                        peak_val = float(df.loc[peak_mask, "value"].max())  # Already absolute
+                    else:
+                        peak_val = float(df.loc[peak_mask, "value"].abs().max())  # Take abs for signed
+                else:
+                    peak_val = float("nan")
+                
+                # Add metrics with prefixes
+                record[f"{metric_name}_pre_mean"] = pre_mean
+                record[f"{metric_name}_post_mean"] = post_mean
+                record[f"{metric_name}_peak"] = peak_val
+                n_files_with_data[metric_name] += 1
+                
+            except Exception as exc:  # noqa: BLE001
+                error_msg = f"{csv_path.name}: {exc}"
+                eye_tracking_errors[metric_name].append(error_msg)
+                record[f"{metric_name}_pre_mean"] = float("nan")
+                record[f"{metric_name}_post_mean"] = float("nan")
+                record[f"{metric_name}_peak"] = float("nan")
+        
+        eye_tracking_records.append(record)
+    
+    print(f"\n📊 Eye tracking data loading summary:")
+    print(f"   Total files processed: {n_files_processed}")
+    for metric_name in ["saccade", "pupil", "eye_position"]:
+        n_success = n_files_with_data[metric_name]
+        n_failed = len(eye_tracking_errors[metric_name])
+        print(f"   {metric_name}: {n_success} succeeded, {n_failed} failed")
+
+eye_tracking_df = pd.DataFrame(eye_tracking_records)
+
+# Data range diagnostics - check if values are in expected ranges
+if not eye_tracking_df.empty:
+    print(f"\n📊 Data range diagnostics (raw values from CSV):")
+    for metric_name in ["saccade", "pupil", "eye_position"]:
+        post_col = f"{metric_name}_post_mean"
+        if post_col in eye_tracking_df.columns:
+            values = eye_tracking_df[post_col].dropna()
+            if len(values) > 0:
+                print(f"   {metric_name}_post_mean: min={values.min():.6f}, max={values.max():.6f}, mean={values.mean():.6f}")
+                if metric_name == "saccade" and values.max() < 0.01:
+                    print(f"      ⚠️ WARNING: Saccade probability values are very small (< 0.01)")
+                    print(f"      ⚠️ This might be per-frame probability, or the data may need different column")
+                    print(f"      ⚠️ Expected range: 0-1 for probability, but found: {values.min():.6f}-{values.max():.6f}")
+
+# Save combined eye tracking results
+if OUTPUT_DIR is not None and not eye_tracking_df.empty:
+    eye_tracking_df.to_csv(OUTPUT_DIR / "eye_tracking_metrics_per_file.csv", index=False)
+    print(f"✅ Saved: eye_tracking_metrics_per_file.csv")
+
+eye_tracking_df
+
+
+# %%
+# Report eye tracking loading errors
+# ----------------------------------------------------------------------
+
+total_errors = sum(len(errors) for errors in eye_tracking_errors.values())
+if total_errors > 0:
+    print(f"\n⚠️ Eye tracking loading errors details:")
+    for metric_name, errors in eye_tracking_errors.items():
+        if errors:
+            print(f"\n  {metric_name.upper()}: {len(errors)} files failed")
+            # Show first 3 errors
+            for i, error in enumerate(errors[:3]):
+                print(f"    {i+1}. {error}")
+            if len(errors) > 3:
+                print(f"    ... and {len(errors)-3} more")
+else:
+    print(f"✅ All eye tracking metrics loaded successfully!")
+
+
+# %%
+# Aggregate eye tracking metrics per mouse
+# ----------------------------------------------------------------------
+# For saccade and pupil: average across all turns
+# For eye_position: keep left and right turns SEPARATE
+
+if eye_tracking_df.empty:
+    eye_tracking_per_mouse = pd.DataFrame()
+    eye_position_per_mouse = pd.DataFrame()
+else:
+    # Saccade and Pupil: aggregate across ALL turns (direction doesn't matter)
+    saccade_pupil_cols = {
+        "saccade_post_mean": "mean",
+        "saccade_peak": "mean",
+        "pupil_post_mean": "mean",
+        "pupil_peak": "mean",
+    }
+    # Only aggregate columns that exist
+    saccade_pupil_cols = {k: v for k, v in saccade_pupil_cols.items() if k in eye_tracking_df.columns}
+    
+    if saccade_pupil_cols:
+        eye_tracking_per_mouse = eye_tracking_df.groupby(["group", "mouse"], dropna=False).agg(
+            saccade_pupil_cols
+        ).reset_index()
+    else:
+        eye_tracking_per_mouse = pd.DataFrame()
+    
+    # Eye Position: keep direction SEPARATE (left vs right turns matter!)
+    eye_position_cols = {
+        "eye_position_post_mean": "mean",
+        "eye_position_peak": "mean",
+    }
+    eye_position_cols = {k: v for k, v in eye_position_cols.items() if k in eye_tracking_df.columns}
+    
+    if eye_position_cols:
+        eye_position_per_mouse = eye_tracking_df.groupby(
+            ["group", "mouse", "direction"], dropna=False
+        ).agg(eye_position_cols).reset_index()
+    else:
+        eye_position_per_mouse = pd.DataFrame()
+    
+    # Save per-mouse aggregated metrics
+    if OUTPUT_DIR is not None:
+        if not eye_tracking_per_mouse.empty:
+            eye_tracking_per_mouse.to_csv(OUTPUT_DIR / "saccade_pupil_metrics_per_mouse.csv", index=False)
+            print(f"✅ Saved: saccade_pupil_metrics_per_mouse.csv")
+        if not eye_position_per_mouse.empty:
+            eye_position_per_mouse.to_csv(OUTPUT_DIR / "eye_position_metrics_per_mouse.csv", index=False)
+            print(f"✅ Saved: eye_position_metrics_per_mouse.csv")
+
+print("\n📊 Saccade & Pupil metrics (averaged across turn directions):")
+display(eye_tracking_per_mouse if not eye_tracking_per_mouse.empty else "No data")
+
+print("\n📊 Eye Position metrics (separated by turn direction):")
+display(eye_position_per_mouse if not eye_position_per_mouse.empty else "No data")
+
+
+# %%
+# Load time traces for all eye tracking metrics for plotting
+# ----------------------------------------------------------------------
+
+eye_trace_records = {
+    "saccade": [],
+    "pupil": [],
+    "eye_position": [],
+}
+
+if not results_df.empty:
+    n_traces_loaded = {"saccade": 0, "pupil": 0, "eye_position": 0}
+    
+    for _, row in results_df.iterrows():
+        csv_path = Path(row["csv_path"])
+        
+        for metric_name, column_name, display_name, direction_matters, is_absolute in eye_metrics_config:
+            try:
+                df = load_time_series(csv_path, TIME_COLUMN, column_name, value_alias="value")
+                
+                if df.empty:
+                    continue
+                
+                # For absolute metrics (probability, diameter), use absolute values
+                if is_absolute:
+                    df["value"] = df["value"].abs()
+                
+                df["group"] = row["group"]
+                df["mouse"] = row["mouse"]
+                df["direction"] = row["direction"]  # Keep direction info
+                df["metric"] = display_name
+                eye_trace_records[metric_name].append(df)
+                n_traces_loaded[metric_name] += 1
+                
+            except Exception as exc:  # noqa: BLE001
+                # Silently skip - errors already reported in the loading section
+                continue
+    
+    print(f"\n📊 Time traces loaded:")
+    for metric_name in ["saccade", "pupil", "eye_position"]:
+        print(f"   {metric_name}: {n_traces_loaded[metric_name]} traces")
+
+# Create trace dataframes
+eye_traces = {}
+for metric_name in ["saccade", "pupil", "eye_position"]:
+    if eye_trace_records[metric_name]:
+        eye_traces[metric_name] = pd.concat(eye_trace_records[metric_name], ignore_index=True)
+        print(f"   ✅ {metric_name}: {len(eye_traces[metric_name])} total data points")
+    else:
+        eye_traces[metric_name] = pd.DataFrame()
+        print(f"   ⚠️ {metric_name}: No data available")
+
+
+# %%
+# Compute averaged traces for each eye metric
+# ----------------------------------------------------------------------
+# NOTE: Saccade and Pupil average across ALL turns (left + right)
+#       Eye Position keeps left and right turns SEPARATE
+
+eye_avg_traces = {}
+
+for metric_name, column_name, display_name, direction_matters, is_absolute in eye_metrics_config:
+    if not eye_traces[metric_name].empty:
+        if direction_matters:
+            # Eye position: keep direction separate
+            # Per-mouse average first (within each direction)
+            per_mouse = (
+                eye_traces[metric_name]
+                .groupby(["group", "mouse", "direction", "time"], dropna=False)["value"]
+                .mean()
+                .reset_index()
+            )
+            
+            # Then average across mice (within each direction)
+            avg_trace = (
+                per_mouse
+                .groupby(["group", "direction", "time"], dropna=False)
+                .agg(
+                    mean_value=("value", "mean"),
+                    sem_value=("value", lambda x: sem(x) if len(x.dropna()) > 1 else 0.0),
+                    n_mice=("mouse", "nunique"),
+                )
+                .reset_index()
+            )
+        else:
+            # Saccade and Pupil: average across ALL turns
+            # Per-mouse average first
+            per_mouse = (
+                eye_traces[metric_name]
+                .groupby(["group", "mouse", "time"], dropna=False)["value"]
+                .mean()
+                .reset_index()
+            )
+            
+            # Then average across mice
+            avg_trace = (
+                per_mouse
+                .groupby(["group", "time"], dropna=False)
+                .agg(
+                    mean_value=("value", "mean"),
+                    sem_value=("value", lambda x: sem(x) if len(x.dropna()) > 1 else 0.0),
+                    n_mice=("mouse", "nunique"),
+                )
+                .reset_index()
+            )
+        
+        avg_trace["metric"] = display_name
+        avg_trace["is_absolute"] = is_absolute  # Store for reference
+        eye_avg_traces[metric_name] = avg_trace
+        print(f"   ✅ Computed avg traces for {metric_name}: {len(avg_trace)} time points")
+    else:
+        eye_avg_traces[metric_name] = pd.DataFrame()
+        print(f"   ⚠️ No traces to average for {metric_name}")
+
+# Save averaged traces with more descriptive column names
+if OUTPUT_DIR is not None:
+    n_saved = 0
+    for metric_name, df in eye_avg_traces.items():
+        if not df.empty:
+            # Rename columns for clarity in CSV output
+            df_save = df.copy()
+            
+            # Rename based on metric type for better readability
+            if metric_name == "saccade":
+                df_save = df_save.rename(columns={
+                    "mean_value": "mean_probability",
+                    "sem_value": "sem_probability"
+                })
+            elif metric_name == "pupil":
+                df_save = df_save.rename(columns={
+                    "mean_value": "mean_diameter",
+                    "sem_value": "sem_diameter"
+                })
+            elif metric_name == "eye_position":
+                df_save = df_save.rename(columns={
+                    "mean_value": "mean_position",
+                    "sem_value": "sem_position"
+                })
+            
+            df_save.to_csv(OUTPUT_DIR / f"eye_{metric_name}_avg_traces.csv", index=False)
+            print(f"✅ Saved: eye_{metric_name}_avg_traces.csv ({len(df_save)} rows)")
+            n_saved += 1
+    if n_saved == 0:
+        print("⚠️ No averaged traces to save (all dataframes empty)")
+
+
+# %%
+# Plot averaged traces for all eye metrics
+# ----------------------------------------------------------------------
+# Saccade and Pupil: 1 panel each (averaged across turns)
+# Eye Position: 2 panels (left and right turns separate)
+
+plot_colors = {
+    "saccade": "#2ca02c",      # Green
+    "pupil": "#9467bd",        # Purple  
+    "eye_position_left": "#d62728",   # Red
+    "eye_position_right": "#ff7f0e",  # Orange
+}
+
+plot_labels = {
+    "saccade": "Saccade Probability",
+    "pupil": "Pupil Diameter",
+    "eye_position": "Eye Position (X)",
+}
+
+if any(not df.empty for df in eye_avg_traces.values()):
+    # Create figure with 4 subplots: saccade, pupil, eye_pos_left, eye_pos_right
+    fig, axes = plt.subplots(1, 4, figsize=(18, 4), sharey=False)
+    
+    plot_idx = 0
+    
+    # Plot Saccade and Pupil (averaged across turns)
+    for metric_name in ["saccade", "pupil"]:
+        ax = axes[plot_idx]
+        avg_df = eye_avg_traces[metric_name]
+        
+        if avg_df.empty:
+            ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title(plot_labels[metric_name])
+            ax.axis("off")
+            plot_idx += 1
+            continue
+        
+        # Plot for each group
+        for group_name in ["Apply halt", "No halt"]:
+            subset = avg_df[avg_df["group"] == group_name]
+            if subset.empty:
+                continue
+            
+            color = plot_colors[metric_name]
+            alpha = 1.0 if group_name == "Apply halt" else 0.6
+            linestyle = "-" if group_name == "Apply halt" else "--"
+            
+            ax.plot(subset["time"], subset["mean_value"], 
+                   color=color, linewidth=1.5, alpha=alpha, linestyle=linestyle,
+                   label=group_name)
+            
+            if "sem_value" in subset.columns:
+                upper = subset["mean_value"] + subset["sem_value"].fillna(0)
+                lower = subset["mean_value"] - subset["sem_value"].fillna(0)
+                ax.fill_between(subset["time"], lower, upper, 
+                               color=color, alpha=0.15)
+        
+        ax.axvline(0, color="black", linestyle="--", linewidth=1)
+        ax.axhline(0, color="grey", linestyle=":", linewidth=0.8)
+        ax.set_title(plot_labels[metric_name], fontsize=11)
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel(plot_labels[metric_name])
+        ax.legend(fontsize=9, loc='best')
+        ax.grid(True, alpha=0.3)
+        plot_idx += 1
+    
+    # Plot Eye Position (separate for left and right turns)
+    eye_pos_df = eye_avg_traces.get("eye_position", pd.DataFrame())
+    
+    for turn_direction in ["left", "right"]:
+        ax = axes[plot_idx]
+        
+        if eye_pos_df.empty or "direction" not in eye_pos_df.columns:
+            ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title(f"Eye Position | {turn_direction.capitalize()}")
+            ax.axis("off")
+            plot_idx += 1
+            continue
+        
+        direction_data = eye_pos_df[eye_pos_df["direction"] == turn_direction]
+        
+        if direction_data.empty:
+            ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title(f"Eye Position | {turn_direction.capitalize()}")
+            ax.axis("off")
+            plot_idx += 1
+            continue
+        
+        # Plot for each group
+        for group_name in ["Apply halt", "No halt"]:
+            subset = direction_data[direction_data["group"] == group_name]
+            if subset.empty:
+                continue
+            
+            color = plot_colors[f"eye_position_{turn_direction}"]
+            alpha = 1.0 if group_name == "Apply halt" else 0.6
+            linestyle = "-" if group_name == "Apply halt" else "--"
+            
+            ax.plot(subset["time"], subset["mean_value"], 
+                   color=color, linewidth=1.5, alpha=alpha, linestyle=linestyle,
+                   label=group_name)
+            
+            if "sem_value" in subset.columns:
+                upper = subset["mean_value"] + subset["sem_value"].fillna(0)
+                lower = subset["mean_value"] - subset["sem_value"].fillna(0)
+                ax.fill_between(subset["time"], lower, upper, 
+                               color=color, alpha=0.15)
+        
+        ax.axvline(0, color="black", linestyle="--", linewidth=1)
+        ax.axhline(0, color="grey", linestyle=":", linewidth=0.8)
+        ax.set_title(f"Eye Position (X) | {turn_direction.capitalize()} turns", fontsize=11)
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Eye Position (X)")
+        ax.legend(fontsize=9, loc='best')
+        ax.grid(True, alpha=0.3)
+        plot_idx += 1
+    
+    plt.suptitle("Eye Tracking Metrics - Averaged Traces", fontsize=13, y=1.02)
+    plt.tight_layout()
+    
+    if OUTPUT_DIR is not None:
+        output_path = OUTPUT_DIR / "eye_tracking_avg_traces.pdf"
+        fig.savefig(output_path, format="pdf", bbox_inches="tight")
+        print(f"✅ Saved: {output_path}")
+    
+    plt.show()
+    plt.close(fig)
+else:
+    print("⚠️ No eye tracking traces available for plotting")
+
+
+# %%
+# Combined comparison plot: Saccade & Pupil (Apply halt vs No halt)
+# ----------------------------------------------------------------------
+
+eye_metric_specs = [
+    ("saccade_post_mean", f"Saccade probability\n{ANALYSIS_WINDOW_MEAN_PEAK[0]}-{ANALYSIS_WINDOW_MEAN_PEAK[1]}s"),
+    ("pupil_post_mean", f"Pupil diameter\n{ANALYSIS_WINDOW_MEAN_PEAK[0]}-{ANALYSIS_WINDOW_MEAN_PEAK[1]}s"),
+]
+eye_plot_groups = ["No halt", "Apply halt"]
+eye_tracking_stats_df = pd.DataFrame()
+
+if eye_tracking_per_mouse.empty:
+    print("⚠️ No per-mouse saccade/pupil metrics available for comparison")
+else:
+    eye_mouse_colors = assign_mouse_colors_consistent(eye_tracking_per_mouse["mouse"].dropna().unique())
+    
+    subplot_width_cm = 6.5
+    subplot_height_cm = 7
+    fig_width = len(eye_metric_specs) * subplot_width_cm / 2.54
+    fig_height = subplot_height_cm / 2.54
+    fig, axes = plt.subplots(1, len(eye_metric_specs), figsize=(fig_width, fig_height), sharey=False)
+    
+    mean_handles = []
+    eye_mouse_handles: Dict[str, object] = {}
+    eye_stats_records: List[Dict[str, object]] = []
+    
+    for ax, (metric, label) in zip(axes, eye_metric_specs):
+        pivot = eye_tracking_per_mouse.pivot(index="mouse", columns="group", values=metric)
+        groups_present = [group for group in eye_plot_groups if group in pivot.columns]
+        
+        if len(groups_present) < 2:
+            ax.text(0.5, 0.5, "Insufficient data", ha="center", va="center")
+            ax.axis("off")
+            continue
+        
+        group_a, group_b = groups_present[0], groups_present[1]
+        stats_result = compute_paired_t_test(pivot, group_a, group_b)
+        stats_result.update({
+            "metric": metric,
+            "metric_label": label.replace('\n', ' '),
+            "group_a": group_a,
+            "group_b": group_b,
+        })
+        eye_stats_records.append(stats_result)
+        
+        x_positions = np.arange(len(groups_present), dtype=float)
+        
+        # Plot individual mice
+        for mouse in pivot.index:
+            values = pivot.loc[mouse, groups_present]
+            if values.isna().all():
+                continue
+            line, = ax.plot(
+                x_positions,
+                values.to_numpy(dtype=float),
+                marker="o",
+                linewidth=1.1,
+                alpha=0.65,
+                color=eye_mouse_colors.get(mouse, "#1f77b4"),
+                zorder=2,
+            )
+            eye_mouse_handles.setdefault(mouse, line)
+        
+        # Plot group means
+        group_means = pivot[groups_present].mean(axis=0)
+        group_sems = pivot[groups_present].apply(lambda col: sem(col.dropna()), axis=0)
+        mean_values = group_means.to_numpy(dtype=float)
+        sem_values = group_sems.to_numpy(dtype=float)
+        
+        valid_mask = np.isfinite(mean_values) & np.isfinite(sem_values)
+        if valid_mask.any():
+            x_valid = x_positions[valid_mask]
+            mean_valid = mean_values[valid_mask]
+            sem_valid = sem_values[valid_mask]
+            ax.fill_between(
+                x_valid,
+                mean_valid - sem_valid,
+                mean_valid + sem_valid,
+                color="#b3b3b3",
+                alpha=0.3,
+                zorder=1,
+                linewidth=0,
+            )
+        
+        error_container = ax.errorbar(
+            x_positions,
+            mean_values,
+            yerr=sem_values,
+            fmt="o-",
+            color="#333333",
+            linewidth=2.1,
+            capsize=4,
+            label="Mean ± SEM",
+            zorder=3,
+        )
+        mean_handles.append(error_container)
+        
+        ax.set_xticks(x_positions)
+        ax.set_xticklabels(groups_present)
+        ax.set_xlim(-0.3, len(groups_present) - 1 + 0.31)
+        ax.set_title(label)
+        ax.set_ylabel(label.replace('\n', ' '))
+        ax.grid(True, which="both", axis="y", linestyle=":", linewidth=0.7)
+    
+    # Add legend
+    legend_handles = list(eye_mouse_handles.values())
+    legend_labels = list(eye_mouse_handles.keys())
+    if mean_handles:
+        legend_handles.append(mean_handles[0].lines[0])
+        legend_labels.append("Mean ± SEM")
+    if legend_handles:
+        fig.legend(
+            legend_handles,
+            legend_labels,
+            loc="center left",
+            bbox_to_anchor=(0.85, 0.5),
+            borderaxespad=0.0,
+            frameon=True,
+            fontsize=8,
+        )
+    
+    fig.subplots_adjust(left=0, right=0.84, bottom=0.18, top=0.92, wspace=0.4)
+    if OUTPUT_DIR is not None:
+        fig.savefig(OUTPUT_DIR / "saccade_pupil_metric_comparisons.pdf", format="pdf", bbox_inches="tight")
+        print(f"✅ Saved: saccade_pupil_metric_comparisons.pdf")
+    plt.show()
+    plt.close(fig)
+    
+    # Save statistics
+    if eye_stats_records:
+        eye_tracking_stats_df = pd.DataFrame(eye_stats_records)
+        display(Markdown("#### Saccade & Pupil metrics paired t-tests"))
+        display(eye_tracking_stats_df)
+        if OUTPUT_DIR is not None:
+            eye_tracking_stats_df.to_csv(OUTPUT_DIR / "saccade_pupil_metrics_ttests.csv", index=False)
+            print(f"✅ Saved: saccade_pupil_metrics_ttests.csv")
+
+
+# %%
+# Eye Position comparison plot (Apply halt vs No halt, separated by turn direction)
+# ----------------------------------------------------------------------
+
+eye_position_metric_specs = [
+    ("eye_position_post_mean", f"Eye position (X)\n{ANALYSIS_WINDOW_MEAN_PEAK[0]}-{ANALYSIS_WINDOW_MEAN_PEAK[1]}s"),
+]
+eye_position_stats_df = pd.DataFrame()
+
+if eye_position_per_mouse.empty:
+    print("⚠️ No per-mouse eye position metrics available for comparison")
+else:
+    print(f"\n📊 Eye position comparison (separated by turn direction)")
+    
+    # Create separate plots for left and right turns
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4.5), sharey=False)
+    
+    eye_pos_mouse_colors = assign_mouse_colors_consistent(eye_position_per_mouse["mouse"].dropna().unique())
+    eye_pos_stats_records = []
+    
+    for ax, turn_direction in zip(axes, ["left", "right"]):
+        direction_data = eye_position_per_mouse[eye_position_per_mouse["direction"] == turn_direction]
+        
+        if direction_data.empty:
+            ax.text(0.5, 0.5, f"No data for {turn_direction} turns", ha="center", va="center")
+            ax.axis("off")
+            continue
+        
+        metric = "eye_position_post_mean"
+        pivot = direction_data.pivot(index="mouse", columns="group", values=metric)
+        groups_present = [group for group in eye_plot_groups if group in pivot.columns]
+        
+        if len(groups_present) < 2:
+            ax.text(0.5, 0.5, "Insufficient data", ha="center", va="center")
+            ax.axis("off")
+            continue
+        
+        # Compute statistics
+        group_a, group_b = groups_present[0], groups_present[1]
+        stats_result = compute_paired_t_test(pivot, group_a, group_b)
+        stats_result.update({
+            "metric": f"eye_position_post_mean_{turn_direction}",
+            "metric_label": f"Eye position (X) | {turn_direction} turns",
+            "direction": turn_direction,
+            "group_a": group_a,
+            "group_b": group_b,
+        })
+        eye_pos_stats_records.append(stats_result)
+        
+        x_positions = np.arange(len(groups_present), dtype=float)
+        
+        # Plot individual mice
+        for mouse in pivot.index:
+            values = pivot.loc[mouse, groups_present]
+            if values.isna().all():
+                continue
+            ax.plot(
+                x_positions,
+                values.to_numpy(dtype=float),
+                marker="o",
+                linewidth=1.1,
+                alpha=0.65,
+                color=eye_pos_mouse_colors.get(mouse, "#1f77b4"),
+                zorder=2,
+            )
+        
+        # Plot group means
+        group_means = pivot[groups_present].mean(axis=0)
+        group_sems = pivot[groups_present].apply(lambda col: sem(col.dropna()), axis=0)
+        mean_values = group_means.to_numpy(dtype=float)
+        sem_values = group_sems.to_numpy(dtype=float)
+        
+        valid_mask = np.isfinite(mean_values) & np.isfinite(sem_values)
+        if valid_mask.any():
+            x_valid = x_positions[valid_mask]
+            mean_valid = mean_values[valid_mask]
+            sem_valid = sem_values[valid_mask]
+            ax.fill_between(
+                x_valid,
+                mean_valid - sem_valid,
+                mean_valid + sem_valid,
+                color="#b3b3b3",
+                alpha=0.3,
+                zorder=1,
+                linewidth=0,
+            )
+        
+        ax.errorbar(
+            x_positions,
+            mean_values,
+            yerr=sem_values,
+            fmt="o-",
+            color="#333333",
+            linewidth=2.1,
+            capsize=4,
+            label="Mean ± SEM",
+            zorder=3,
+        )
+        
+        ax.set_xticks(x_positions)
+        ax.set_xticklabels(groups_present)
+        ax.set_xlim(-0.3, len(groups_present) - 1 + 0.31)
+        ax.set_title(f"Eye Position (X) | {turn_direction.capitalize()} turns")
+        ax.set_ylabel("Eye Position (X)")
+        ax.grid(True, which="both", axis="y", linestyle=":", linewidth=0.7)
+    
+    plt.suptitle(f"Eye Position Comparison\n{ANALYSIS_WINDOW_MEAN_PEAK[0]}-{ANALYSIS_WINDOW_MEAN_PEAK[1]}s post-turn", 
+                 fontsize=12, y=1.02)
+    plt.tight_layout()
+    
+    if OUTPUT_DIR is not None:
+        fig.savefig(OUTPUT_DIR / "eye_position_metric_comparisons.pdf", format="pdf", bbox_inches="tight")
+        print(f"✅ Saved: eye_position_metric_comparisons.pdf")
+    plt.show()
+    plt.close(fig)
+    
+    # Save statistics
+    if eye_pos_stats_records:
+        eye_position_stats_df = pd.DataFrame(eye_pos_stats_records)
+        display(Markdown("#### Eye position metrics paired t-tests (by turn direction)"))
+        display(eye_position_stats_df)
+        if OUTPUT_DIR is not None:
+            eye_position_stats_df.to_csv(OUTPUT_DIR / "eye_position_metrics_ttests.csv", index=False)
+            print(f"✅ Saved: eye_position_metrics_ttests.csv")
 
 
 # %% [markdown]
@@ -1424,6 +2220,14 @@ else:
         display(Markdown(f"### {title}"))
         display(subdf.drop(columns=["group"], errors="ignore").reset_index(drop=True))
 
+
+# %%
+# Turn timing and magnitude metrics
+# ----------------------------------------------------------------------
+
+if results_df.empty:
+    timing_summary_df = pd.DataFrame()
+    timing_mouse_df = pd.DataFrame()
 
 # %%
 # Turn timing and magnitude metrics
@@ -1673,6 +2477,7 @@ else:
         fig.subplots_adjust(left=0, right=0.84, bottom=0.18, top=0.92, wspace=0.4)
         if OUTPUT_DIR is not None:
             fig.savefig(OUTPUT_DIR / "turning_metric_comparisons.pdf", format="pdf", bbox_inches="tight")
+            print(f"✅ Saved: turning_metric_comparisons.pdf")
         plt.show()
         plt.close(fig)
 
@@ -1682,6 +2487,7 @@ else:
             display(turning_stats_df)
             if OUTPUT_DIR is not None:
                 turning_stats_df.to_csv(OUTPUT_DIR / "turning_metrics_ttests.csv", index=False)
+                print(f"✅ Saved: turning_metrics_ttests.csv")
 
 
 # %%
@@ -1976,4 +2782,354 @@ if not alt_metrics_by_mouse.empty:
         
         plt.show()
         plt.close(fig)
+
+
+# %% [markdown]
+# ### Single Mouse Plots - Eye Tracking, Turning, and Running
+# Plot individual mouse data (comparing Apply halt vs No halt conditions)
+
+# %%
+# Single Mouse Eye Tracking Plot
+# ----------------------------------------------------------------------
+# NOTE: This uses the already-loaded trace data (eye_traces dictionary)
+# which contains the same data as the saved CSV files, just in memory.
+# Mean and SEM are calculated across trials for the specified mouse.
+
+# Configure which mouse to plot
+SINGLE_MOUSE_ID = "B6J2718"  # Change this to plot a different mouse
+
+if not eye_traces:
+    print(f"⚠️ No eye tracking traces available for plotting")
+else:
+    print(f"\n📊 Creating single-mouse eye tracking plot for: {SINGLE_MOUSE_ID}")
+    
+    # Check if mouse exists in the data
+    available_mice = set()
+    for metric_name, df in eye_traces.items():
+        if not df.empty and "mouse" in df.columns:
+            available_mice.update(df["mouse"].unique())
+    
+    if SINGLE_MOUSE_ID not in available_mice:
+        print(f"⚠️ Mouse {SINGLE_MOUSE_ID} not found in eye tracking data")
+        print(f"   Available mice: {sorted(available_mice)}")
+    else:
+        # Create 4-panel figure (saccade, pupil, eye_pos_left, eye_pos_right)
+        fig, axes = plt.subplots(1, 4, figsize=(18, 4), sharey=False)
+        
+        plot_idx = 0
+        
+        # Plot Saccade and Pupil (averaged across turns for this mouse)
+        for metric_name in ["saccade", "pupil"]:
+            ax = axes[plot_idx]
+            metric_traces = eye_traces.get(metric_name, pd.DataFrame())
+            
+            if metric_traces.empty:
+                ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
+                ax.set_title(f"{plot_labels[metric_name]} | {SINGLE_MOUSE_ID}")
+                ax.axis("off")
+                plot_idx += 1
+                continue
+            
+            # Filter for this mouse
+            mouse_data = metric_traces[metric_traces["mouse"] == SINGLE_MOUSE_ID]
+            
+            if mouse_data.empty:
+                ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
+                ax.set_title(f"{plot_labels[metric_name]} | {SINGLE_MOUSE_ID}")
+                ax.axis("off")
+                plot_idx += 1
+                continue
+            
+            # Diagnostic: show how many unique trials/files per group
+            if metric_name == "saccade" and plot_idx == 0:  # Print once
+                for grp in mouse_data["group"].unique():
+                    grp_data = mouse_data[mouse_data["group"] == grp]
+                    # Count unique csv files if available
+                    if "csv_path" in grp_data.columns:
+                        n_trials = grp_data["csv_path"].nunique()
+                    else:
+                        # Estimate from number of rows at a single time point
+                        sample_time = grp_data["time"].iloc[0] if not grp_data.empty else None
+                        if sample_time is not None:
+                            n_trials = len(grp_data[grp_data["time"] == sample_time])
+                        else:
+                            n_trials = "unknown"
+                    print(f"   {metric_name} | {grp}: {n_trials} trials for {SINGLE_MOUSE_ID}")
+            
+            # Average across trials for each group with SEM
+            # This averages all trials (different turning events) for this mouse
+            mouse_avg = (
+                mouse_data.groupby(["group", "time"], dropna=False)
+                .agg(
+                    mean_value=("value", "mean"),
+                    sem_value=("value", lambda x: sem(x) if len(x.dropna()) > 1 else 0.0),
+                    n_trials=("value", "count"),
+                )
+                .reset_index()
+            )
+            
+            # Plot for each group
+            for group_name in ["Apply halt", "No halt"]:
+                subset = mouse_avg[mouse_avg["group"] == group_name]
+                if subset.empty:
+                    continue
+                
+                color = plot_colors[metric_name]
+                alpha = 1.0 if group_name == "Apply halt" else 0.6
+                linestyle = "-" if group_name == "Apply halt" else "--"
+                
+                ax.plot(subset["time"], subset["mean_value"], 
+                       color=color, linewidth=1.5, alpha=alpha, linestyle=linestyle,
+                       label=group_name)
+                
+                # Add SEM shading
+                if "sem_value" in subset.columns:
+                    upper = subset["mean_value"] + subset["sem_value"].fillna(0)
+                    lower = subset["mean_value"] - subset["sem_value"].fillna(0)
+                    ax.fill_between(subset["time"], lower, upper, 
+                                   color=color, alpha=0.15)
+            
+            ax.axvline(0, color="black", linestyle="--", linewidth=1)
+            ax.axhline(0, color="grey", linestyle=":", linewidth=0.8)
+            ax.set_title(f"{plot_labels[metric_name]}", fontsize=11)
+            ax.set_xlabel("Time (s)")
+            ax.set_ylabel(plot_labels[metric_name])
+            ax.legend(fontsize=9, loc='best')
+            ax.grid(True, alpha=0.3)
+            plot_idx += 1
+        
+        # Plot Eye Position (separate for left and right turns)
+        eye_pos_traces = eye_traces.get("eye_position", pd.DataFrame())
+        
+        for turn_direction in ["left", "right"]:
+            ax = axes[plot_idx]
+            
+            if eye_pos_traces.empty:
+                ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
+                ax.set_title(f"Eye Position | {turn_direction.capitalize()}")
+                ax.axis("off")
+                plot_idx += 1
+                continue
+            
+            # Filter for this mouse and direction
+            mouse_direction_data = eye_pos_traces[
+                (eye_pos_traces["mouse"] == SINGLE_MOUSE_ID) & 
+                (eye_pos_traces["direction"] == turn_direction)
+            ]
+            
+            if mouse_direction_data.empty:
+                ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
+                ax.set_title(f"Eye Position | {turn_direction.capitalize()}")
+                ax.axis("off")
+                plot_idx += 1
+                continue
+            
+            # Average across trials for each group with SEM
+            mouse_avg = (
+                mouse_direction_data.groupby(["group", "time"], dropna=False)
+                .agg(
+                    mean_value=("value", "mean"),
+                    sem_value=("value", lambda x: sem(x) if len(x.dropna()) > 1 else 0.0),
+                )
+                .reset_index()
+            )
+            
+            # Plot for each group
+            for group_name in ["Apply halt", "No halt"]:
+                subset = mouse_avg[mouse_avg["group"] == group_name]
+                if subset.empty:
+                    continue
+                
+                color = plot_colors[f"eye_position_{turn_direction}"]
+                alpha = 1.0 if group_name == "Apply halt" else 0.6
+                linestyle = "-" if group_name == "Apply halt" else "--"
+                
+                ax.plot(subset["time"], subset["mean_value"], 
+                       color=color, linewidth=1.5, alpha=alpha, linestyle=linestyle,
+                       label=group_name)
+                
+                # Add SEM shading
+                if "sem_value" in subset.columns:
+                    upper = subset["mean_value"] + subset["sem_value"].fillna(0)
+                    lower = subset["mean_value"] - subset["sem_value"].fillna(0)
+                    ax.fill_between(subset["time"], lower, upper, 
+                                   color=color, alpha=0.15)
+            
+            ax.axvline(0, color="black", linestyle="--", linewidth=1)
+            ax.axhline(0, color="grey", linestyle=":", linewidth=0.8)
+            ax.set_title(f"Eye Position (X) | {turn_direction.capitalize()}", fontsize=11)
+            ax.set_xlabel("Time (s)")
+            ax.set_ylabel("Eye Position (X)")
+            ax.legend(fontsize=9, loc='best')
+            ax.grid(True, alpha=0.3)
+            plot_idx += 1
+        
+        plt.suptitle(f"Eye Tracking - Mouse {SINGLE_MOUSE_ID}", fontsize=13, y=1.02)
+        plt.tight_layout()
+        
+        if OUTPUT_DIR is not None:
+            output_path = OUTPUT_DIR / f"eye_tracking_{SINGLE_MOUSE_ID}.pdf"
+            fig.savefig(output_path, format="pdf", bbox_inches="tight")
+            print(f"✅ Saved: {output_path}")
+        
+        plt.show()
+        plt.close(fig)
+
+
+# %%
+# Single Mouse Turning Velocity Plot
+# ----------------------------------------------------------------------
+
+if trace_samples_df.empty:
+    print(f"⚠️ No turning traces available for plotting")
+else:
+    print(f"\n📊 Creating single-mouse turning velocity plot for: {SINGLE_MOUSE_ID}")
+    
+    # Check if mouse exists
+    if SINGLE_MOUSE_ID not in trace_samples_df["mouse"].unique():
+        print(f"⚠️ Mouse {SINGLE_MOUSE_ID} not found in turning data")
+        print(f"   Available mice: {sorted(trace_samples_df['mouse'].unique())}")
+    else:
+        # Filter for this mouse
+        mouse_data = trace_samples_df[trace_samples_df["mouse"] == SINGLE_MOUSE_ID]
+        
+        # Average across trials for each group and direction with SEM
+        mouse_avg = (
+            mouse_data.groupby(["group", "direction", "time"], dropna=False)
+            .agg(
+                mean_velocity=("velocity", "mean"),
+                sem_velocity=("velocity", lambda x: sem(x) if len(x.dropna()) > 1 else 0.0),
+            )
+            .reset_index()
+        )
+        
+        # Create 2x2 plot (left/right x halt/no-halt)
+        fig, axes = plt.subplots(2, 2, figsize=(12, 8), sharex=True, sharey=True)
+        
+        plot_order = [
+            ("Apply halt", "left"),
+            ("Apply halt", "right"),
+            ("No halt", "left"),
+            ("No halt", "right"),
+        ]
+        
+        axes_flat = axes.flatten()
+        
+        for ax, (group_name, direction) in zip(axes_flat, plot_order):
+            subset = mouse_avg[
+                (mouse_avg["group"] == group_name) & 
+                (mouse_avg["direction"] == direction)
+            ]
+            
+            if subset.empty:
+                ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
+                ax.set_title(f"{group_name} | {direction.capitalize()} turns")
+                ax.axis("off")
+                continue
+            
+            # Plot mean line
+            ax.plot(subset["time"], subset["mean_velocity"], color="#1f77b4", linewidth=1.5)
+            
+            # Add SEM shading
+            if "sem_velocity" in subset.columns:
+                upper = subset["mean_velocity"] + subset["sem_velocity"].fillna(0)
+                lower = subset["mean_velocity"] - subset["sem_velocity"].fillna(0)
+                ax.fill_between(subset["time"], lower, upper, color="#1f77b4", alpha=0.2)
+            
+            ax.axvline(0, color="black", linestyle="--", linewidth=1)
+            ax.axhline(0, color="grey", linestyle=":", linewidth=1)
+            ax.set_title(f"{group_name} | {direction.capitalize()} turns")
+            ax.set_xlabel("Time (s)")
+            ax.set_ylabel("Motor velocity (deg/s)")
+            ax.grid(True, alpha=0.3)
+        
+        plt.suptitle(f"Turning Velocity - Mouse {SINGLE_MOUSE_ID}", fontsize=13, y=0.995)
+        plt.tight_layout()
+        
+        if OUTPUT_DIR is not None:
+            output_path = OUTPUT_DIR / f"turning_velocity_{SINGLE_MOUSE_ID}.pdf"
+            fig.savefig(output_path, format="pdf", bbox_inches="tight")
+            print(f"✅ Saved: {output_path}")
+        
+        plt.show()
+        plt.close(fig)
+
+
+# %%
+# Single Mouse Running Velocity Plot  
+# ----------------------------------------------------------------------
+
+if running_trace_samples_df.empty:
+    print(f"⚠️ No running traces available for plotting")
+else:
+    print(f"\n📊 Creating single-mouse running velocity plot for: {SINGLE_MOUSE_ID}")
+    
+    # Check if mouse exists
+    if SINGLE_MOUSE_ID not in running_trace_samples_df["mouse"].unique():
+        print(f"⚠️ Mouse {SINGLE_MOUSE_ID} not found in running data")
+        print(f"   Available mice: {sorted(running_trace_samples_df['mouse'].unique())}")
+    else:
+        # Filter for this mouse
+        mouse_data = running_trace_samples_df[running_trace_samples_df["mouse"] == SINGLE_MOUSE_ID]
+        
+        # Average across all trials for each group with SEM (combining left and right turns)
+        mouse_avg = (
+            mouse_data.groupby(["group", "time"], dropna=False)
+            .agg(
+                mean_velocity=("velocity", "mean"),
+                sem_velocity=("velocity", lambda x: sem(x) if len(x.dropna()) > 1 else 0.0),
+            )
+            .reset_index()
+        )
+        
+        # Create single plot comparing halt vs no-halt
+        fig, ax = plt.subplots(1, 1, figsize=(8, 5))
+        
+        for group_name in ["Apply halt", "No halt"]:
+            subset = mouse_avg[mouse_avg["group"] == group_name]
+            
+            if subset.empty:
+                continue
+            
+            color = "#ff7f0e" if group_name == "Apply halt" else "#2ca02c"
+            linestyle = "-" if group_name == "Apply halt" else "--"
+            
+            # Plot mean line
+            ax.plot(subset["time"], subset["mean_velocity"], 
+                   color=color, linewidth=2, linestyle=linestyle, label=group_name)
+            
+            # Add SEM shading
+            if "sem_velocity" in subset.columns:
+                upper = subset["mean_velocity"] + subset["sem_velocity"].fillna(0)
+                lower = subset["mean_velocity"] - subset["sem_velocity"].fillna(0)
+                ax.fill_between(subset["time"], lower, upper, color=color, alpha=0.2)
+        
+        ax.axvline(0, color="black", linestyle="--", linewidth=1)
+        ax.axhline(0, color="grey", linestyle=":", linewidth=1)
+        ax.set_title(f"Running Velocity - Mouse {SINGLE_MOUSE_ID}", fontsize=12)
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Running velocity (cm/s)")
+        ax.legend(fontsize=10)
+        ax.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        
+        if OUTPUT_DIR is not None:
+            output_path = OUTPUT_DIR / f"running_velocity_{SINGLE_MOUSE_ID}.pdf"
+            fig.savefig(output_path, format="pdf", bbox_inches="tight")
+            print(f"✅ Saved: {output_path}")
+        
+        plt.show()
+        plt.close(fig)
+
+
+# %%
+# Summary: Single mouse plots saved
+# ----------------------------------------------------------------------
+if OUTPUT_DIR is not None:
+    print(f"\n✅ Single-mouse plots for {SINGLE_MOUSE_ID} saved to:")
+    print(f"   {OUTPUT_DIR / f'eye_tracking_{SINGLE_MOUSE_ID}.pdf'}")
+    print(f"   {OUTPUT_DIR / f'turning_velocity_{SINGLE_MOUSE_ID}.pdf'}")
+    print(f"   {OUTPUT_DIR / f'running_velocity_{SINGLE_MOUSE_ID}.pdf'}")
+    print(f"\n💡 To plot a different mouse, change SINGLE_MOUSE_ID at the top of the eye tracking cell")
 
