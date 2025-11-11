@@ -133,9 +133,9 @@ pprint(data_paths)
 #-------------------------------
 # initial variables setup
 #-------------------------------
-time_window_start = -5  # s, FOR PLOTTING PURPOSES
+time_window_start = -6  # s, FOR PLOTTING PURPOSES
 time_window_end = 10  # s, FOR PLOTTING PURPOSES
-baseline_window = (-1, 0)  # s, FOR baselining averages
+baseline_window = (-6, -4)  # s, FOR baselining averages
 plot_width = 14
 saccade_bin_size_s = 0.5  # s, bin size for saccade density analysis (e.g., 0.1 = 100ms, 0.5 = 500ms)
 

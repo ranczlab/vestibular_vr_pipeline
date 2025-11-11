@@ -813,6 +813,134 @@ Then your video parquet files don't contain the eye tracking columns.
 
 ---
 
+## ⚠️ CURRENT ISSUE: Saccade Rate Calculation (2025-11-11)
+
+### **Problem Report:**
+Saccade rate showing as constant high value (~1000 Hz) across entire aligned/averaged plot, instead of varying values showing temporal dynamics.
+
+### **Current Implementation Analysis:**
+
+#### How Saccade Rate is Currently Calculated:
+
+**Step 1: Per-Event Binning (in `compute_saccade_density()`, lines 2087-2209)**
+```python
+# For EACH halt event individually:
+1. Get saccades within this event's window (time_window_start to time_window_end)
+2. Create bin edges: [-5.0, -4.5, -4.0, ..., 9.5, 10.0] with 500ms steps
+3. Count saccades falling in each bin (e.g., bin[0] = 2 saccades)
+4. Calculate rate: bin_rates = bin_counts / saccade_bin_size_s
+   Example: 2 saccades in 500ms bin → 2 / 0.5 = 4 Hz
+5. Assign this rate to EVERY sample in window_data that falls within that bin
+```
+
+**Step 2: Assignment to DataFrame (lines 2197-2208)**
+```python
+for idx, rel_time in enumerate(window_relative_times):
+    bin_idx = np.digitize([rel_time], bin_edges)[0] - 1
+    if 0 <= bin_idx < n_bins:
+        window_data.iloc[idx, ...] = bin_rates[bin_idx]
+```
+
+**Key Point:** If window_data is sampled at 1000 Hz (1ms resolution):
+- Each 500ms bin has ~500 rows in window_data
+- ALL 500 rows get assigned the SAME rate value
+- Example: If bin[0] has rate=4 Hz, then rows at t=0.000s, t=0.001s, t=0.002s, ..., t=0.499s ALL get value 4
+
+**Step 3: Aggregation Across Events (in plotting code)**
+```python
+grouped = aligned_df.groupby("Time (s)")
+mean_saccade = grouped.mean()["saccade_rate_eye1"]
+```
+
+### **Possible Issues:**
+
+#### **Issue 1: Units/Interpretation Confusion**
+- **What user wants:** "Saccade probability in 500ms bins"
+- **What code calculates:** Saccade rate (Hz = saccades/second)
+- **Difference:**
+  - **Probability**: 0 to 1 (or 0% to 100%) → proportion of bins with saccades OR proportion of trials with saccade in this bin
+  - **Rate (Hz)**: 0 to ∞ → saccades per second
+  - **Count**: 0, 1, 2, 3... → raw number of saccades in bin
+
+**Example for 500ms bin:**
+- 2 saccades detected in bin
+- **Current calculation**: 2 / 0.5 = 4 Hz
+- **Possible intended**: 2 saccades (raw count) OR 1.0 (100% probability if any saccade present)
+
+#### **Issue 2: Potential Bug - Wrong Bin Size Used**
+If `self.saccade_bin_size_s` is somehow not 0.5 but much smaller (e.g., 0.001), then:
+- 1 saccade / 0.001 = 1000 Hz ← **This matches the observed value!**
+
+**Diagnostic needed:** Print `self.saccade_bin_size_s` at line 2195 to verify
+
+#### **Issue 3: Over-replication in High-Resolution Data**
+- window_data sampled at 1000 Hz (1ms steps)
+- Assigning same value to all 500 samples per bin
+- Then averaging across events
+
+**This shouldn't cause wrong values BUT:**
+- If there's any issue with time alignment or binning logic, it could amplify errors
+- Creates massive redundancy (same value repeated 500 times per bin)
+
+#### **Issue 4: Aggregation Method**
+Current: Calculate rate per event, then average rates across events
+Alternative: Pool all saccades across all events, then calculate rate
+
+**Example with 10 events, looking at first 500ms bin:**
+- **Current approach:**
+  - Event 1: 1 saccade → 2 Hz
+  - Event 2: 0 saccades → 0 Hz
+  - Event 3: 2 saccades → 4 Hz
+  - Mean rate = (2 + 0 + 4 + ...) / 10 = some average
+  
+- **Alternative approach:**
+  - Total saccades across all 10 events in this bin: 10 saccades
+  - Average per event: 10 / 10 = 1 saccade/event
+  - Rate: 1 / 0.5 = 2 Hz
+  - OR Probability: 7/10 events had at least one saccade = 70%
+
+### **Proposed Solutions (for discussion):**
+
+#### **Option A: Saccade Probability (0 to 1)**
+```python
+# For each bin, calculate: proportion of trials with at least one saccade
+# This would be calculated AFTER pooling across all events, not per-event
+```
+
+#### **Option B: Average Saccade Count per Bin**
+```python
+# Keep raw counts, don't divide by bin_size_s
+# Show average number of saccades per bin across trials
+bin_average_counts = bin_counts  # Don't divide by time
+```
+
+#### **Option C: Fix Current Rate Calculation**
+```python
+# Keep current approach but verify:
+1. self.saccade_bin_size_s is correct (should be 0.5)
+2. bin_counts is correct (should be small integers like 0, 1, 2)
+3. Division is happening correctly
+```
+
+### **Questions for User:**
+
+1. **What do you want to see plotted?**
+   - A) Probability (0 to 1 or 0% to 100%) that a saccade occurs in each bin
+   - B) Average count of saccades per bin (e.g., 0.5, 1.2, 2.0 saccades)
+   - C) Rate in Hz (saccades/second) - current approach
+   - D) Something else?
+
+2. **Expected values:**
+   - For a 500ms bin in your data, roughly how many saccades do you expect?
+   - Should the value vary across time (e.g., more before halt, fewer after)?
+   - What's a typical saccade rate for a mouse (e.g., 1-5 Hz? 10-20 Hz?)?
+
+3. **Diagnostic request:**
+   - Can you print `saccade_bin_size_s` value when running?
+   - Can you check one saccade summary CSV - how many rows (saccades) in a typical 15-second window?
+
+---
+
 ## 🔄 RECENT FIXES (2025-11-11)
 
 ### Fixed Issues:
