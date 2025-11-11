@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: light
 #       format_version: '1.5'
-#       jupytext_version: 1.18.1
+#       jupytext_version: 1.16.7
 #   kernelspec:
 #     display_name: aeon2
 #     language: python
@@ -275,7 +275,7 @@ NaNs_removed = False
 ##########################################################################
 
 data_path = Path(
-    "/home/ikharitonov/RANCZLAB-NAS/data/ONIX/20241125_Cohort1_rotation/Visual_mismatch_day3/B6J2717-2024-12-10T12-17-03"
+    "/Volumes/RanczLab/20241125_Cohort1_rotation/Visual_mismatch_day3/B6J2717-2024-12-10T12-17-03"
 )
 # data_path =
 # Path('/Users/rancze/Documents/Data/vestVR/Cohort1/No_iso_correction/Visual_mismatch_day3/B6J2717-2024-12-10T12-17-03') only has sleap data 1 for testing purposes
@@ -284,7 +284,7 @@ data_path = Path(
 video1_eye = "L" # Options: 'L' or 'R'; which eye does VideoData1 represent? ('L' = Left,'R' = Right)
 debug = True # Set to True to enable debug output and QC plots across all cells (file loading, processing, etc.)
 plot_QC_timeseries = True # plots pop up in new windows, code hangs until plot window is closed - issue for batch processing, but shouldn't be used there anyway 
-plot_saccade_detection_QC = False # plots pop up in new windows, code hangs until plot window is closed - issue for batch processing, but shouldn't be used there anyway 
+plot_saccade_detection_QC = True # plots pop up in new windows, code hangs until plot window is closed - issue for batch processing, but shouldn't be used there anyway 
 blink_instance_score_threshold = 3.8 # hard threshold for blink detection - frames with instance.score below this value are considered blinks
 k1 = 4.5  # adaptive saccade detction threshold (k * SD) for VideoData1 - 3-6 works well
 k2 = 4.5  # adaptive saccade detction threshold (k * SD) for VideoData1 - 3-6 works well
@@ -400,146 +400,146 @@ if VideoData2_Has_Sleap:
     # frame rate for VideoData2
     FPS_2 = 1 / VideoData2["Seconds"].diff().mean()
     print(f"{get_eye_label('VideoData2')}: FPS = {FPS_2}")
-# -
 
-# plot timeseries of coordinates in browser for both VideoData1 and VideoData2
-##########################################################################
-if plot_QC_timeseries:
-    print(
-        "⚠️ Check for long discontinuities and outliers in the data, we will try to deal with them later"
-    )
-    print("ℹ️ Figures open in browser window, takes a bit of time.")
+# +
+# COMMENTED OUT plot timeseries of coordinates in browser for both VideoData1 and VideoData2
+# #########################################################################
+# if plot_QC_timeseries:
+#     print(
+#         "⚠️ Check for long discontinuities and outliers in the data, we will try to deal with them later"
+#     )
+#     print("ℹ️ Figures open in browser window, takes a bit of time.")
 
-    # Helper list variables
-    subplot_titles = (
-        "X coordinates for pupil centre and left-right eye corner",
-        "Y coordinates for pupil centre and left-right eye corner",
-        "X coordinates for iris points",
-        "Y coordinates for iris points",
-    )
-    eye_x = ["left.x", "center.x", "right.x"]
-    eye_y = ["left.y", "center.y", "right.y"]
-    iris_x = ["p1.x", "p2.x", "p3.x", "p4.x", "p5.x", "p6.x", "p7.x", "p8.x"]
-    iris_y = ["p1.y", "p2.y", "p3.y", "p4.y", "p5.y", "p6.y", "p7.y", "p8.y"]
+#     # Helper list variables
+#     subplot_titles = (
+#         "X coordinates for pupil centre and left-right eye corner",
+#         "Y coordinates for pupil centre and left-right eye corner",
+#         "X coordinates for iris points",
+#         "Y coordinates for iris points",
+#     )
+#     eye_x = ["left.x", "center.x", "right.x"]
+#     eye_y = ["left.y", "center.y", "right.y"]
+#     iris_x = ["p1.x", "p2.x", "p3.x", "p4.x", "p5.x", "p6.x", "p7.x", "p8.x"]
+#     iris_y = ["p1.y", "p2.y", "p3.y", "p4.y", "p5.y", "p6.y", "p7.y", "p8.y"]
 
-    # --- VideoData1 ---
-    if VideoData1_Has_Sleap:
-        fig1 = make_subplots(
-            rows=4,
-            cols=1,
-            shared_xaxes=True,
-            vertical_spacing=0.05,
-            subplot_titles=subplot_titles,
-        )
+#     # --- VideoData1 ---
+#     if VideoData1_Has_Sleap:
+#         fig1 = make_subplots(
+#             rows=4,
+#             cols=1,
+#             shared_xaxes=True,
+#             vertical_spacing=0.05,
+#             subplot_titles=subplot_titles,
+#         )
 
-        # Row 1: left.x, center.x, right.x
-        for col in eye_x:
-            fig1.add_trace(
-                go.Scatter(
-                    x=VideoData1["Seconds"], y=VideoData1[col], mode="lines", name=col
-                ),
-                row=1,
-                col=1,
-            )
-        # Row 2: left.y, center.y, right.y
-        for col in eye_y:
-            fig1.add_trace(
-                go.Scatter(
-                    x=VideoData1["Seconds"], y=VideoData1[col], mode="lines", name=col
-                ),
-                row=2,
-                col=1,
-            )
-        # Row 3: p1.x ... p8.x
-        for col in iris_x:
-            fig1.add_trace(
-                go.Scatter(
-                    x=VideoData1["Seconds"], y=VideoData1[col], mode="lines", name=col
-                ),
-                row=3,
-                col=1,
-            )
-        # Row 4: p1.y ... p8.y
-        for col in iris_y:
-            fig1.add_trace(
-                go.Scatter(
-                    x=VideoData1["Seconds"], y=VideoData1[col], mode="lines", name=col
-                ),
-                row=4,
-                col=1,
-            )
+#         # Row 1: left.x, center.x, right.x
+#         for col in eye_x:
+#             fig1.add_trace(
+#                 go.Scatter(
+#                     x=VideoData1["Seconds"], y=VideoData1[col], mode="lines", name=col
+#                 ),
+#                 row=1,
+#                 col=1,
+#             )
+#         # Row 2: left.y, center.y, right.y
+#         for col in eye_y:
+#             fig1.add_trace(
+#                 go.Scatter(
+#                     x=VideoData1["Seconds"], y=VideoData1[col], mode="lines", name=col
+#                 ),
+#                 row=2,
+#                 col=1,
+#             )
+#         # Row 3: p1.x ... p8.x
+#         for col in iris_x:
+#             fig1.add_trace(
+#                 go.Scatter(
+#                     x=VideoData1["Seconds"], y=VideoData1[col], mode="lines", name=col
+#                 ),
+#                 row=3,
+#                 col=1,
+#             )
+#         # Row 4: p1.y ... p8.y
+#         for col in iris_y:
+#             fig1.add_trace(
+#                 go.Scatter(
+#                     x=VideoData1["Seconds"], y=VideoData1[col], mode="lines", name=col
+#                 ),
+#                 row=4,
+#                 col=1,
+#             )
 
-        fig1.update_layout(
-            height=1200,
-            title_text=f"Time series subplots for coordinates [{get_eye_label('VideoData1')}]",
-            showlegend=True,
-        )
-        fig1.update_xaxes(title_text="Seconds", row=4, col=1)
-        fig1.update_yaxes(title_text="X Position", row=1, col=1)
-        fig1.update_yaxes(title_text="Y Position", row=2, col=1)
-        fig1.update_yaxes(title_text="X Position", row=3, col=1)
-        fig1.update_yaxes(title_text="Y Position", row=4, col=1)
+#         fig1.update_layout(
+#             height=1200,
+#             title_text=f"Time series subplots for coordinates [{get_eye_label('VideoData1')}]",
+#             showlegend=True,
+#         )
+#         fig1.update_xaxes(title_text="Seconds", row=4, col=1)
+#         fig1.update_yaxes(title_text="X Position", row=1, col=1)
+#         fig1.update_yaxes(title_text="Y Position", row=2, col=1)
+#         fig1.update_yaxes(title_text="X Position", row=3, col=1)
+#         fig1.update_yaxes(title_text="Y Position", row=4, col=1)
 
-        fig1.show(renderer="browser")
+#         fig1.show(renderer="browser")
 
-    # --- VideoData2 ---
-    if VideoData2_Has_Sleap:
-        fig2 = make_subplots(
-            rows=4,
-            cols=1,
-            shared_xaxes=True,
-            vertical_spacing=0.05,
-            subplot_titles=subplot_titles,
-        )
-        # Row 1: left.x, center.x, right.x
-        for col in eye_x:
-            fig2.add_trace(
-                go.Scatter(
-                    x=VideoData2["Seconds"], y=VideoData2[col], mode="lines", name=col
-                ),
-                row=1,
-                col=1,
-            )
-        # Row 2: left.y, center.y, right.y
-        for col in eye_y:
-            fig2.add_trace(
-                go.Scatter(
-                    x=VideoData2["Seconds"], y=VideoData2[col], mode="lines", name=col
-                ),
-                row=2,
-                col=1,
-            )
-        # Row 3: p1.x ... p8.x
-        for col in iris_x:
-            fig2.add_trace(
-                go.Scatter(
-                    x=VideoData2["Seconds"], y=VideoData2[col], mode="lines", name=col
-                ),
-                row=3,
-                col=1,
-            )
-        # Row 4: p1.y ... p8.y
-        for col in iris_y:
-            fig2.add_trace(
-                go.Scatter(
-                    x=VideoData2["Seconds"], y=VideoData2[col], mode="lines", name=col
-                ),
-                row=4,
-                col=1,
-            )
+#     # --- VideoData2 ---
+#     if VideoData2_Has_Sleap:
+#         fig2 = make_subplots(
+#             rows=4,
+#             cols=1,
+#             shared_xaxes=True,
+#             vertical_spacing=0.05,
+#             subplot_titles=subplot_titles,
+#         )
+#         # Row 1: left.x, center.x, right.x
+#         for col in eye_x:
+#             fig2.add_trace(
+#                 go.Scatter(
+#                     x=VideoData2["Seconds"], y=VideoData2[col], mode="lines", name=col
+#                 ),
+#                 row=1,
+#                 col=1,
+#             )
+#         # Row 2: left.y, center.y, right.y
+#         for col in eye_y:
+#             fig2.add_trace(
+#                 go.Scatter(
+#                     x=VideoData2["Seconds"], y=VideoData2[col], mode="lines", name=col
+#                 ),
+#                 row=2,
+#                 col=1,
+#             )
+#         # Row 3: p1.x ... p8.x
+#         for col in iris_x:
+#             fig2.add_trace(
+#                 go.Scatter(
+#                     x=VideoData2["Seconds"], y=VideoData2[col], mode="lines", name=col
+#                 ),
+#                 row=3,
+#                 col=1,
+#             )
+#         # Row 4: p1.y ... p8.y
+#         for col in iris_y:
+#             fig2.add_trace(
+#                 go.Scatter(
+#                     x=VideoData2["Seconds"], y=VideoData2[col], mode="lines", name=col
+#                 ),
+#                 row=4,
+#                 col=1,
+#             )
 
-        fig2.update_layout(
-            height=1200,
-            title_text=f"Time series subplots for coordinates [{get_eye_label('VideoData2')}]",
-            showlegend=True,
-        )
-        fig2.update_xaxes(title_text="Seconds", row=4, col=1)
-        fig2.update_yaxes(title_text="X Position", row=1, col=1)
-        fig2.update_yaxes(title_text="Y Position", row=2, col=1)
-        fig2.update_yaxes(title_text="X Position", row=3, col=1)
-        fig2.update_yaxes(title_text="Y Position", row=4, col=1)
+#         fig2.update_layout(
+#             height=1200,
+#             title_text=f"Time series subplots for coordinates [{get_eye_label('VideoData2')}]",
+#             showlegend=True,
+#         )
+#         fig2.update_xaxes(title_text="Seconds", row=4, col=1)
+#         fig2.update_yaxes(title_text="X Position", row=1, col=1)
+#         fig2.update_yaxes(title_text="Y Position", row=2, col=1)
+#         fig2.update_yaxes(title_text="X Position", row=3, col=1)
+#         fig2.update_yaxes(title_text="Y Position", row=4, col=1)
 
-        fig2.show(renderer="browser")
+#         fig2.show(renderer="browser")
 
 # +
 # QC plot XY coordinate distributions to visualize outliers
@@ -1459,237 +1459,236 @@ print(f"\n✅ Blink detection output saved to: {output_file}")
 
 
 # +
-# QC plot timeseries of interpolation corrected NaN in browser
+# COMMENTED OUT - QC plot timeseries of interpolation corrected NaN in browser
 ##########################################################################
+# if plot_QC_timeseries:
+#     print("ℹ️ Figure opens in browser window, takes a bit of time.")
 
-if plot_QC_timeseries:
-    print("ℹ️ Figure opens in browser window, takes a bit of time.")
+#     # VideoData1 QC Plot
+#     if "VideoData1_Has_Sleap" in globals() and VideoData1_Has_Sleap:
+#         fig1 = make_subplots(
+#             rows=4,
+#             cols=1,
+#             shared_xaxes=True,
+#             vertical_spacing=0.05,
+#             subplot_titles=(
+#                 "VideoData1 - X coordinates for pupil centre and left-right eye corner",
+#                 "VideoData1 - Y coordinates for pupil centre and left-right eye corner",
+#                 "VideoData1 - X coordinates for iris points",
+#                 "VideoData1 - Y coordinates for iris points",
+#             ),
+#         )
 
-    # VideoData1 QC Plot
-    if "VideoData1_Has_Sleap" in globals() and VideoData1_Has_Sleap:
-        fig1 = make_subplots(
-            rows=4,
-            cols=1,
-            shared_xaxes=True,
-            vertical_spacing=0.05,
-            subplot_titles=(
-                "VideoData1 - X coordinates for pupil centre and left-right eye corner",
-                "VideoData1 - Y coordinates for pupil centre and left-right eye corner",
-                "VideoData1 - X coordinates for iris points",
-                "VideoData1 - Y coordinates for iris points",
-            ),
-        )
+#         # Row 1: Plot left.x, center.x, right.x
+#         fig1.add_trace(
+#             go.Scatter(
+#                 x=VideoData1["Seconds"],
+#                 y=VideoData1["left.x"],
+#                 mode="lines",
+#                 name="left.x",
+#             ),
+#             row=1,
+#             col=1,
+#         )
+#         fig1.add_trace(
+#             go.Scatter(
+#                 x=VideoData1["Seconds"],
+#                 y=VideoData1["center.x"],
+#                 mode="lines",
+#                 name="center.x",
+#             ),
+#             row=1,
+#             col=1,
+#         )
+#         fig1.add_trace(
+#             go.Scatter(
+#                 x=VideoData1["Seconds"],
+#                 y=VideoData1["right.x"],
+#                 mode="lines",
+#                 name="right.x",
+#             ),
+#             row=1,
+#             col=1,
+#         )
 
-        # Row 1: Plot left.x, center.x, right.x
-        fig1.add_trace(
-            go.Scatter(
-                x=VideoData1["Seconds"],
-                y=VideoData1["left.x"],
-                mode="lines",
-                name="left.x",
-            ),
-            row=1,
-            col=1,
-        )
-        fig1.add_trace(
-            go.Scatter(
-                x=VideoData1["Seconds"],
-                y=VideoData1["center.x"],
-                mode="lines",
-                name="center.x",
-            ),
-            row=1,
-            col=1,
-        )
-        fig1.add_trace(
-            go.Scatter(
-                x=VideoData1["Seconds"],
-                y=VideoData1["right.x"],
-                mode="lines",
-                name="right.x",
-            ),
-            row=1,
-            col=1,
-        )
+#         # Row 2: Plot left.y, center.y, right.y
+#         fig1.add_trace(
+#             go.Scatter(
+#                 x=VideoData1["Seconds"],
+#                 y=VideoData1["left.y"],
+#                 mode="lines",
+#                 name="left.y",
+#             ),
+#             row=2,
+#             col=1,
+#         )
+#         fig1.add_trace(
+#             go.Scatter(
+#                 x=VideoData1["Seconds"],
+#                 y=VideoData1["center.y"],
+#                 mode="lines",
+#                 name="center.y",
+#             ),
+#             row=2,
+#             col=1,
+#         )
+#         fig1.add_trace(
+#             go.Scatter(
+#                 x=VideoData1["Seconds"],
+#                 y=VideoData1["right.y"],
+#                 mode="lines",
+#                 name="right.y",
+#             ),
+#             row=2,
+#             col=1,
+#         )
 
-        # Row 2: Plot left.y, center.y, right.y
-        fig1.add_trace(
-            go.Scatter(
-                x=VideoData1["Seconds"],
-                y=VideoData1["left.y"],
-                mode="lines",
-                name="left.y",
-            ),
-            row=2,
-            col=1,
-        )
-        fig1.add_trace(
-            go.Scatter(
-                x=VideoData1["Seconds"],
-                y=VideoData1["center.y"],
-                mode="lines",
-                name="center.y",
-            ),
-            row=2,
-            col=1,
-        )
-        fig1.add_trace(
-            go.Scatter(
-                x=VideoData1["Seconds"],
-                y=VideoData1["right.y"],
-                mode="lines",
-                name="right.y",
-            ),
-            row=2,
-            col=1,
-        )
+#         # Row 3: Plot p.x coordinates for p1 to p8
+#         for col in ["p1.x", "p2.x", "p3.x", "p4.x", "p5.x", "p6.x", "p7.x", "p8.x"]:
+#             fig1.add_trace(
+#                 go.Scatter(
+#                     x=VideoData1["Seconds"], y=VideoData1[col], mode="lines", name=col
+#                 ),
+#                 row=3,
+#                 col=1,
+#             )
 
-        # Row 3: Plot p.x coordinates for p1 to p8
-        for col in ["p1.x", "p2.x", "p3.x", "p4.x", "p5.x", "p6.x", "p7.x", "p8.x"]:
-            fig1.add_trace(
-                go.Scatter(
-                    x=VideoData1["Seconds"], y=VideoData1[col], mode="lines", name=col
-                ),
-                row=3,
-                col=1,
-            )
+#         # Row 4: Plot p.y coordinates for p1 to p8
+#         for col in ["p1.y", "p2.y", "p3.y", "p4.y", "p5.y", "p6.y", "p7.y", "p8.y"]:
+#             fig1.add_trace(
+#                 go.Scatter(
+#                     x=VideoData1["Seconds"], y=VideoData1[col], mode="lines", name=col
+#                 ),
+#                 row=4,
+#                 col=1,
+#             )
 
-        # Row 4: Plot p.y coordinates for p1 to p8
-        for col in ["p1.y", "p2.y", "p3.y", "p4.y", "p5.y", "p6.y", "p7.y", "p8.y"]:
-            fig1.add_trace(
-                go.Scatter(
-                    x=VideoData1["Seconds"], y=VideoData1[col], mode="lines", name=col
-                ),
-                row=4,
-                col=1,
-            )
+#         fig1.update_layout(
+#             height=1200,
+#             title_text="VideoData1 - Time series subplots for coordinates (QC after interpolation)",
+#             showlegend=True,
+#         )
+#         fig1.update_xaxes(title_text="Seconds", row=4, col=1)
+#         fig1.update_yaxes(title_text="X Position", row=1, col=1)
+#         fig1.update_yaxes(title_text="Y Position", row=2, col=1)
+#         fig1.update_yaxes(title_text="X Position", row=3, col=1)
+#         fig1.update_yaxes(title_text="Y Position", row=4, col=1)
 
-        fig1.update_layout(
-            height=1200,
-            title_text="VideoData1 - Time series subplots for coordinates (QC after interpolation)",
-            showlegend=True,
-        )
-        fig1.update_xaxes(title_text="Seconds", row=4, col=1)
-        fig1.update_yaxes(title_text="X Position", row=1, col=1)
-        fig1.update_yaxes(title_text="Y Position", row=2, col=1)
-        fig1.update_yaxes(title_text="X Position", row=3, col=1)
-        fig1.update_yaxes(title_text="Y Position", row=4, col=1)
+#         fig1.show(renderer="browser")
 
-        fig1.show(renderer="browser")
+#     # VideoData2 QC Plot
+#     if "VideoData2_Has_Sleap" in globals() and VideoData2_Has_Sleap:
+#         fig2 = make_subplots(
+#             rows=4,
+#             cols=1,
+#             shared_xaxes=True,
+#             vertical_spacing=0.05,
+#             subplot_titles=(
+#                 "VideoData2 - X coordinates for pupil centre and left-right eye corner",
+#                 "VideoData2 - Y coordinates for pupil centre and left-right eye corner",
+#                 "VideoData2 - X coordinates for iris points",
+#                 "VideoData2 - Y coordinates for iris points",
+#             ),
+#         )
 
-    # VideoData2 QC Plot
-    if "VideoData2_Has_Sleap" in globals() and VideoData2_Has_Sleap:
-        fig2 = make_subplots(
-            rows=4,
-            cols=1,
-            shared_xaxes=True,
-            vertical_spacing=0.05,
-            subplot_titles=(
-                "VideoData2 - X coordinates for pupil centre and left-right eye corner",
-                "VideoData2 - Y coordinates for pupil centre and left-right eye corner",
-                "VideoData2 - X coordinates for iris points",
-                "VideoData2 - Y coordinates for iris points",
-            ),
-        )
+#         # Row 1: Plot left.x, center.x, right.x
+#         fig2.add_trace(
+#             go.Scatter(
+#                 x=VideoData2["Seconds"],
+#                 y=VideoData2["left.x"],
+#                 mode="lines",
+#                 name="left.x",
+#             ),
+#             row=1,
+#             col=1,
+#         )
+#         fig2.add_trace(
+#             go.Scatter(
+#                 x=VideoData2["Seconds"],
+#                 y=VideoData2["center.x"],
+#                 mode="lines",
+#                 name="center.x",
+#             ),
+#             row=1,
+#             col=1,
+#         )
+#         fig2.add_trace(
+#             go.Scatter(
+#                 x=VideoData2["Seconds"],
+#                 y=VideoData2["right.x"],
+#                 mode="lines",
+#                 name="right.x",
+#             ),
+#             row=1,
+#             col=1,
+#         )
 
-        # Row 1: Plot left.x, center.x, right.x
-        fig2.add_trace(
-            go.Scatter(
-                x=VideoData2["Seconds"],
-                y=VideoData2["left.x"],
-                mode="lines",
-                name="left.x",
-            ),
-            row=1,
-            col=1,
-        )
-        fig2.add_trace(
-            go.Scatter(
-                x=VideoData2["Seconds"],
-                y=VideoData2["center.x"],
-                mode="lines",
-                name="center.x",
-            ),
-            row=1,
-            col=1,
-        )
-        fig2.add_trace(
-            go.Scatter(
-                x=VideoData2["Seconds"],
-                y=VideoData2["right.x"],
-                mode="lines",
-                name="right.x",
-            ),
-            row=1,
-            col=1,
-        )
+#         # Row 2: Plot left.y, center.y, right.y
+#         fig2.add_trace(
+#             go.Scatter(
+#                 x=VideoData2["Seconds"],
+#                 y=VideoData2["left.y"],
+#                 mode="lines",
+#                 name="left.y",
+#             ),
+#             row=2,
+#             col=1,
+#         )
+#         fig2.add_trace(
+#             go.Scatter(
+#                 x=VideoData2["Seconds"],
+#                 y=VideoData2["center.y"],
+#                 mode="lines",
+#                 name="center.y",
+#             ),
+#             row=2,
+#             col=1,
+#         )
+#         fig2.add_trace(
+#             go.Scatter(
+#                 x=VideoData2["Seconds"],
+#                 y=VideoData2["right.y"],
+#                 mode="lines",
+#                 name="right.y",
+#             ),
+#             row=2,
+#             col=1,
+#         )
 
-        # Row 2: Plot left.y, center.y, right.y
-        fig2.add_trace(
-            go.Scatter(
-                x=VideoData2["Seconds"],
-                y=VideoData2["left.y"],
-                mode="lines",
-                name="left.y",
-            ),
-            row=2,
-            col=1,
-        )
-        fig2.add_trace(
-            go.Scatter(
-                x=VideoData2["Seconds"],
-                y=VideoData2["center.y"],
-                mode="lines",
-                name="center.y",
-            ),
-            row=2,
-            col=1,
-        )
-        fig2.add_trace(
-            go.Scatter(
-                x=VideoData2["Seconds"],
-                y=VideoData2["right.y"],
-                mode="lines",
-                name="right.y",
-            ),
-            row=2,
-            col=1,
-        )
+#         # Row 3: Plot p.x coordinates for p1 to p8
 
-        # Row 3: Plot p.x coordinates for p1 to p8
+#         for col in ["p1.x", "p2.x", "p3.x", "p4.x", "p5.x", "p6.x", "p7.x", "p8.x"]:
+#             fig2.add_trace(
+#                 go.Scatter(
+#                     x=VideoData2["Seconds"], y=VideoData2[col], mode="lines", name=col
+#                 ),
+#                 row=3,
+#                 col=1,
+#             )
 
-        for col in ["p1.x", "p2.x", "p3.x", "p4.x", "p5.x", "p6.x", "p7.x", "p8.x"]:
-            fig2.add_trace(
-                go.Scatter(
-                    x=VideoData2["Seconds"], y=VideoData2[col], mode="lines", name=col
-                ),
-                row=3,
-                col=1,
-            )
+#         # Row 4: Plot p.y coordinates for p1 to p8
 
-        # Row 4: Plot p.y coordinates for p1 to p8
+#         for col in ["p1.y", "p2.y", "p3.y", "p4.y", "p5.y", "p6.y", "p7.y", "p8.y"]:
+#             fig2.add_trace(
+#                 go.Scatter(
+#                     x=VideoData2["Seconds"], y=VideoData2[col], mode="lines", name=col
+#                 ),
+#                 row=4,
+#                 col=1,
+#             )
 
-        for col in ["p1.y", "p2.y", "p3.y", "p4.y", "p5.y", "p6.y", "p7.y", "p8.y"]:
-            fig2.add_trace(
-                go.Scatter(
-                    x=VideoData2["Seconds"], y=VideoData2[col], mode="lines", name=col
-                ),
-                row=4,
-                col=1,
-            )
+#         fig2.update_layout(
+#             height=1200,
+#             title_text="VideoData2 - Time series subplots for coordinates (QC after interpolation)",
+#             showlegend=True,
+#         )
+#         fig2.update_xaxes(title_text="Seconds", row=4, col=1)
+#         fig2.update_yaxes(title_text="X Position", row=1, col=1)
+#         fig2.update_yaxes(title_text="Y Position", row=2, col=1)
+#         fig2.update_yaxes(title_text="X Position", row=3, col=1)
+#         fig2.update_yaxes(title_text="Y Position", row=4, col=1)
 
-        fig2.update_layout(
-            height=1200,
-            title_text="VideoData2 - Time series subplots for coordinates (QC after interpolation)",
-            showlegend=True,
-        )
-        fig2.update_xaxes(title_text="Seconds", row=4, col=1)
-        fig2.update_yaxes(title_text="X Position", row=1, col=1)
-        fig2.update_yaxes(title_text="Y Position", row=2, col=1)
-        fig2.update_yaxes(title_text="X Position", row=3, col=1)
-        fig2.update_yaxes(title_text="Y Position", row=4, col=1)
-
-        fig2.show(renderer="browser")
+#         fig2.show(renderer="browser")
 
 
 # +
@@ -2935,206 +2934,203 @@ png_path = qc_debug_dir / "Eye_data_QC.png"
 plt.savefig(png_path, dpi=600, bbox_inches="tight", format="png")
 print(f"✅ QC figure saved as PNG (600 dpi for printing): {png_path}")
 
-if plot_QC_timeseries:
-    plt.show()
-else:
-    plt.close(fig)
-# -
+plt.close(fig)
 
-# Create interactive time series plots using plotly for browser viewing
-if plot_QC_timeseries:
-    # Create subplots for the time series (3 rows now instead of 2)
-    # Need to enable secondary_y for the third panel
-    fig = make_subplots(
-        rows=3,
-        cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.08,
-        subplot_titles=(
-            f"{get_eye_label('VideoData1')} - center.X Time Series",
-            f"{get_eye_label('VideoData2')} - center.X Time Series",
-            "Ellipse.Center.X Comparison with Difference",
-        ),
-        # Enable secondary_y for row 3
-        specs=[[{}], [{}], [{"secondary_y": True}]],
-    )
+# +
+# COMMENTED OUT Create interactive time series plots using plotly for browser viewing
+# if plot_QC_timeseries:
+#     # Create subplots for the time series (3 rows now instead of 2)
+#     # Need to enable secondary_y for the third panel
+#     fig = make_subplots(
+#         rows=3,
+#         cols=1,
+#         shared_xaxes=True,
+#         vertical_spacing=0.08,
+#         subplot_titles=(
+#             f"{get_eye_label('VideoData1')} - center.X Time Series",
+#             f"{get_eye_label('VideoData2')} - center.X Time Series",
+#             "Ellipse.Center.X Comparison with Difference",
+#         ),
+#         # Enable secondary_y for row 3
+#         specs=[[{}], [{}], [{"secondary_y": True}]],
+#     )
 
-    # Panel 1: VideoData1 center coordinates - Time Series
-    if VideoData1_Has_Sleap:
-        fig.add_trace(
-            go.Scatter(
-                x=VideoData1_centered["Seconds"],
-                y=VideoData1_centered["center.x"],
-                mode="lines",
-                name="center.x original",
-                line=dict(color="blue", width=0.5),
-                opacity=0.6,
-            ),
-            row=1,
-            col=1,
-        )
+#     # Panel 1: VideoData1 center coordinates - Time Series
+#     if VideoData1_Has_Sleap:
+#         fig.add_trace(
+#             go.Scatter(
+#                 x=VideoData1_centered["Seconds"],
+#                 y=VideoData1_centered["center.x"],
+#                 mode="lines",
+#                 name="center.x original",
+#                 line=dict(color="blue", width=0.5),
+#                 opacity=0.6,
+#             ),
+#             row=1,
+#             col=1,
+#         )
 
-        fig.add_trace(
-            go.Scatter(
-                x=VideoData1["Seconds"],
-                y=VideoData1["Ellipse.Center.X"],
-                mode="lines",
-                name="Ellipse Center.X",
-                line=dict(color="red", width=0.5),
-                opacity=0.6,
-            ),
-            row=1,
-            col=1,
-        )
+#         fig.add_trace(
+#             go.Scatter(
+#                 x=VideoData1["Seconds"],
+#                 y=VideoData1["Ellipse.Center.X"],
+#                 mode="lines",
+#                 name="Ellipse Center.X",
+#                 line=dict(color="red", width=0.5),
+#                 opacity=0.6,
+#             ),
+#             row=1,
+#             col=1,
+#         )
 
-    # Panel 2: VideoData2 center coordinates - Time Series
-    if VideoData2_Has_Sleap:
-        fig.add_trace(
-            go.Scatter(
-                x=VideoData2_centered["Seconds"],
-                y=VideoData2_centered["center.x"],
-                mode="lines",
-                name="center.x original",
-                line=dict(color="blue", width=0.5),
-                opacity=0.6,
-            ),
-            row=2,
-            col=1,
-        )
+#     # Panel 2: VideoData2 center coordinates - Time Series
+#     if VideoData2_Has_Sleap:
+#         fig.add_trace(
+#             go.Scatter(
+#                 x=VideoData2_centered["Seconds"],
+#                 y=VideoData2_centered["center.x"],
+#                 mode="lines",
+#                 name="center.x original",
+#                 line=dict(color="blue", width=0.5),
+#                 opacity=0.6,
+#             ),
+#             row=2,
+#             col=1,
+#         )
 
-        fig.add_trace(
-            go.Scatter(
-                x=VideoData2["Seconds"],
-                y=VideoData2["Ellipse.Center.X"],
-                mode="lines",
-                name="Ellipse Center.X",
-                line=dict(color="red", width=0.5),
-                opacity=0.6,
-            ),
-            row=2,
-            col=1,
-        )
+#         fig.add_trace(
+#             go.Scatter(
+#                 x=VideoData2["Seconds"],
+#                 y=VideoData2["Ellipse.Center.X"],
+#                 mode="lines",
+#                 name="Ellipse Center.X",
+#                 line=dict(color="red", width=0.5),
+#                 opacity=0.6,
+#             ),
+#             row=2,
+#             col=1,
+#         )
 
-    # Panel 3: Ellipse.Center.X Comparison with difference
-    if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
-        # Plot the individual traces
-        fig.add_trace(
-            go.Scatter(
-                x=VideoData1["Seconds"],
-                y=VideoData1["Ellipse.Center.X"],
-                mode="lines",
-                name="VideoData1 Ellipse.Center.X",
-                line=dict(color="#FF7F00", width=0.5),  # Orange
-                opacity=0.6,
-            ),
-            row=3,
-            col=1,
-        )
+#     # Panel 3: Ellipse.Center.X Comparison with difference
+#     if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
+#         # Plot the individual traces
+#         fig.add_trace(
+#             go.Scatter(
+#                 x=VideoData1["Seconds"],
+#                 y=VideoData1["Ellipse.Center.X"],
+#                 mode="lines",
+#                 name="VideoData1 Ellipse.Center.X",
+#                 line=dict(color="#FF7F00", width=0.5),  # Orange
+#                 opacity=0.6,
+#             ),
+#             row=3,
+#             col=1,
+#         )
 
-        fig.add_trace(
-            go.Scatter(
-                x=VideoData2["Seconds"],
-                y=VideoData2["Ellipse.Center.X"],
-                mode="lines",
-                name="VideoData2 Ellipse.Center.X",
-                line=dict(color="#9370DB", width=0.5),  # Purple
-                opacity=0.6,
-            ),
-            row=3,
-            col=1,
-        )
+#         fig.add_trace(
+#             go.Scatter(
+#                 x=VideoData2["Seconds"],
+#                 y=VideoData2["Ellipse.Center.X"],
+#                 mode="lines",
+#                 name="VideoData2 Ellipse.Center.X",
+#                 line=dict(color="#9370DB", width=0.5),  # Purple
+#                 opacity=0.6,
+#             ),
+#             row=3,
+#             col=1,
+#         )
 
-        # Plot the difference on secondary y-axis
-        # Align the data to the same length and normalize for fair comparison
-        min_length = min(len(VideoData1), len(VideoData2))
+#         # Plot the difference on secondary y-axis
+#         # Align the data to the same length and normalize for fair comparison
+#         min_length = min(len(VideoData1), len(VideoData2))
 
-        # Normalize data (z-score) to account for different scales
-        center_x1_aligned = VideoData1["Ellipse.Center.X"].iloc[:min_length]
-        center_x2_aligned = VideoData2["Ellipse.Center.X"].iloc[:min_length]
+#         # Normalize data (z-score) to account for different scales
+#         center_x1_aligned = VideoData1["Ellipse.Center.X"].iloc[:min_length]
+#         center_x2_aligned = VideoData2["Ellipse.Center.X"].iloc[:min_length]
 
-        # Calculate mean and std for normalization
-        mean1 = center_x1_aligned.mean()
-        std1 = center_x1_aligned.std()
-        mean2 = center_x2_aligned.mean()
-        std2 = center_x2_aligned.std()
+#         # Calculate mean and std for normalization
+#         mean1 = center_x1_aligned.mean()
+#         std1 = center_x1_aligned.std()
+#         mean2 = center_x2_aligned.mean()
+#         std2 = center_x2_aligned.std()
 
-        # Normalize both datasets
-        center_x1_norm = (center_x1_aligned - mean1) / std1
-        center_x2_norm = (center_x2_aligned - mean2) / std2
+#         # Normalize both datasets
+#         center_x1_norm = (center_x1_aligned - mean1) / std1
+#         center_x2_norm = (center_x2_aligned - mean2) / std2
 
-        # Calculate difference of normalized data
-        center_x_diff = center_x1_norm - center_x2_norm
-        seconds_aligned = VideoData1["Seconds"].iloc[:min_length]
+#         # Calculate difference of normalized data
+#         center_x_diff = center_x1_norm - center_x2_norm
+#         seconds_aligned = VideoData1["Seconds"].iloc[:min_length]
 
-        fig.add_trace(
-            go.Scatter(
-                x=seconds_aligned,
-                y=center_x_diff,
-                mode="lines",
-                name="Difference (normalized)",
-                line=dict(color="green", width=0.5),
-                opacity=0.6,
-            ),
-            row=3,
-            col=1,
-            secondary_y=True,
-        )
+#         fig.add_trace(
+#             go.Scatter(
+#                 x=seconds_aligned,
+#                 y=center_x_diff,
+#                 mode="lines",
+#                 name="Difference (normalized)",
+#                 line=dict(color="green", width=0.5),
+#                 opacity=0.6,
+#             ),
+#             row=3,
+#             col=1,
+#             secondary_y=True,
+#         )
 
-    elif VideoData1_Has_Sleap:
-        fig.add_trace(
-            go.Scatter(
-                x=VideoData1["Seconds"],
-                y=VideoData1["Ellipse.Center.X"],
-                mode="lines",
-                name="VideoData1 Ellipse.Center.X",
-                line=dict(color="#FF7F00", width=0.5),
-                opacity=0.6,
-            ),
-            row=3,
-            col=1,
-        )
-    elif VideoData2_Has_Sleap:
-        fig.add_trace(
-            go.Scatter(
-                x=VideoData2["Seconds"],
-                y=VideoData2["Ellipse.Center.X"],
-                mode="lines",
-                name="VideoData2 Ellipse.Center.X",
-                line=dict(color="#9370DB", width=0.5),
-                opacity=0.6,
-            ),
-            row=3,
-            col=1,
-        )
+#     elif VideoData1_Has_Sleap:
+#         fig.add_trace(
+#             go.Scatter(
+#                 x=VideoData1["Seconds"],
+#                 y=VideoData1["Ellipse.Center.X"],
+#                 mode="lines",
+#                 name="VideoData1 Ellipse.Center.X",
+#                 line=dict(color="#FF7F00", width=0.5),
+#                 opacity=0.6,
+#             ),
+#             row=3,
+#             col=1,
+#         )
+#     elif VideoData2_Has_Sleap:
+#         fig.add_trace(
+#             go.Scatter(
+#                 x=VideoData2["Seconds"],
+#                 y=VideoData2["Ellipse.Center.X"],
+#                 mode="lines",
+#                 name="VideoData2 Ellipse.Center.X",
+#                 line=dict(color="#9370DB", width=0.5),
+#                 opacity=0.6,
+#             ),
+#             row=3,
+#             col=1,
+#         )
 
-    # Update layout
-    fig.update_layout(
-        height=1200,  # Increased height for 3 panels
-        title_text=f"{data_path} - Eye Tracking Time Series QC",
-        showlegend=True,
-        hovermode="x unified",
-    )
+#     # Update layout
+#     fig.update_layout(
+#         height=1200,  # Increased height for 3 panels
+#         title_text=f"{data_path} - Eye Tracking Time Series QC",
+#         showlegend=True,
+#         hovermode="x unified",
+#     )
 
-    # Update axes
-    fig.update_xaxes(title_text="Time (s)", row=3, col=1)
-    fig.update_yaxes(title_text="Position (pixels)", row=1, col=1)
-    fig.update_yaxes(title_text="Position (pixels)", row=2, col=1)
-    fig.update_yaxes(title_text="Center X (pixels)", row=3, col=1)
+#     # Update axes
+#     fig.update_xaxes(title_text="Time (s)", row=3, col=1)
+#     fig.update_yaxes(title_text="Position (pixels)", row=1, col=1)
+#     fig.update_yaxes(title_text="Position (pixels)", row=2, col=1)
+#     fig.update_yaxes(title_text="Center X (pixels)", row=3, col=1)
 
-    # Update secondary y-axis for difference plot
-    if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
-        fig.update_yaxes(
-            title_text="Normalized Difference (z-score)", row=3, col=1, secondary_y=True
-        )
+#     # Update secondary y-axis for difference plot
+#     if VideoData1_Has_Sleap and VideoData2_Has_Sleap:
+#         fig.update_yaxes(
+#             title_text="Normalized Difference (z-score)", row=3, col=1, secondary_y=True
+#         )
 
-    # Show in browser
-    fig.show(renderer="browser")
+#     # Show in browser
+#     fig.show(renderer="browser")
 
-    # Also save as HTML
-    save_path.mkdir(parents=True, exist_ok=True)
-    html_path = qc_debug_dir / "Eye_data_QC_time_series.html"
-    fig.write_html(html_path)
-    print(f"✅ Interactive time series plot saved to: {html_path}")
+#     # Also save as HTML
+#     save_path.mkdir(parents=True, exist_ok=True)
+#     html_path = qc_debug_dir / "Eye_data_QC_time_series.html"
+#     fig.write_html(html_path)
+#     print(f"✅ Interactive time series plot saved to: {html_path}")
 
 # # Saccade detection
 #
@@ -5183,7 +5179,11 @@ if plot_saccade_detection_QC:
         fig_ts.update_yaxes(title_text="Velocity (px/s)", row=2, col=1)
 
         fig_ts.show()
+# -
 
+
+# Gracefully stop execution by informing the user and returning from the cell
+sys.exit("⚠️ Notebook execution intentionally stopped here. Remove or move this cell to continue running subsequent code.")
 
 # +
 # ML Feature Extraction and Visualization
