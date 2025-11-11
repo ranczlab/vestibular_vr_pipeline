@@ -59,7 +59,7 @@ def process_dirs_with_colon2s(root: Path, dry_run: bool):
     renamed = 0
     errors = 0
     for d in dirs_sorted:
-        new_name = d.name.replace(": 2s", "_2s")
+        new_name = d.name.replace("/ 2s", "_2s")
         new_path = d.with_name(new_name)
         ok = safe_move(d, new_path, dry_run)
         if ok:
@@ -71,7 +71,7 @@ def process_dirs_with_colon2s(root: Path, dry_run: bool):
 def main():
     parser = argparse.ArgumentParser(description="Rename ': 2s' -> '_2s' in files inside aligned_data folders.")
     parser.add_argument('--root', '-r',
-                        default="/home/ikharitonov/RANCZLAB-NAS/data/ONIX/20250409_Cohort3_rotation,
+                        default="/Volumes/RanczLab/20250409_Cohort3_rotation",
                         help="Root directory to search under.")
     parser.add_argument('--rename-dirs', action='store_true',
                         help="Also rename directories containing ': 2s' -> '_2s' (bottom-up).")
