@@ -40,13 +40,15 @@
   2. `Ellipse.Center.X_eye1` - horizontal eye position (continuous signal)
 
 ### Saccade Integration
-- **Density Analysis**: Bin saccades at 100ms granularity within peri-event windows
-- **Temporal Resolution**: User-configurable bin size (externalizable parameter)
+- **Density Analysis**: Bin saccades at user-defined granularity within peri-event windows (default: 500ms)
+- **Temporal Resolution**: `saccade_bin_size_s` parameter externalized to line 140 (e.g., 0.1 = 100ms, 0.5 = 500ms)
 - **Metrics per Time Bin**:
   - Total saccade count
   - Orienting saccade count  
   - Compensatory saccade count
-  - Saccade rate (saccades/second)
+  - Saccade rate (saccades/second in Hz)
+- **Visualization**: Step plot (not bar chart) to show binned density as continuous-looking signal
+- **IMPORTANT**: Saccade rate is **NOT baselined** - plotted as raw rate values
 
 ### Visualization
 - **Add to existing plots** (not separate plots)
@@ -60,25 +62,30 @@
 ### Phase 1: Data Structure Updates
 
 #### 1.1 PhotometryAnalyzer.__init__() Modifications
-**File**: SANDBOX_2_noSLEAP_BATCH-alignment.py, line ~2058
+**File**: SANDBOX_2_noSLEAP_BATCH-alignment.py, line ~2071
 
 **Add parameters:**
 ```python
 def __init__(self, 
              time_window: Tuple[float, float] = (time_window_start, time_window_end),
              video_saccade_summaries: Dict[str, pd.DataFrame] = None,
-             saccade_bin_size_s: float = 0.1):  # 100ms default
+             saccade_bin_size_s: float = saccade_bin_size_s):  # Externalized parameter
     """
     Parameters:
     -----------
     video_saccade_summaries : Dict[str, pd.DataFrame]
         Dictionary with keys 'VideoData1', 'VideoData2' containing saccade summary DataFrames
     saccade_bin_size_s : float
-        Bin size in seconds for saccade density analysis (default: 0.1 = 100ms)
+        Bin size in seconds for saccade density analysis (externalized from line 140)
     """
     self.time_window_start, self.time_window_end = time_window
     self.video_saccade_summaries = video_saccade_summaries or {}
     self.saccade_bin_size_s = saccade_bin_size_s
+```
+
+**Externalized Parameter (Line 140):**
+```python
+saccade_bin_size_s = 0.5  # s, bin size for saccade density analysis (e.g., 0.1 = 100ms, 0.5 = 500ms)
 ```
 
 #### 1.2 Add Eye Tracking Channels to FLUORESCENCE_CHANNELS
@@ -310,22 +317,46 @@ if create_plots:
 ```
 
 #### 4.3 Saccade Density Visualization
-**Add to baseline plots as overlay:**
+**Implementation**: Use **step plot** (not bar chart) to show binned density as a continuous-looking signal
 
+**In Summary Plots** (`create_summary_plot()`, line ~2571):
 ```python
-# After plotting all other signals, add saccade rate overlay
+if "saccade_rate_eye1" in aligned_df.columns:
+    ax3_saccade = ax3.twinx()
+    ax3_saccade.spines['right'].set_position(('outward', 180))
+    
+    # Use step plot for left turns
+    ax3_saccade.step(time_idx, mean_saccade, where='mid',
+                    color='cyan', alpha=0.6, linewidth=2, 
+                    label="Left Saccade Rate")
+    
+    # Use step plot for right turns (different style)
+    ax3_saccade.step(time_idx, mean_saccade, where='mid',
+                    color='darkblue', alpha=0.8, linewidth=2.5,
+                    linestyle='--', label="Right Saccade Rate")
+```
+
+**In Baseline Plots** (`baseline_aligned_data_simple()`, line ~3171):
+```python
 if "saccade_rate_eye1" in mean_baseline_df.columns:
     ax8 = ax.twinx()
     ax8.spines['right'].set_position(('outward', 300))
-    ax8.bar(mean_baseline_df.index, 
+    
+    # Step plot with fill
+    ax8.step(mean_baseline_df.index, 
             mean_baseline_df["saccade_rate_eye1"],
-            width=saccade_bin_size_s,  # Match bin width
-            color='cyan', alpha=0.3, label='Saccade Rate')
+            where='mid', color='cyan', alpha=0.8, linewidth=2)
+    ax8.fill_between(mean_baseline_df.index,
+                    0, mean_baseline_df["saccade_rate_eye1"],
+                    step='mid', color='cyan', alpha=0.2)
     ax8.set_ylabel('Saccade Rate (Hz)', color='cyan')
-    ax8.yaxis.label.set_color('cyan')
 ```
 
-**Alternative**: Add as separate subplot below main plot
+**Key Points**:
+- Step plot (`where='mid'`) centers each bin value at its midpoint
+- Creates a histogram-like appearance but as a continuous line
+- Maintains the binned nature while looking like other timeseries signals
+- **NOT baselined** - shows raw saccade rate (Hz)
 
 ---
 
@@ -732,15 +763,17 @@ If you need to process BOTH "Apply halt: 2s" AND "No halt" events, follow this w
 
 **Step 1: Initial Setup (Run Once)**
 1. Cell with `data_dirs` setup (lines 93-143)
+   - **Set `saccade_bin_size_s` at line 140** (e.g., 0.5 for 500ms bins)
+   - Set `event_name` at line 142
 2. Data loading cell (lines 154-343) - **This loads ALL data including pupil/eye columns**
    - ✅ Watch for: "Joined eye tracking columns: ['Pupil.Diameter_eye1', 'Ellipse.Center.X_eye1', ...]"
 
 **Step 2: Process First Event Type**
-3. Set `event_name = "Apply halt: 2s"` (line 141)
+3. Set `event_name = "Apply halt: 2s"` (line 142)
 4. Behavioral analysis cell (line 1945) - *optional*
-5. PhotometryAnalyzer cell (lines ~2739-2745) - **saccade_bin_size_s is configurable here**
+5. PhotometryAnalyzer cell (lines ~2788-2793) - **Uses saccade_bin_size_s from line 140**
    - ✅ Watch for: "Eye tracking columns present: ['Pupil.Diameter_eye1', 'Ellipse.Center.X_eye1', ...]"
-6. Baseline analysis cell (lines ~2873-2886) - *if desired*
+6. Baseline analysis cell (lines ~3206-3218) - *if desired*
 
 **Step 3: Process Second Event Type**
 7. Change `event_name = "No halt"` (line 141)
@@ -777,6 +810,37 @@ Then your video parquet files don't contain the eye tracking columns.
 - ✅ If pupil/eye data exists: All plots and CSVs will include new signals **for ALL event types**
 - ✅ If pupil/eye data missing: Code runs normally, columns filled with zeros/NaN
 - ✅ If saccade data missing: Code runs normally, saccade columns filled with zeros
+
+---
+
+## 🔄 RECENT FIXES (2025-11-11)
+
+### Fixed Issues:
+1. **Externalized `saccade_bin_size_s` Parameter**
+   - **Problem**: Parameter was hardcoded in `__init__` method (line 2073)
+   - **Solution**: Moved to global parameter cell (line 140)
+   - **Benefit**: User can now easily adjust bin size (e.g., 0.1 = 100ms, 0.5 = 500ms) without editing class code
+
+2. **Improved Saccade Density Visualization**
+   - **Problem**: Bar charts created redundancy (plotting same value at every sample point within bins)
+   - **Solution**: Changed to step plots (`plt.step(..., where='mid')`)
+   - **Benefit**: 
+     - Cleaner visualization that looks like other timeseries signals
+     - Maintains binned nature while appearing as continuous line
+     - Better performance (fewer plot elements)
+     - Histogram-like appearance with proper bin centering
+
+3. **Clarified Non-Baseline Behavior**
+   - **Confirmed**: Saccade rate is **NOT baselined** (as intended)
+   - **Rationale**: Saccade rate is a density measure (Hz), not a signal that should be zero-centered
+   - **Implementation**: Raw rate values plotted on all visualizations
+
+### Updated Code Locations:
+- **Parameter Cell**: Line 140 (`saccade_bin_size_s = 0.5`)
+- **`__init__` Method**: Line 2073 (uses externalized parameter)
+- **Summary Plot**: Lines 2571-2601 (step plot implementation)
+- **Baseline Plot**: Lines 3171-3188 (step plot with fill)
+- **Script Usage**: Line 2788-2793 (references externalized parameter)
 
 ---
 

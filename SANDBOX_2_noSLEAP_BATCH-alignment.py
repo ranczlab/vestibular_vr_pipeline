@@ -137,6 +137,7 @@ time_window_start = -5  # s, FOR PLOTTING PURPOSES
 time_window_end = 10  # s, FOR PLOTTING PURPOSES
 baseline_window = (-1, 0)  # s, FOR baselining averages
 plot_width = 14
+saccade_bin_size_s = 0.5  # s, bin size for saccade density analysis (e.g., 0.1 = 100ms, 0.5 = 500ms)
 
 event_name = "Apply halt: 2s"  # Apply halt: 2s, No halt, DrumWithReverseflow block started, DrumBase block started
 vestibular_mismatch = False
@@ -2069,7 +2070,7 @@ class PhotometryAnalyzer:
     
     def __init__(self, time_window: Tuple[float, float] = (time_window_start, time_window_end),
                  video_saccade_summaries: Optional[Dict[str, pd.DataFrame]] = None,
-                 saccade_bin_size_s: float = 0.5): # in seconds, FIXME externalise to the param setting cell 
+                 saccade_bin_size_s: float = saccade_bin_size_s):
         """
         Initialize analyzer with time window parameters.
         
@@ -2078,7 +2079,7 @@ class PhotometryAnalyzer:
             video_saccade_summaries: Dictionary with keys 'VideoData1', 'VideoData2' 
                                    containing saccade summary DataFrames
             saccade_bin_size_s: Bin size in seconds for saccade density analysis 
-                              (default: 0.1 = 100ms)
+                              (externalized from global parameter)
         """
         self.time_window_start, self.time_window_end = time_window
         self.video_saccade_summaries = video_saccade_summaries or {}
@@ -2577,21 +2578,19 @@ class PhotometryAnalyzer:
                 left_saccade_grouped = left_df.groupby("Time (s)")
                 time_idx = left_saccade_grouped.mean().index.values
                 mean_saccade = left_saccade_grouped.mean()["saccade_rate_eye1"]
-                # Use bar plot for saccade rate to show discrete bins
-                ax3_saccade.bar(time_idx, mean_saccade, 
-                               width=self.saccade_bin_size_s * 0.8,  # 80% of bin width for visibility
-                               color=saccade_color, alpha=0.3, edgecolor=saccade_color, 
-                               linewidth=0.5, label="Left Saccade Rate")
+                # Use step plot to show binned density as a continuous-looking signal
+                ax3_saccade.step(time_idx, mean_saccade, where='mid',
+                                color=saccade_color, alpha=0.6, linewidth=2, 
+                                label="Left Saccade Rate")
             
             if not right_df.empty and "saccade_rate_eye1" in right_df.columns:
                 right_saccade_grouped = right_df.groupby("Time (s)")
                 time_idx = right_saccade_grouped.mean().index.values
                 mean_saccade = right_saccade_grouped.mean()["saccade_rate_eye1"]
                 # Overlay right turns with slightly different style
-                ax3_saccade.bar(time_idx, mean_saccade, 
-                               width=self.saccade_bin_size_s * 0.8,
-                               color=saccade_color, alpha=0.5, edgecolor='darkblue', 
-                               linewidth=0.8, label="Right Saccade Rate")
+                ax3_saccade.step(time_idx, mean_saccade, where='mid',
+                                color='darkblue', alpha=0.8, linewidth=2.5,
+                                linestyle='--', label="Right Saccade Rate")
             
             ax3_saccade.set_ylabel("Saccade Rate (Hz)", color=saccade_color, fontsize=9)
             ax3_saccade.tick_params(axis='y', labelcolor=saccade_color, labelsize=8)
@@ -2599,6 +2598,7 @@ class PhotometryAnalyzer:
             y_max = aligned_df["saccade_rate_eye1"].max()
             if y_max > 0:
                 ax3_saccade.set_ylim(0, y_max * 1.2)
+            ax3_saccade.legend(loc='upper right', fontsize=8)
         
         ax3.axvline(0, linestyle='--', color='black', alpha=0.7)
         ax3.set_xlabel("Time (s)")
@@ -2786,7 +2786,7 @@ def main(data_paths: List[Path], loaded_data: Dict, data_path_variables: Dict,
 
 # %%
 time_window = (time_window_start, time_window_end)
-saccade_bin_size_s = 0.1  # 100ms bins - USER CONFIGURABLE
+# saccade_bin_size_s is now externalized to the parameter cell at the top (line 140)
 
 main(data_paths, loaded_data, data_path_variables, 
      event_name=event_name, time_window=time_window,
@@ -3172,12 +3172,14 @@ def baseline_aligned_data_simple(aligned_df, left_turns_df, right_turns_df, base
         if "saccade_rate_eye1" in mean_baseline_df.columns:
             ax8 = ax.twinx()
             ax8.spines['right'].set_position(('outward', 300))
-            # Use bar plot for saccade rate to show discrete bins
+            # Use step plot to show binned density as a continuous-looking signal
             # Note: saccade_rate_eye1 is already in Hz (saccades/second)
-            ax8.bar(mean_baseline_df.index, 
-                   mean_baseline_df["saccade_rate_eye1"],
-                   width=0.05,  # Adjust width based on bin size
-                   color='cyan', alpha=0.3, edgecolor='cyan', linewidth=0.5, label='Saccade Rate')
+            ax8.step(mean_baseline_df.index, 
+                    mean_baseline_df["saccade_rate_eye1"],
+                    where='mid', color='cyan', alpha=0.8, linewidth=2, label='Saccade Rate')
+            ax8.fill_between(mean_baseline_df.index,
+                            0, mean_baseline_df["saccade_rate_eye1"],
+                            step='mid', color='cyan', alpha=0.2)
             ax8.set_ylabel('Saccade Rate (Hz)', color='cyan')
             ax8.yaxis.label.set_color('cyan')
             # Set y-limit starting from 0 (rates are non-negative)
