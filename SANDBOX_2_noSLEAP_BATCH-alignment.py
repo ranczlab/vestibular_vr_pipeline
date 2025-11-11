@@ -135,7 +135,8 @@ pprint(data_paths)
 #-------------------------------
 time_window_start = -6  # s, FOR PLOTTING PURPOSES
 time_window_end = 10  # s, FOR PLOTTING PURPOSES
-baseline_window = (-6, -4)  # s, FOR baselining averages
+baseline_window = (-6, -4)  # s, FOR baselining behavioral signals (velocity, pupil, eye position)
+fluorescence_baseline_window = (-1, 0)  # s, FOR baselining fluorescence signals (z_470, z_560, dfF_470, dfF_560)
 plot_width = 14
 saccade_bin_size_s = 0.5  # s, bin size for saccade density analysis (e.g., 0.1 = 100ms, 0.5 = 500ms)
 
@@ -2218,7 +2219,9 @@ class PhotometryAnalyzer:
     
     def __init__(self, time_window: Tuple[float, float] = (time_window_start, time_window_end),
                  video_saccade_summaries: Optional[Dict[str, pd.DataFrame]] = None,
-                 saccade_bin_size_s: float = saccade_bin_size_s):
+                 saccade_bin_size_s: float = saccade_bin_size_s,
+                 baseline_window: Tuple[float, float] = baseline_window,
+                 fluorescence_baseline_window: Tuple[float, float] = fluorescence_baseline_window):
         """
         Initialize analyzer with time window parameters.
         
@@ -2228,10 +2231,14 @@ class PhotometryAnalyzer:
                                    containing saccade summary DataFrames
             saccade_bin_size_s: Bin size in seconds for saccade density analysis 
                               (externalized from global parameter)
+            baseline_window: Baseline window for behavioral signals (velocity, pupil, eye position)
+            fluorescence_baseline_window: Baseline window for fluorescence signals (z_470, z_560, etc.)
         """
         self.time_window_start, self.time_window_end = time_window
         self.video_saccade_summaries = video_saccade_summaries or {}
         self.saccade_bin_size_s = saccade_bin_size_s
+        self.baseline_window = baseline_window
+        self.fluorescence_baseline_window = fluorescence_baseline_window
     
     def compute_saccade_density(self, 
                                window_data: pd.DataFrame, 
@@ -2389,7 +2396,8 @@ class PhotometryAnalyzer:
             print(f"No right turns detected - no CSV file saved")
     
     def create_heatmap(self, pivot_data: pd.DataFrame, session_name: str, event_name: str, 
-                      channel: str, save_path: Path, figsize: Tuple[int, int] = (10, 6)) -> pd.DataFrame:
+                      channel: str, save_path: Path, baseline_window: Tuple[float, float],
+                      figsize: Tuple[int, int] = (10, 6)) -> pd.DataFrame:
         """
         Create and save normalized heatmap.
         
@@ -2399,13 +2407,14 @@ class PhotometryAnalyzer:
             event_name: Name of event type
             channel: Channel name (e.g., 'z_470')
             save_path: Path to save figure
+            baseline_window: Tuple of (start, end) times for baseline window
             figsize: Figure size tuple
             
         Returns:
             Normalized data used for heatmap
         """
-        # Baseline normalization
-        baseline_cols = (pivot_data.columns >= -1) & (pivot_data.columns < 0)
+        # Baseline normalization using provided baseline window
+        baseline_cols = (pivot_data.columns >= baseline_window[0]) & (pivot_data.columns < baseline_window[1])
         if baseline_cols.any():
             baseline_means = pivot_data.loc[:, baseline_cols].mean(axis=1)
             normalized_data = pivot_data.subtract(baseline_means, axis=0)
@@ -2791,18 +2800,24 @@ class PhotometryAnalyzer:
     def _create_all_heatmaps(self, aligned_df: pd.DataFrame, session_name: str, 
                            event_name: str, data_path: Path) -> None:
         """Create all heatmaps for different channels."""
-        heatmap_channels = [
-            'z_470', 'z_560', 'dfF_470', 'dfF_560',
-            'Pupil.Diameter_eye1',      # NEW
-            'Ellipse.Center.X_eye1'     # NEW
-        ]
+        # Define channels and their corresponding baseline windows
+        fluorescence_channels = ['z_470', 'z_560', 'dfF_470', 'dfF_560']
+        behavioral_channels = ['Pupil.Diameter_eye1', 'Ellipse.Center.X_eye1']
         
-        for channel in heatmap_channels:
+        all_channels = fluorescence_channels + behavioral_channels
+        
+        for channel in all_channels:
             try:
                 # Check if channel exists in aligned_df
                 if channel not in aligned_df.columns:
                     print(f"ℹ️ Skipping {channel} heatmap (column not present)")
                     continue
+                
+                # Determine which baseline window to use
+                if channel in fluorescence_channels:
+                    baseline_window = self.fluorescence_baseline_window
+                else:  # behavioral channels
+                    baseline_window = self.baseline_window
                 
                 # Create pivot table
                 pivot_data = aligned_df.pivot_table(
@@ -2812,10 +2827,10 @@ class PhotometryAnalyzer:
                     aggfunc='first'
                 )
                 
-                # Create heatmap
+                # Create heatmap with appropriate baseline window
                 heatmap_path = data_path.parent / f"{session_name}_{event_name}_heatmap_{channel}.pdf"
-                self.create_heatmap(pivot_data, session_name, event_name, channel, heatmap_path)
-                print(f"Saved {channel} heatmap")
+                self.create_heatmap(pivot_data, session_name, event_name, channel, heatmap_path, baseline_window)
+                print(f"Saved {channel} heatmap (baseline: {baseline_window[0]}s to {baseline_window[1]}s)")
                 
                 # Cleanup
                 del pivot_data
@@ -2828,7 +2843,9 @@ class PhotometryAnalyzer:
 
 def main(data_paths: List[Path], loaded_data: Dict, data_path_variables: Dict, 
          event_name: str = "halt", time_window: Tuple[float, float] = (-5, 10),
-         saccade_bin_size_s: float = 0.1):
+         saccade_bin_size_s: float = 0.1,
+         baseline_window: Tuple[float, float] = baseline_window,
+         fluorescence_baseline_window: Tuple[float, float] = fluorescence_baseline_window):
     """
     Main processing function.
     
@@ -2839,9 +2856,14 @@ def main(data_paths: List[Path], loaded_data: Dict, data_path_variables: Dict,
         event_name: Name of event type (default: "halt")
         time_window: Tuple of (start, end) times relative to event in seconds
         saccade_bin_size_s: Bin size in seconds for saccade density analysis (default: 0.1 = 100ms)
+        baseline_window: Baseline window for behavioral signals (velocity, pupil, eye position)
+        fluorescence_baseline_window: Baseline window for fluorescence signals (z_470, z_560, etc.)
     """
     # Initialize analyzer (will be updated with saccade data per session)
-    analyzer = PhotometryAnalyzer(time_window, saccade_bin_size_s=saccade_bin_size_s)
+    analyzer = PhotometryAnalyzer(time_window, 
+                                  saccade_bin_size_s=saccade_bin_size_s,
+                                  baseline_window=baseline_window,
+                                  fluorescence_baseline_window=fluorescence_baseline_window)
     
     # Process each data path
     for idx, data_path in enumerate(data_paths, start=1):
@@ -2873,18 +2895,20 @@ def main(data_paths: List[Path], loaded_data: Dict, data_path_variables: Dict,
 
 
 # %%
-time_window = (time_window_start, time_window_end)
+time_window = (time_window_start, time_window_end) 
 # saccade_bin_size_s is now externalized to the parameter cell at the top (line 140)
 
 main(data_paths, loaded_data, data_path_variables, 
      event_name=event_name, time_window=time_window,
-     saccade_bin_size_s=saccade_bin_size_s)
+     saccade_bin_size_s=saccade_bin_size_s,
+     baseline_window=baseline_window,
+     fluorescence_baseline_window=fluorescence_baseline_window)
 
 
 # %%
 # BASELINING
 #----------------------------------------------------
-def process_aligned_data_folders(data_dirs, baseline_window, event_name=event_name, plot_width=12, create_plots=True):
+def process_aligned_data_folders(data_dirs, baseline_window, fluorescence_baseline_window, event_name=event_name, plot_width=12, create_plots=True):
     """
     Process all aligned_data folders and generate baseline plots.
     
@@ -2893,7 +2917,9 @@ def process_aligned_data_folders(data_dirs, baseline_window, event_name=event_na
     data_dirs : list
         List of Path objects pointing to your main data directories
     baseline_window : tuple
-        Tuple of (start_time, end_time) for baseline window
+        Tuple of (start_time, end_time) for baseline window (for behavioral signals)
+    fluorescence_baseline_window : tuple
+        Tuple of (start_time, end_time) for baseline window (for fluorescence signals)
     event_name : str
         Event name for file naming (default: "halt")
     plot_width : int
@@ -2994,6 +3020,7 @@ def process_aligned_data_folders(data_dirs, baseline_window, event_name=event_na
                         left_turns_df=left_turns_df,
                         right_turns_df=right_turns_df,
                         baseline_window=baseline_window,
+                        fluorescence_baseline_window=fluorescence_baseline_window,
                         mouse_name=mouse_name,
                         session_name=session_name,
                         event_name=event_name,
@@ -3083,31 +3110,30 @@ def create_single_baseline_plot(mean_baseline_df, sem_baseline_df, mouse_name, s
     Path
         Path to saved figure file
     """
-    
     def get_symmetric_ylim(mean_data, sem_data):
         max_abs_value = max(
             abs(mean_data).max() + sem_data.max(),
             abs(mean_data).min() - sem_data.min()
         )
         return (-max_abs_value, max_abs_value)
-    
+
     # Create figure
     fig, ax = plt.subplots(figsize=(plot_width, 6))
-    
+
     # Photodiode
     ax.plot(mean_baseline_df.index, mean_baseline_df["Photodiode_int"], color='grey', alpha=0.8, linewidth=2)
     ax.fill_between(mean_baseline_df.index,
                     mean_baseline_df["Photodiode_int"] - sem_baseline_df["Photodiode_int"],
                     mean_baseline_df["Photodiode_int"] + sem_baseline_df["Photodiode_int"],
                     color='grey', alpha=0.2)
-    
+
     ax.set_xlabel('Time (s) relative to halt')
     ax.set_ylabel('Photodiode', color='grey')
     title = f'Baselined Signals - {mouse_name} ({session_name})'
     if turn_type:
         title += f' - {turn_type}'
     ax.set_title(title)
-    
+
     # z_470 and z_560 (Fluorescence) - BASELINED
     ax2 = ax.twinx()
     ax2.plot(mean_baseline_df.index, mean_baseline_df["z_470_Baseline"], color='green', alpha=0.8, linewidth=2, label='470nm')
@@ -3126,19 +3152,19 @@ def create_single_baseline_plot(mean_baseline_df, sem_baseline_df, mouse_name, s
         pd.concat([sem_baseline_df["z_470_Baseline"], sem_baseline_df["z_560_Baseline"]])
     ))
     ax2.yaxis.label.set_color('green')
-    
+
     # Motor velocity (NOT baselined)
     ax3 = ax.twinx()
     ax3.spines['right'].set_position(('outward', 50))
     ax3.plot(mean_baseline_df.index, mean_baseline_df["Motor_Velocity"], color='#00008B', alpha=0.8, linewidth=2)
     ax3.fill_between(mean_baseline_df.index,
-                     mean_baseline_df["Motor_Velocity"] - sem_baseline_df["Motor_Velocity"],
-                     mean_baseline_df["Motor_Velocity"] + sem_baseline_df["Motor_Velocity"],
+                 mean_baseline_df["Motor_Velocity"] - sem_baseline_df["Motor_Velocity"],
+                 mean_baseline_df["Motor_Velocity"] + sem_baseline_df["Motor_Velocity"],
                      color='#00008B', alpha=0.2)
     ax3.set_ylabel('Motor Velocity (deg/s²)', color='#00008B')
     ax3.set_ylim(get_symmetric_ylim(mean_baseline_df["Motor_Velocity"], sem_baseline_df["Motor_Velocity"]))
     ax3.yaxis.label.set_color('#00008B')
-    
+
     # Running velocity (Velocity_0X) - BASELINED
     ax4 = ax.twinx()
     ax4.spines['right'].set_position(('outward', 100))
@@ -3150,19 +3176,19 @@ def create_single_baseline_plot(mean_baseline_df, sem_baseline_df, mouse_name, s
     ax4.set_ylabel('Running velocity (mm/s²)', color='orange')
     ax4.set_ylim(get_symmetric_ylim(mean_baseline_df["Velocity_0X_Baseline"] * 1000, sem_baseline_df["Velocity_0X_Baseline"] * 1000))
     ax4.yaxis.label.set_color('orange')
-    
+
     # Turning velocity (Velocity_0Y) (NOT baselined)
     ax5 = ax.twinx()
     ax5.spines['right'].set_position(('outward', 150))
     ax5.plot(mean_baseline_df.index, mean_baseline_df["Velocity_0Y"], color='#4682B4', alpha=0.8, linewidth=2)
     ax5.fill_between(mean_baseline_df.index,
-                     mean_baseline_df["Velocity_0Y"] - sem_baseline_df["Velocity_0Y"],
-                     mean_baseline_df["Velocity_0Y"] + sem_baseline_df["Velocity_0Y"],
+                 mean_baseline_df["Velocity_0Y"] - sem_baseline_df["Velocity_0Y"],
+                 mean_baseline_df["Velocity_0Y"] + sem_baseline_df["Velocity_0Y"],
                      color='#4682B4', alpha=0.2)
     ax5.set_ylabel('Turning velocity (deg/s²)', color='#4682B4')
     ax5.set_ylim(get_symmetric_ylim(mean_baseline_df["Velocity_0Y"], sem_baseline_df["Velocity_0Y"]))
     ax5.yaxis.label.set_color('#4682B4')
-    
+
     # Pupil diameter - BASELINED
     if "Pupil.Diameter_eye1_Baseline" in mean_baseline_df.columns:
         ax6 = ax.twinx()
@@ -3210,12 +3236,12 @@ def create_single_baseline_plot(mean_baseline_df, sem_baseline_df, mouse_name, s
         y_max = mean_baseline_df["saccade_probability_eye1"].max()
         if y_max > y_min:
             ax8.set_ylim(y_min * 0.9, y_max * 1.1)
-    
+
     # Add vertical line at event time (t=0)
     ax.axvline(x=0, color='black', linestyle='--', alpha=0.5, linewidth=1)
-    
+
     fig.tight_layout()
-    
+
     # Save the figure
     figure_file = output_folder / f"{session_name}_{event_name}_baselined{suffix}.pdf"
     fig.savefig(figure_file, format='pdf', bbox_inches='tight')
@@ -3224,7 +3250,7 @@ def create_single_baseline_plot(mean_baseline_df, sem_baseline_df, mouse_name, s
     return figure_file
 
 
-def baseline_aligned_data_simple(aligned_df, left_turns_df, right_turns_df, baseline_window, mouse_name, session_name, event_name, output_folder, csv_file, plot_width=12, create_plots=True):
+def baseline_aligned_data_simple(aligned_df, left_turns_df, right_turns_df, baseline_window, fluorescence_baseline_window, mouse_name, session_name, event_name, output_folder, csv_file, plot_width=12, create_plots=True):
     """
     Simple baseline correction and plotting function.
     
@@ -3237,7 +3263,9 @@ def baseline_aligned_data_simple(aligned_df, left_turns_df, right_turns_df, base
     right_turns_df : pd.DataFrame or None
         Right turns data
     baseline_window : tuple
-        Tuple of (start_time, end_time) for baseline window
+        Tuple of (start_time, end_time) for baseline window (for behavioral signals)
+    fluorescence_baseline_window : tuple
+        Tuple of (start_time, end_time) for baseline window (for fluorescence signals)
     mouse_name : str
         Mouse name for file naming
     session_name : str
@@ -3256,28 +3284,47 @@ def baseline_aligned_data_simple(aligned_df, left_turns_df, right_turns_df, base
     
     print(f"      🔄 Performing baseline correction...")
 
-    def baseline_dataframe(df, baseline_window, mouse_name, event_name, output_folder, suffix=""):
+    def baseline_dataframe(df, baseline_window, fluorescence_baseline_window, mouse_name, event_name, output_folder, suffix=""):
         """Helper function to baseline a single dataframe"""
         # Make a copy to avoid modifying the original data
         df_copy = df.copy()
         
-        # Calculate baseline values
+        # Calculate baseline values for fluorescence signals (using fluorescence_baseline_window)
+        fluorescence_baseline_df = df_copy[
+            (df_copy["Time (s)"] >= fluorescence_baseline_window[0]) & 
+            (df_copy["Time (s)"] <= fluorescence_baseline_window[1])
+        ].groupby("Halt Time").mean(numeric_only=True)
+        
+        # Calculate baseline values for other signals (using baseline_window)
         baseline_df = df_copy[
             (df_copy["Time (s)"] >= baseline_window[0]) & 
             (df_copy["Time (s)"] <= baseline_window[1])
         ].groupby("Halt Time").mean(numeric_only=True)
         
-        # Create baseline-corrected columns (only for specified signals)
-        # Baselined: fluorescence, running velocity, pupil diameter, eye position
-        # NOT baselined: motor velocity, turning velocity, saccade probability
-        signals_to_baseline = [
-            "z_470", "z_560",                    # Fluorescence - baselined
+        # Fluorescence signals (use fluorescence_baseline_window)
+        fluorescence_signals = [
+            "z_470", "z_560", "dfF_470", "dfF_560"
+        ]
+        
+        # Other signals (use baseline_window)
+        other_signals = [
             "Velocity_0X",                       # Running velocity - baselined
             "Pupil.Diameter_eye1",               # Pupil diameter - baselined
             "Ellipse.Center.X_eye1"              # Eye position X - baselined
         ]
         
-        for signal_name in signals_to_baseline:
+        # NOT baselined: motor velocity, turning velocity, saccade probability
+        
+        # Apply baseline correction to fluorescence signals
+        for signal_name in fluorescence_signals:
+            if signal_name in df_copy.columns:
+                df_copy[f"{signal_name}_Baseline"] = df_copy[signal_name] - df_copy["Halt Time"].map(fluorescence_baseline_df[signal_name])
+            else:
+                if not suffix:  # Only print warning for main data
+                    print(f"      ⚠️  Column {signal_name} not found in data, skipping baseline correction...")
+        
+        # Apply baseline correction to other signals
+        for signal_name in other_signals:
             if signal_name in df_copy.columns:
                 df_copy[f"{signal_name}_Baseline"] = df_copy[signal_name] - df_copy["Halt Time"].map(baseline_df[signal_name])
             else:
@@ -3301,19 +3348,19 @@ def baseline_aligned_data_simple(aligned_df, left_turns_df, right_turns_df, base
 
     # ---------------- Baseline Correction ----------------
     # Process main aligned data
-    aligned_df_baselined = baseline_dataframe(aligned_df, baseline_window, mouse_name, event_name, output_folder)
+    aligned_df_baselined = baseline_dataframe(aligned_df, baseline_window, fluorescence_baseline_window, mouse_name, event_name, output_folder)
     
     # Process left turns data if available
     left_turns_df_baselined = None
     if left_turns_df is not None:
         print(f"      🔄 Processing left turns data...")
-        left_turns_df_baselined = baseline_dataframe(left_turns_df, baseline_window, mouse_name, event_name, output_folder, "left_turns")
+        left_turns_df_baselined = baseline_dataframe(left_turns_df, baseline_window, fluorescence_baseline_window, mouse_name, event_name, output_folder, "left_turns")
     
     # Process right turns data if available
     right_turns_df_baselined = None
     if right_turns_df is not None:
         print(f"      🔄 Processing right turns data...")
-        right_turns_df_baselined = baseline_dataframe(right_turns_df, baseline_window, mouse_name, event_name, output_folder, "right_turns")
+        right_turns_df_baselined = baseline_dataframe(right_turns_df, baseline_window, fluorescence_baseline_window, mouse_name, event_name, output_folder, "right_turns")
 
     # ---------------- Plotting ----------------
     if create_plots:
@@ -3395,6 +3442,7 @@ if __name__ == "__main__":
     results = process_aligned_data_folders(
         data_dirs=data_dirs,
         baseline_window=baseline_window,
+        fluorescence_baseline_window=fluorescence_baseline_window,
         event_name=event_name,
         plot_width=plot_width,
         create_plots=True  # Ensure this is set to True to save plots
