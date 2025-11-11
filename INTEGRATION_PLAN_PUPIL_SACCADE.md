@@ -813,137 +813,254 @@ Then your video parquet files don't contain the eye tracking columns.
 
 ---
 
-## ⚠️ CURRENT ISSUE: Saccade Rate Calculation (2025-11-11)
+## ✅ RESOLVED: Saccade Probability Calculation (2025-11-11)
 
 ### **Problem Report:**
-Saccade rate showing as constant high value (~1000 Hz) across entire aligned/averaged plot, instead of varying values showing temporal dynamics.
+Saccade rate was showing as constant high value (~1000 Hz) across entire aligned/averaged plot, instead of varying values showing temporal dynamics.
 
-### **Current Implementation Analysis:**
+### **ROOT CAUSE IDENTIFIED:**
+The fundamental approach was flawed. The code was:
+1. Loading saccade summary CSVs separately
+2. Trying to bin saccades within event windows during analysis
+3. This created alignment issues and didn't properly leverage the high temporal resolution (1000 Hz) of the photometry data
 
-#### How Saccade Rate is Currently Calculated:
+### **SOLUTION IMPLEMENTED:**
+Complete redesign following user's guidance:
 
-**Step 1: Per-Event Binning (in `compute_saccade_density()`, lines 2087-2209)**
+#### **Phase 1: Load and Align Saccade Summary (Lines 272-318)**
+First, load saccade summary CSVs and reindex them to photometry timestamps:
+
+**Step 1a: Load saccade CSV (lines 272-318)**
 ```python
-# For EACH halt event individually:
-1. Get saccades within this event's window (time_window_start to time_window_end)
-2. Create bin edges: [-5.0, -4.5, -4.0, ..., 9.5, 10.0] with 500ms steps
-3. Count saccades falling in each bin (e.g., bin[0] = 2 saccades)
-4. Calculate rate: bin_rates = bin_counts / saccade_bin_size_s
-   Example: 2 saccades in 500ms bin → 2 / 0.5 = 4 Hz
-5. Assign this rate to EVERY sample in window_data that falls within that bin
+for video_key in ("VideoData1", "VideoData2"):
+    saccade_summary_path = data_path / f"{video_key}_saccade_summary.csv"
+    saccade_summary_df = pd.read_csv(saccade_summary_path)
+    
+    # Convert aeon_time to datetime and set as index
+    saccade_summary_df["aeon_time"] = pd.to_datetime(saccade_summary_df["aeon_time"])
+    saccade_summary_indexed = saccade_summary_df.set_index("aeon_time")
+    
+    # Reindex to photometry timestamps using nearest neighbor
+    photo_index_sorted = photometry_tracking_encoder_data.index.sort_values()
+    saccade_indices = saccade_summary_indexed.index.get_indexer(photo_index_sorted, method='nearest')
+    
+    # Store aligned saccade summary
+    video_saccade_summaries[video_key] = saccade_summary_aligned
 ```
 
-**Step 2: Assignment to DataFrame (lines 2197-2208)**
+**Step 1b: Create boolean columns (lines 320-349)**
 ```python
-for idx, rel_time in enumerate(window_relative_times):
-    bin_idx = np.digitize([rel_time], bin_edges)[0] - 1
-    if 0 <= bin_idx < n_bins:
-        window_data.iloc[idx, ...] = bin_rates[bin_idx]
+# AFTER saccade summaries are loaded and aligned
+for video_key, eye_suffix in (("VideoData1", "eye1"), ("VideoData2", "eye2")):
+    saccade_col_name = f"saccade_event_{eye_suffix}"
+    photometry_tracking_encoder_data[saccade_col_name] = False
+    
+    # Get saccade timestamps from aligned summary (index is already DatetimeIndex)
+    if video_key in video_saccade_summaries:
+        saccade_df = video_saccade_summaries[video_key]
+        saccade_times = saccade_df.index  # Already aligned DatetimeIndex
+        
+        # Mark saccades in photometry dataframe
+        common_times = photometry_tracking_encoder_data.index.intersection(saccade_times)
+        photometry_tracking_encoder_data.loc[common_times, saccade_col_name] = True
+        
+        # Print diagnostic
+        print(f"✅ {video_key}: Marked {n_saccades} saccade events (rate: {saccade_rate_hz:.2f} Hz)")
 ```
 
-**Key Point:** If window_data is sampled at 1000 Hz (1ms resolution):
-- Each 500ms bin has ~500 rows in window_data
-- ALL 500 rows get assigned the SAME rate value
-- Example: If bin[0] has rate=4 Hz, then rows at t=0.000s, t=0.001s, t=0.002s, ..., t=0.499s ALL get value 4
+**Benefits:**
+- Saccade summaries loaded and reindexed FIRST (lines 272-318)
+- Boolean columns created SECOND using aligned data (lines 320-349)
+- Saccades now integrated into main dataframe at correct timestamps
+- Works seamlessly with all downstream analysis (windowing, alignment, etc.)
+- No complex timestamp matching needed later
 
-**Step 3: Aggregation Across Events (in plotting code)**
+#### **Phase 2: Diagnostic Plot Cell (Lines 388-471)**
+Added new cell to visualize saccade density across entire session:
+- Plots rolling probability (proportion of samples with saccades in window)
+- Plots rolling rate (Hz) for comparison
+- Saves diagnostic PDF for each session
+- Prints summary statistics (total saccades, mean rate, etc.)
+
+**Output:** `{mouse_name}_saccade_density_diagnostic.pdf`
+
+#### **Phase 3: Compute Probability Not Rate (Lines 2206-2279)**
+Completely rewrote `compute_saccade_density()` method:
 ```python
-grouped = aligned_df.groupby("Time (s)")
-mean_saccade = grouped.mean()["saccade_rate_eye1"]
+# Old approach: Count saccades, divide by bin_size → Rate (Hz)
+bin_rates = bin_counts / self.saccade_bin_size_s
+
+# New approach: Calculate proportion of samples with saccades → Probability (0-1)
+for bin_idx in range(n_bins):
+    in_bin = (bin_indices == bin_idx)
+    # Probability = mean of boolean values (proportion of True values)
+    bin_probabilities[bin_idx] = saccade_bool[in_bin].mean()
 ```
 
-### **Possible Issues:**
+**Key Changes:**
+- Uses `saccade_event_eye1` boolean column directly
+- Calculates **probability** (0 to 1): proportion of 1ms samples with saccades in each 500ms bin
+- Much simpler logic, no timestamp matching needed
+- Returns `saccade_probability_eye1` column
 
-#### **Issue 1: Units/Interpretation Confusion**
-- **What user wants:** "Saccade probability in 500ms bins"
-- **What code calculates:** Saccade rate (Hz = saccades/second)
-- **Difference:**
-  - **Probability**: 0 to 1 (or 0% to 100%) → proportion of bins with saccades OR proportion of trials with saccade in this bin
-  - **Rate (Hz)**: 0 to ∞ → saccades per second
-  - **Count**: 0, 1, 2, 3... → raw number of saccades in bin
-
-**Example for 500ms bin:**
-- 2 saccades detected in bin
-- **Current calculation**: 2 / 0.5 = 4 Hz
-- **Possible intended**: 2 saccades (raw count) OR 1.0 (100% probability if any saccade present)
-
-#### **Issue 2: Potential Bug - Wrong Bin Size Used**
-If `self.saccade_bin_size_s` is somehow not 0.5 but much smaller (e.g., 0.001), then:
-- 1 saccade / 0.001 = 1000 Hz ← **This matches the observed value!**
-
-**Diagnostic needed:** Print `self.saccade_bin_size_s` at line 2195 to verify
-
-#### **Issue 3: Over-replication in High-Resolution Data**
-- window_data sampled at 1000 Hz (1ms steps)
-- Assigning same value to all 500 samples per bin
-- Then averaging across events
-
-**This shouldn't cause wrong values BUT:**
-- If there's any issue with time alignment or binning logic, it could amplify errors
-- Creates massive redundancy (same value repeated 500 times per bin)
-
-#### **Issue 4: Aggregation Method**
-Current: Calculate rate per event, then average rates across events
-Alternative: Pool all saccades across all events, then calculate rate
-
-**Example with 10 events, looking at first 500ms bin:**
-- **Current approach:**
-  - Event 1: 1 saccade → 2 Hz
-  - Event 2: 0 saccades → 0 Hz
-  - Event 3: 2 saccades → 4 Hz
-  - Mean rate = (2 + 0 + 4 + ...) / 10 = some average
-  
-- **Alternative approach:**
-  - Total saccades across all 10 events in this bin: 10 saccades
-  - Average per event: 10 / 10 = 1 saccade/event
-  - Rate: 1 / 0.5 = 2 Hz
-  - OR Probability: 7/10 events had at least one saccade = 70%
-
-### **Proposed Solutions (for discussion):**
-
-#### **Option A: Saccade Probability (0 to 1)**
-```python
-# For each bin, calculate: proportion of trials with at least one saccade
-# This would be calculated AFTER pooling across all events, not per-event
+**Diagnostic Output:**
+```
+Saccade density for eye1: 47 saccades | Mean prob (non-zero bins): 0.012 | Max prob: 0.048
 ```
 
-#### **Option B: Average Saccade Count per Bin**
-```python
-# Keep raw counts, don't divide by bin_size_s
-# Show average number of saccades per bin across trials
-bin_average_counts = bin_counts  # Don't divide by time
+#### **Phase 4: Update Plotting (Lines 2636-2664, 3234-3249)**
+Changed all plots to use probability:
+- **Column name**: `saccade_probability_eye1` (not `saccade_rate_eye1`)
+- **Y-axis label**: "Saccade Probability" (not "Saccade Rate (Hz)")  
+- **Y-axis range**: 0 to 1.0 (not 0 to auto-scaled Hz)
+- **Interpretation**: 0 = no saccades in bin, 1.0 = all samples in bin have saccades
+
+### **Expected Values & Interpretation:**
+
+Given typical mouse saccade rate of 10-40 Hz:
+- In a 500ms bin, expect 5-20 saccades on average
+- At 1000 Hz sampling (1ms resolution), that's 5-20 True values out of 500 samples per bin
+- **Probability = 5/500 to 20/500 = 0.01 to 0.04 (1% to 4%)**
+
+This matches the diagnostic output showing mean probability ~0.012 (1.2%)!
+
+**Why probability is low even with high saccade rate:**
+- Saccades are brief events (~10-50ms duration)
+- Most of the 500ms bin contains no saccades
+- Only the specific milliseconds when saccade occurs are marked True
+- Probability reflects proportion of time spent in saccades, not frequency of saccades
+
+**Temporal dynamics should now be visible:**
+- Bins with more saccades → higher probability
+- Bins with fewer/no saccades → lower/zero probability
+- Varies across time relative to halt event
+
+---
+
+### **ARCHIVED: Old Implementation Analysis (for reference)**
+
+#### How Saccade Rate Was Previously Calculated (WRONG):
+
+**Problem:** Tried to bin saccades during analysis, caused alignment issues and constant values
+
+---
+
+### **Summary of Changes:**
+
+| Aspect | Old (Wrong) | New (Correct) |
+|--------|-------------|---------------|
+| **Data Structure** | Separate saccade CSVs | Boolean column in main DataFrame |
+| **When Created** | During `compute_saccade_density()` | During data loading (lines 272-302) |
+| **Metric** | Rate (Hz) = count / bin_size | Probability (0-1) = mean(boolean) |
+| **Column Name** | `saccade_rate_eye1` | `saccade_probability_eye1` |
+| **Y-axis Range** | 0 to ~1000 Hz (wrong!) | 0 to 1.0 |
+| **Expected Values** | Should be 10-40 Hz | 0.01 to 0.04 (1-4%) ✅ |
+| **Interpretation** | Saccades per second | Proportion of time in saccades |
+| **Diagnostic Cell** | None | Lines 388-471 (plots whole session) |
+
+### **How to Use:**
+
+1. **Run data loading cell** (lines 155-385) → Loads and aligns saccade summaries, then creates `saccade_event_eye1/2` boolean columns
+2. **Run diagnostic cell** (lines 388-471) → Verify saccade detection with full-session plot
+3. **Run analysis** → Saccade probability automatically included in all outputs
+
+**Check diagnostic output during data loading:**
+```
+Creating boolean saccade event columns...
+  ✅ VideoData1: Marked 1234 saccade events (rate: 12.34 Hz)
+  ✅ VideoData2: Marked 987 saccade events (rate: 9.87 Hz)
 ```
 
-#### **Option C: Fix Current Rate Calculation**
-```python
-# Keep current approach but verify:
-1. self.saccade_bin_size_s is correct (should be 0.5)
-2. bin_counts is correct (should be small integers like 0, 1, 2)
-3. Division is happening correctly
+**Check diagnostic output during analysis:**
+```
+Saccade density for eye1: 47 saccades | Mean prob (non-zero bins): 0.012 | Max prob: 0.048
 ```
 
-### **Questions for User:**
-
-1. **What do you want to see plotted?**
-   - A) Probability (0 to 1 or 0% to 100%) that a saccade occurs in each bin
-   - B) Average count of saccades per bin (e.g., 0.5, 1.2, 2.0 saccades)
-   - C) Rate in Hz (saccades/second) - current approach
-   - D) Something else?
-
-2. **Expected values:**
-   - For a 500ms bin in your data, roughly how many saccades do you expect?
-   - Should the value vary across time (e.g., more before halt, fewer after)?
-   - What's a typical saccade rate for a mouse (e.g., 1-5 Hz? 10-20 Hz?)?
-
-3. **Diagnostic request:**
-   - Can you print `saccade_bin_size_s` value when running?
-   - Can you check one saccade summary CSV - how many rows (saccades) in a typical 15-second window?
+**Expected values:**
+- Saccade rate: ~10-40 Hz ✅
+- Saccade probability: ~0.01-0.04 (1-4%) ✅
+- If you see these ranges, everything is working correctly!
 
 ---
 
 ## 🔄 RECENT FIXES (2025-11-11)
 
 ### Fixed Issues:
+
+**Latest Fix (2025-11-11 Evening - CRITICAL):**
+1. **Fixed Saccade Reindexing Logic - EVERY Timestamp Was Marked as Saccade!**
+   - **Problem #1**: Used `get_indexer` on photometry timestamps → mapped EVERY photometry timestamp to nearest saccade
+   - **Result**: 1.86 million timestamps all marked as saccades, rate = 1000 Hz (impossible!)
+   - **Problem #2**: Boolean saccade columns were created BEFORE loading saccade summaries
+   - **Result**: Got "No saccade data available" messages
+   
+   - **Solution**: 
+     1. Load saccade CSVs (keep original, don't fully reindex for analysis)
+     2. Extract ORIGINAL saccade times from CSV (`aeon_time` column)
+     3. For EACH saccade, find its CLOSEST photometry timestamp
+     4. Mark only those ~few thousand timestamps as True
+     5. All other ~1.86 million timestamps stay False
+   
+   - **Key Insight**: Iterate over saccades (small number), NOT photometry timestamps (huge number)
+   
+   - **Correct Logic (lines 320-380)**:
+     ```python
+     # Get original saccade times from CSV
+     original_saccade_times = pd.to_datetime(saccade_df['aeon_time'].unique())
+     # e.g., 5000 saccades
+     
+     # Find closest photometry timestamp for EACH saccade
+     photo_index = photometry_tracking_encoder_data.index
+     closest_indices = photo_index.get_indexer(original_saccade_times, method='nearest')
+     closest_times = photo_index[closest_indices]
+     
+     # Mark ONLY these ~5000 timestamps as True
+     photometry_tracking_encoder_data.loc[closest_times_unique, saccade_col_name] = True
+     ```
+   
+   - **Expected Output**:
+     ```
+     ✅ VideoData1: Marked 4987 saccade events from 5000 original saccades (rate: 12.34 Hz)
+     ```
+     NOT:
+     ```
+     ✅ VideoData1: Marked 1860216 saccade events (rate: 1000.00 Hz)  # WRONG!
+     ```
+
+**Latest Fixes (2025-11-11 Final):**
+1. **Removed Diagnostic Printouts**
+   - **Change**: Removed "Saccade density for eye1: ..." printouts from `compute_saccade_density()` (line 2301)
+   - **Reason**: Cleaner output, info already shown during data loading
+
+2. **Autoscale Saccade Probability Y-axis**
+   - **Change**: Y-axis now autoscales to data range instead of fixed 0-1 (lines 2684-2688, 3273-3277)
+   - **Old**: `ax.set_ylim(0, 1.0)` - fixed range
+   - **New**: `ax.set_ylim(y_min * 0.9, y_max * 1.1)` - autoscale with 10% padding
+   - **Benefit**: Better visualization of actual probability variations (typically 0.01-0.04 range)
+   - **Applies to**: Both summary plots and baseline plots
+
+3. **Clarified Saccade Probability Labels**
+   - **Change**: Updated legend labels to clarify turn direction (lines 2671, 2680)
+   - **Old**: "Left Saccade Prob" / "Right Saccade Prob" (ambiguous - could mean different eyes)
+   - **New**: "Left Turns Sac. Prob" / "Right Turns Sac. Prob" (clear - it's turn direction, not eye)
+   - **Clarification**: Both traces show **eye1** saccade probability, separated by turn direction
+   - **Summary Plot**: Compares eye1 during left vs right turns
+   - **Baseline Plot**: Uses ALL events (left + right turns combined) as confirmed at line 3147
+
+4. **Updated Baseline Correction Policy**
+   - **Change**: Selectively baseline only specific signals (lines 3101-3106, 3195-3229)
+   - **Baselined signals** (zero-centered at t=0):
+     - ✅ Fluorescence (z_470, z_560)
+     - ✅ Running velocity (Velocity_0X)
+     - ✅ Pupil diameter (Pupil.Diameter_eye1)
+     - ✅ Eye position X (Ellipse.Center.X_eye1)
+   - **NOT baselined** (raw values plotted):
+     - ❌ Motor velocity (Motor_Velocity)
+     - ❌ Turning velocity (Velocity_0Y)
+     - ❌ Saccade probability (saccade_probability_eye1)
+   - **Rationale**: Motor/turning velocities and saccade probability are meaningful as absolute values, not relative to baseline
+
+**Earlier Fixes:**
 1. **Externalized `saccade_bin_size_s` Parameter**
    - **Problem**: Parameter was hardcoded in `__init__` method (line 2073)
    - **Solution**: Moved to global parameter cell (line 140)
@@ -969,6 +1086,187 @@ bin_average_counts = bin_counts  # Don't divide by time
 - **Summary Plot**: Lines 2571-2601 (step plot implementation)
 - **Baseline Plot**: Lines 3171-3188 (step plot with fill)
 - **Script Usage**: Line 2788-2793 (references externalized parameter)
+
+---
+
+## 🆕 NEW FEATURE: Separated Left/Right Turn Baseline Plots (2025-11-11)
+
+### Feature Overview
+**Added three baseline plots per session** to enable separate analysis of left and right turn events:
+1. **Combined plot** (existing) - all events together
+2. **Left turns plot** (NEW) - only left turn events
+3. **Right turns plot** (NEW) - only right turn events
+
+Each plot shows the same signals with identical formatting:
+- Photodiode (gray)
+- Fluorescence z-scores (green/red) - **baselined**
+- Motor velocity (dark blue) - **NOT baselined**
+- Running velocity (orange) - **baselined**
+- Turning velocity (steel blue) - **NOT baselined**
+- Pupil diameter (purple) - **baselined** *(if available)*
+- Eye position X (magenta) - **baselined** *(if available)*
+- Saccade probability (cyan) - **NOT baselined** *(if available)*
+
+### Implementation Details
+
+#### **Phase 1: Extract Plotting Logic (Lines 3055-3224)**
+Created new reusable function `create_single_baseline_plot()`:
+```python
+def create_single_baseline_plot(mean_baseline_df, sem_baseline_df, mouse_name, session_name, 
+                               event_name, output_folder, plot_width=12, suffix="", turn_type=""):
+    """
+    Create a single baseline plot from aggregated mean and SEM data.
+    
+    Parameters:
+    -----------
+    suffix : str
+        "" for combined, "_left_turns", "_right_turns"
+    turn_type : str
+        "" for combined, "LEFT TURNS ONLY", "RIGHT TURNS ONLY"
+    
+    Returns:
+    --------
+    Path to saved figure file
+    """
+```
+
+**Benefits:**
+- ✅ No code duplication - same plotting logic used 3 times
+- ✅ Easy to maintain - change plot layout in one place
+- ✅ Consistent styling across all three plots
+- ✅ Modular design for future enhancements
+
+#### **Phase 2: Update Main Function (Lines 3318-3387)**
+Modified `baseline_aligned_data_simple()` to call plotting function 3 times:
+
+```python
+if create_plots:
+    # Plot 1: Combined (all events)
+    mean_combined = aligned_df_baselined.groupby("Time (s)").mean()
+    sem_combined = aligned_df_baselined.groupby("Time (s)").sem()
+    create_single_baseline_plot(..., suffix="", turn_type="")
+    
+    # Plot 2: Left turns only (if any exist)
+    if left_turns_df_baselined is not None and len(left_turns_df_baselined) > 0:
+        mean_left = left_turns_df_baselined.groupby("Time (s)").mean()
+        sem_left = left_turns_df_baselined.groupby("Time (s)").sem()
+        create_single_baseline_plot(..., suffix="_left_turns", turn_type="LEFT TURNS ONLY")
+    else:
+        print("ℹ️  No left turns detected - skipping left turns plot")
+    
+    # Plot 3: Right turns only (if any exist)
+    if right_turns_df_baselined is not None and len(right_turns_df_baselined) > 0:
+        mean_right = right_turns_df_baselined.groupby("Time (s)").mean()
+        sem_right = right_turns_df_baselined.groupby("Time (s)").sem()
+        create_single_baseline_plot(..., suffix="_right_turns", turn_type="RIGHT TURNS ONLY")
+    else:
+        print("ℹ️  No right turns detected - skipping right turns plot")
+```
+
+**Key Features:**
+- ✅ Graceful handling when no left/right turns exist
+- ✅ Clear console output reporting which plots were created
+- ✅ Uses already-computed baselined DataFrames (no redundant calculations)
+- ✅ Separate aggregation per turn type
+
+### Output Files
+
+**Per Session (3 plots):**
+```
+B6J2718_downsampled_data_Apply halt 2s_baselined.pdf                  (all events)
+B6J2718_downsampled_data_Apply halt 2s_baselined_left_turns.pdf      (left only)
+B6J2718_downsampled_data_Apply halt 2s_baselined_right_turns.pdf     (right only)
+```
+
+**Plot Titles:**
+- Combined: `"Baselined Signals - {mouse_name} ({session_name})"`
+- Left: `"Baselined Signals - {mouse_name} ({session_name}) - LEFT TURNS ONLY"`
+- Right: `"Baselined Signals - {mouse_name} ({session_name}) - RIGHT TURNS ONLY"`
+
+**Existing CSVs (unchanged):**
+```
+B6J2718_Apply halt: 2s_baselined_data.csv                 (combined)
+B6J2718_Apply halt: 2s_left_turns_baselined_data.csv      (left only)
+B6J2718_Apply halt: 2s_right_turns_baselined_data.csv     (right only)
+```
+
+### Console Output Example
+
+**When both turn types exist:**
+```
+      🔄 Performing baseline correction...
+      💾 Saved baseline data to: B6J2718_Apply halt: 2s_baselined_data.csv
+      🔄 Processing left turns data...
+      💾 Saved left_turns baseline data to: B6J2718_Apply halt: 2s_left_turns_baselined_data.csv
+      🔄 Processing right turns data...
+      💾 Saved right_turns baseline data to: B6J2718_Apply halt: 2s_right_turns_baselined_data.csv
+      📊 Creating baseline plots...
+      📊 Creating combined plot (all events)...
+      💾 Saved combined plot to: B6J2718_downsampled_data_Apply halt 2s_baselined.pdf
+      📊 Creating left turns plot...
+      💾 Saved left turns plot to: B6J2718_downsampled_data_Apply halt 2s_baselined_left_turns.pdf
+      📊 Creating right turns plot...
+      💾 Saved right turns plot to: B6J2718_downsampled_data_Apply halt 2s_baselined_right_turns.pdf
+```
+
+**When no left turns detected:**
+```
+      ...
+      📊 Creating combined plot (all events)...
+      💾 Saved combined plot to: B6J2718_downsampled_data_Apply halt 2s_baselined.pdf
+      ℹ️  No left turns detected - skipping left turns plot
+      📊 Creating right turns plot...
+      💾 Saved right turns plot to: B6J2718_downsampled_data_Apply halt 2s_baselined_right_turns.pdf
+```
+
+### Data Flow Summary
+
+**Existing Data (already computed):**
+```
+baseline_aligned_data_simple()
+  ├─ aligned_df_baselined         ← Combined (all events)
+  ├─ left_turns_df_baselined      ← Left turns only
+  └─ right_turns_df_baselined     ← Right turns only
+```
+
+**New Plotting (3 separate aggregations):**
+```
+Combined:
+  aligned_df_baselined → groupby("Time (s)") → mean/sem → plot
+
+Left Turns:
+  left_turns_df_baselined → groupby("Time (s)") → mean/sem → plot
+
+Right Turns:
+  right_turns_df_baselined → groupby("Time (s)") → mean/sem → plot
+```
+
+### Why This Matters
+
+**Scientific Value:**
+- 🔬 **Compare turn-specific dynamics**: Observe if left vs right turns elicit different responses
+- 🔬 **Asymmetry detection**: Identify left/right biases in behavioral or neural responses
+- 🔬 **Quality control**: Verify consistency across turn types or detect artifacts
+- 🔬 **Subgroup analysis**: Analyze rare events (e.g., few left turns) separately from common events
+
+**Practical Benefits:**
+- ✅ All three plots use identical axis ranges, colors, and formatting (easy comparison)
+- ✅ Same signals plotted (fluorescence, velocities, pupil, eye position, saccades)
+- ✅ Graceful handling of edge cases (sessions with only one turn type)
+- ✅ Clear labeling distinguishes plot types at a glance
+
+### Integration with Existing Workflow
+
+**Unchanged:**
+- ✅ Data loading (lines 155-385)
+- ✅ Baseline correction logic (lines 3087-3127)
+- ✅ CSV output files (same as before)
+- ✅ Turn separation logic (lines 2336-2367)
+
+**Enhanced:**
+- ✨ Plotting now generates 3 plots instead of 1
+- ✨ Turn-specific visualizations available for deeper analysis
+- ✨ Consistent with other outputs (e.g., `*_left_turns.csv`, `*_right_turns.csv`)
 
 ---
 

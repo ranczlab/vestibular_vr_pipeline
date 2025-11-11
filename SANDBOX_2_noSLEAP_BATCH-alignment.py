@@ -317,6 +317,68 @@ for idx, data_path in enumerate(data_paths, start=1):
             else:
                 print(f"ℹ️ No {video_key} saccade summary found at {saccade_summary_path}")
         
+        # Create boolean saccade columns from the ORIGINAL saccade times (not reindexed)
+        # This marks each timestamp where a saccade occurred
+        print(f"\nCreating boolean saccade event columns...")
+        for video_key, eye_suffix in (("VideoData1", "eye1"), ("VideoData2", "eye2")):
+            saccade_col_name = f"saccade_event_{eye_suffix}"
+            # Initialize with False (no saccade at this timestamp)
+            photometry_tracking_encoder_data[saccade_col_name] = False
+            
+            if video_key in video_saccade_summaries and not video_saccade_summaries[video_key].empty:
+                saccade_df = video_saccade_summaries[video_key]
+                
+                # IMPORTANT: Use ORIGINAL saccade times from CSV, not reindexed times
+                # The reindexed data has one row per photometry timestamp (wrong!)
+                # We need the original saccade event times
+                if 'aeon_time' in saccade_df.columns:
+                    # Get original saccade times
+                    original_saccade_times = pd.to_datetime(saccade_df['aeon_time'].dropna().unique())
+                elif isinstance(saccade_df.index, pd.DatetimeIndex):
+                    # If index has unique saccade times, use those
+                    # But first check if it was artificially expanded by reindexing
+                    if len(saccade_df) == len(photometry_tracking_encoder_data):
+                        # This was reindexed to match photometry - we need original data
+                        print(f"⚠️ {video_key}: Saccade data was reindexed, need original CSV")
+                        # Re-read the original CSV to get true saccade times
+                        saccade_summary_path = data_path / f"{video_key}_saccade_summary.csv"
+                        if saccade_summary_path.exists():
+                            original_df = pd.read_csv(saccade_summary_path)
+                            if 'aeon_time' in original_df.columns:
+                                original_saccade_times = pd.to_datetime(original_df['aeon_time'].dropna().unique())
+                            else:
+                                print(f"⚠️ {video_key}: No aeon_time in CSV, skipping")
+                                continue
+                        else:
+                            print(f"⚠️ {video_key}: Cannot re-read CSV, skipping")
+                            continue
+                    else:
+                        original_saccade_times = saccade_df.index.unique()
+                else:
+                    print(f"⚠️ {video_key}: Cannot extract saccade timestamps, skipping")
+                    continue
+                
+                # Find photometry timestamps closest to each saccade time
+                photo_index = photometry_tracking_encoder_data.index
+                closest_indices = photo_index.get_indexer(original_saccade_times, method='nearest')
+                closest_times = photo_index[closest_indices]
+                
+                # Remove duplicates (multiple saccades might map to same photometry timestamp)
+                closest_times_unique = pd.DatetimeIndex(closest_times).unique()
+                
+                # Mark these timestamps as saccade events
+                photometry_tracking_encoder_data.loc[closest_times_unique, saccade_col_name] = True
+                
+                n_saccades = len(closest_times_unique)
+                n_original_saccades = len(original_saccade_times)
+                total_duration_s = (photometry_tracking_encoder_data.index[-1] - 
+                                   photometry_tracking_encoder_data.index[0]).total_seconds()
+                saccade_rate_hz = n_saccades / total_duration_s if total_duration_s > 0 else 0
+                
+                print(f"  ✅ {video_key}: Marked {n_saccades} saccade events from {n_original_saccades} original saccades (rate: {saccade_rate_hz:.2f} Hz)")
+            else:
+                print(f"  ℹ️ {video_key}: No saccade data available")
+        
         print(f"✅ Successfully loaded all parquet files for {data_path.name}")
         
         # Calculate time differences between event_name events
@@ -351,6 +413,92 @@ for idx, data_path in enumerate(data_paths, start=1):
         continue
 
 print(f"\n✅ Finished loading data for all {len(loaded_data)} successfully processed data paths")
+
+
+# %%
+# DIAGNOSTIC: Plot saccade density across entire session timeseries
+#-------------------------------
+# This plots the saccade boolean column to verify saccades are properly marked
+
+for idx, (data_path, data_dict) in enumerate(loaded_data.items(), start=1):
+    print(f"\n{'='*60}")
+    print(f"SACCADE DENSITY DIAGNOSTIC {idx}/{len(loaded_data)}")
+    print(f"Session: {data_dict['mouse_name']}")
+    print(f"{'='*60}")
+    
+    df = data_dict["photometry_tracking_encoder_data"]
+    
+    # Check if saccade columns exist
+    saccade_cols = [col for col in df.columns if 'saccade_event_' in col]
+    if not saccade_cols:
+        print(f"⚠️ No saccade event columns found in this session")
+        continue
+    
+    # Calculate rolling saccade density (probability in time windows)
+    window_size_s = saccade_bin_size_s  # Use same bin size as analysis
+    sampling_rate = 1000  # Hz (from common_resampled_rate)
+    window_samples = int(window_size_s * sampling_rate)
+    
+    fig, axes = plt.subplots(len(saccade_cols), 1, figsize=(14, 4*len(saccade_cols)), sharex=True)
+    if len(saccade_cols) == 1:
+        axes = [axes]
+    
+    for ax, col in zip(axes, saccade_cols):
+        # Calculate rolling saccade probability (proportion of samples with saccades in window)
+        saccade_bool = df[col].astype(float)  # Convert True/False to 1/0
+        rolling_prob = saccade_bool.rolling(window=window_samples, center=True).mean()
+        
+        # Calculate rolling saccade rate (Hz)
+        rolling_count = saccade_bool.rolling(window=window_samples, center=True).sum()
+        rolling_rate = rolling_count / window_size_s
+        
+        # Convert index to seconds for plotting
+        time_seconds = (df.index - df.index[0]).total_seconds()
+        
+        # Plot probability
+        ax_prob = ax
+        ax_prob.plot(time_seconds, rolling_prob, color='blue', linewidth=1, label=f'{col} (probability)')
+        ax_prob.set_ylabel(f'Saccade Probability\n({window_size_s*1000:.0f}ms bins)', color='blue')
+        ax_prob.tick_params(axis='y', labelcolor='blue')
+        ax_prob.set_ylim(0, 1)
+        ax_prob.grid(True, alpha=0.3)
+        
+        # Plot rate on secondary axis
+        ax_rate = ax.twinx()
+        ax_rate.plot(time_seconds, rolling_rate, color='red', linewidth=1, alpha=0.7, label=f'{col} (rate Hz)')
+        ax_rate.set_ylabel('Saccade Rate (Hz)', color='red')
+        ax_rate.tick_params(axis='y', labelcolor='red')
+        ax_rate.set_ylim(0, max(rolling_rate.max() * 1.2, 50))  # Set max to at least 50 Hz
+        
+        # Statistics
+        total_saccades = int(saccade_bool.sum())
+        mean_prob = rolling_prob.mean()
+        mean_rate = rolling_rate.mean()
+        
+        ax.set_title(f'{col}: {total_saccades} saccades | Mean prob: {mean_prob:.3f} | Mean rate: {mean_rate:.2f} Hz')
+        ax.legend(loc='upper left')
+        ax_rate.legend(loc='upper right')
+    
+    axes[-1].set_xlabel('Time (seconds)')
+    fig.suptitle(f"Saccade Density Diagnostic - {data_dict['mouse_name']}", fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    
+    # Save diagnostic plot
+    diagnostic_path = data_path.parent / f"{data_dict['mouse_name']}_saccade_density_diagnostic.pdf"
+    plt.savefig(diagnostic_path, dpi=150, bbox_inches='tight')
+    print(f"✅ Saved diagnostic plot: {diagnostic_path}")
+    plt.close(fig)
+    
+    # Print summary statistics
+    for col in saccade_cols:
+        saccade_bool = df[col].astype(float)
+        total_saccades = int(saccade_bool.sum())
+        total_duration_s = (df.index[-1] - df.index[0]).total_seconds()
+        overall_rate = total_saccades / total_duration_s if total_duration_s > 0 else 0
+        print(f"\n{col} summary:")
+        print(f"  Total saccades: {total_saccades}")
+        print(f"  Session duration: {total_duration_s:.1f} seconds ({total_duration_s/60:.1f} minutes)")
+        print(f"  Overall saccade rate: {overall_rate:.2f} Hz")
 
 
 # %%
@@ -2090,7 +2238,9 @@ class PhotometryAnalyzer:
                                halt_time: pd.Timestamp,
                                eye_key: str = "VideoData1") -> pd.DataFrame:
         """
-        Compute saccade density within the event window at specified bin resolution.
+        Compute saccade probability within the event window at specified bin resolution.
+        Uses the boolean saccade_event column to calculate probability (proportion of 
+        samples with saccades in each bin).
         
         Parameters:
         -----------
@@ -2104,108 +2254,49 @@ class PhotometryAnalyzer:
         Returns:
         --------
         pd.DataFrame
-            window_data with added columns:
-            - saccade_count_eye1: total saccades in bin
-            - saccade_orienting_eye1: orienting saccades in bin
-            - saccade_compensatory_eye1: compensatory saccades in bin
-            - saccade_rate_eye1: saccades per second in bin
+            window_data with added column:
+            - saccade_probability_eye1: probability (0 to 1) of saccade in bin
         """
-        # Initialize saccade columns with zeros (ensures backward compatibility)
-        window_data['saccade_count_eye1'] = 0
-        window_data['saccade_orienting_eye1'] = 0
-        window_data['saccade_compensatory_eye1'] = 0
-        window_data['saccade_rate_eye1'] = 0.0
+        # Determine eye suffix from key
+        eye_suffix = "eye1" if "1" in eye_key else "eye2"
+        saccade_col_name = f"saccade_event_{eye_suffix}"
+        prob_col_name = f"saccade_probability_{eye_suffix}"
         
-        # Check if saccade data is available for this eye
-        if eye_key not in self.video_saccade_summaries:
-            # Silently return - this is expected when no saccade data is available
+        # Initialize with zeros (ensures backward compatibility)
+        window_data[prob_col_name] = 0.0
+        
+        # Check if saccade boolean column exists
+        if saccade_col_name not in window_data.columns:
+            # No saccade data available
             return window_data
         
-        saccade_df = self.video_saccade_summaries[eye_key]
-        
-        # Check if saccade_df is empty or None
-        if saccade_df is None or len(saccade_df) == 0:
-            # Silently return - no saccades in this session
-            return window_data
-        
-        # Get window bounds
-        window_start = halt_time + pd.Timedelta(seconds=self.time_window_start)
-        window_end = halt_time + pd.Timedelta(seconds=self.time_window_end)
-        
-        # Filter saccades within window
-        # Saccade data should have an index that is datetime (from loading code alignment)
-        if isinstance(saccade_df.index, pd.DatetimeIndex):
-            mask = (saccade_df.index >= window_start) & (saccade_df.index <= window_end)
-            saccades_in_window = saccade_df.loc[mask]
-        else:
-            # If not datetime indexed, try to use aeon_time column
-            if 'aeon_time' in saccade_df.columns:
-                mask = (saccade_df['aeon_time'] >= window_start) & (saccade_df['aeon_time'] <= window_end)
-                saccades_in_window = saccade_df.loc[mask]
-                # Use aeon_time for timestamps
-                saccade_times = saccades_in_window['aeon_time'].values
-            else:
-                # No valid time information
-                return window_data
-        
-        if len(saccades_in_window) == 0:
-            return window_data
-        
-        # Get saccade times as datetime
-        if isinstance(saccades_in_window.index, pd.DatetimeIndex):
-            saccade_times = saccades_in_window.index
-        else:
-            saccade_times = pd.DatetimeIndex(saccade_times)
-        
-        # Convert saccade times to relative time (seconds from halt)
-        saccade_relative_times = (saccade_times - halt_time).total_seconds().values
-        
-        # Get saccade types
-        if 'saccade_type' in saccades_in_window.columns:
-            saccade_types = saccades_in_window['saccade_type'].values
-        else:
-            # If no type column, treat all as unknown
-            saccade_types = np.array(['unknown'] * len(saccades_in_window))
+        # Get relative times for binning
+        window_relative_times = window_data["Time (s)"].values
+        saccade_bool = window_data[saccade_col_name].astype(float).values  # Convert True/False to 1/0
         
         # Create bin edges
         bin_edges = np.arange(self.time_window_start, 
                              self.time_window_end + self.saccade_bin_size_s, 
                              self.saccade_bin_size_s)
         
-        # Assign each saccade to a bin
-        saccade_bins = np.digitize(saccade_relative_times, bin_edges)
+        # Assign each sample to a bin
+        bin_indices = np.digitize(window_relative_times, bin_edges) - 1
         
-        # Count saccades in each bin
+        # Calculate probability for each bin (proportion of samples with saccades)
         n_bins = len(bin_edges) - 1
-        bin_counts = np.zeros(n_bins, dtype=int)
-        bin_orienting = np.zeros(n_bins, dtype=int)
-        bin_compensatory = np.zeros(n_bins, dtype=int)
+        bin_probabilities = np.zeros(n_bins)
         
-        for i, (bin_idx, sac_type) in enumerate(zip(saccade_bins, saccade_types)):
-            # bin_idx is 1-based, subtract 1 for 0-based indexing
-            bin_idx = bin_idx - 1
+        for bin_idx in range(n_bins):
+            # Find all samples in this bin
+            in_bin = (bin_indices == bin_idx)
+            if np.any(in_bin):
+                # Probability = mean of boolean values in bin (proportion of True values)
+                bin_probabilities[bin_idx] = saccade_bool[in_bin].mean()
+        
+        # Assign probabilities to each row in window_data
+        for idx, bin_idx in enumerate(bin_indices):
             if 0 <= bin_idx < n_bins:
-                bin_counts[bin_idx] += 1
-                if sac_type == 'orienting':
-                    bin_orienting[bin_idx] += 1
-                elif sac_type == 'compensatory':
-                    bin_compensatory[bin_idx] += 1
-        
-        # Calculate rates (saccades per second)
-        bin_rates = bin_counts / self.saccade_bin_size_s
-        
-        # Now assign counts to each row in window_data based on its time
-        window_relative_times = window_data["Time (s)"].values
-        
-        for idx, rel_time in enumerate(window_relative_times):
-            # Find which bin this time belongs to
-            bin_idx = np.digitize([rel_time], bin_edges)[0] - 1
-            
-            if 0 <= bin_idx < n_bins:
-                window_data.iloc[idx, window_data.columns.get_loc('saccade_count_eye1')] = bin_counts[bin_idx]
-                window_data.iloc[idx, window_data.columns.get_loc('saccade_orienting_eye1')] = bin_orienting[bin_idx]
-                window_data.iloc[idx, window_data.columns.get_loc('saccade_compensatory_eye1')] = bin_compensatory[bin_idx]
-                window_data.iloc[idx, window_data.columns.get_loc('saccade_rate_eye1')] = bin_rates[bin_idx]
+                window_data.iloc[idx, window_data.columns.get_loc(prob_col_name)] = bin_probabilities[bin_idx]
         
         return window_data
         
@@ -2231,18 +2322,14 @@ class PhotometryAnalyzer:
         window["Time (s)"] = (window.index - halt_time).total_seconds()
         window["Halt Time"] = halt_time
         
-        # Add saccade density if available
-        if self.video_saccade_summaries:
-            try:
-                window = self.compute_saccade_density(window, halt_time, eye_key="VideoData1")
-            except Exception as e:
-                # Log error but don't fail the entire analysis
-                print(f"⚠️ Warning: Error computing saccade density: {str(e)}")
-                # Initialize saccade columns with zeros for backward compatibility
-                window['saccade_count_eye1'] = 0
-                window['saccade_orienting_eye1'] = 0
-                window['saccade_compensatory_eye1'] = 0
-                window['saccade_rate_eye1'] = 0.0
+        # Add saccade density (probability) if available
+        try:
+            window = self.compute_saccade_density(window, halt_time, eye_key="VideoData1")
+        except Exception as e:
+            # Log error but don't fail the entire analysis
+            print(f"⚠️ Warning: Error computing saccade density: {str(e)}")
+            # Initialize saccade column with zeros for backward compatibility
+            window['saccade_probability_eye1'] = 0.0
         
         return window
     
@@ -2568,36 +2655,37 @@ class PhotometryAnalyzer:
             ax3_eye.set_ylabel("Eye Position X", color=eye_color, fontsize=9)
             ax3_eye.tick_params(axis='y', labelcolor=eye_color, labelsize=8)
         
-        # Add saccade rate if available
-        if "saccade_rate_eye1" in aligned_df.columns:
+        # Add saccade probability if available
+        if "saccade_probability_eye1" in aligned_df.columns:
             ax3_saccade = ax3.twinx()
             ax3_saccade.spines['right'].set_position(('outward', 180))
             saccade_color = 'cyan'
             
-            if not left_df.empty and "saccade_rate_eye1" in left_df.columns:
+            if not left_df.empty and "saccade_probability_eye1" in left_df.columns:
                 left_saccade_grouped = left_df.groupby("Time (s)")
                 time_idx = left_saccade_grouped.mean().index.values
-                mean_saccade = left_saccade_grouped.mean()["saccade_rate_eye1"]
-                # Use step plot to show binned density as a continuous-looking signal
+                mean_saccade = left_saccade_grouped.mean()["saccade_probability_eye1"]
+                # Use step plot to show binned probability as a continuous-looking signal
                 ax3_saccade.step(time_idx, mean_saccade, where='mid',
                                 color=saccade_color, alpha=0.6, linewidth=2, 
-                                label="Left Saccade Rate")
+                                label="Left Turns Sac. Prob")
             
-            if not right_df.empty and "saccade_rate_eye1" in right_df.columns:
+            if not right_df.empty and "saccade_probability_eye1" in right_df.columns:
                 right_saccade_grouped = right_df.groupby("Time (s)")
                 time_idx = right_saccade_grouped.mean().index.values
-                mean_saccade = right_saccade_grouped.mean()["saccade_rate_eye1"]
+                mean_saccade = right_saccade_grouped.mean()["saccade_probability_eye1"]
                 # Overlay right turns with slightly different style
                 ax3_saccade.step(time_idx, mean_saccade, where='mid',
                                 color='darkblue', alpha=0.8, linewidth=2.5,
-                                linestyle='--', label="Right Saccade Rate")
+                                linestyle='--', label="Right Turns Sac. Prob")
             
-            ax3_saccade.set_ylabel("Saccade Rate (Hz)", color=saccade_color, fontsize=9)
+            ax3_saccade.set_ylabel("Saccade Probability", color=saccade_color, fontsize=9)
             ax3_saccade.tick_params(axis='y', labelcolor=saccade_color, labelsize=8)
-            # Set y-limit starting from 0 (rates are non-negative)
-            y_max = aligned_df["saccade_rate_eye1"].max()
-            if y_max > 0:
-                ax3_saccade.set_ylim(0, y_max * 1.2)
+            # Autoscale based on actual data range
+            y_min = aligned_df["saccade_probability_eye1"].min()
+            y_max = aligned_df["saccade_probability_eye1"].max()
+            if y_max > y_min:
+                ax3_saccade.set_ylim(y_min * 0.9, y_max * 1.1)  # Add 10% padding
             ax3_saccade.legend(loc='upper right', fontsize=8)
         
         ax3.axvline(0, linestyle='--', color='black', alpha=0.7)
@@ -2964,6 +3052,178 @@ def process_aligned_data_folders(data_dirs, baseline_window, event_name=event_na
     
     return results
 
+def create_single_baseline_plot(mean_baseline_df, sem_baseline_df, mouse_name, session_name, 
+                               event_name, output_folder, plot_width=12, suffix="", turn_type=""):
+    """
+    Create a single baseline plot from aggregated mean and SEM data.
+    
+    Parameters:
+    -----------
+    mean_baseline_df : pd.DataFrame
+        Mean values grouped by Time (s)
+    sem_baseline_df : pd.DataFrame
+        SEM values grouped by Time (s)
+    mouse_name : str
+        Mouse name for file naming
+    session_name : str
+        Session name for title
+    event_name : str
+        Event name for file naming
+    output_folder : Path
+        Output folder path
+    plot_width : int
+        Width of the plot in inches
+    suffix : str
+        Suffix for filename ("", "_left_turns", "_right_turns")
+    turn_type : str
+        Text to add to title ("", "LEFT TURNS ONLY", "RIGHT TURNS ONLY")
+    
+    Returns:
+    --------
+    Path
+        Path to saved figure file
+    """
+    
+    def get_symmetric_ylim(mean_data, sem_data):
+        max_abs_value = max(
+            abs(mean_data).max() + sem_data.max(),
+            abs(mean_data).min() - sem_data.min()
+        )
+        return (-max_abs_value, max_abs_value)
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=(plot_width, 6))
+    
+    # Photodiode
+    ax.plot(mean_baseline_df.index, mean_baseline_df["Photodiode_int"], color='grey', alpha=0.8, linewidth=2)
+    ax.fill_between(mean_baseline_df.index,
+                    mean_baseline_df["Photodiode_int"] - sem_baseline_df["Photodiode_int"],
+                    mean_baseline_df["Photodiode_int"] + sem_baseline_df["Photodiode_int"],
+                    color='grey', alpha=0.2)
+    
+    ax.set_xlabel('Time (s) relative to halt')
+    ax.set_ylabel('Photodiode', color='grey')
+    title = f'Baselined Signals - {mouse_name} ({session_name})'
+    if turn_type:
+        title += f' - {turn_type}'
+    ax.set_title(title)
+    
+    # z_470 and z_560 (Fluorescence) - BASELINED
+    ax2 = ax.twinx()
+    ax2.plot(mean_baseline_df.index, mean_baseline_df["z_470_Baseline"], color='green', alpha=0.8, linewidth=2, label='470nm')
+    ax2.fill_between(mean_baseline_df.index,
+                     mean_baseline_df["z_470_Baseline"] - sem_baseline_df["z_470_Baseline"],
+                     mean_baseline_df["z_470_Baseline"] + sem_baseline_df["z_470_Baseline"],
+                     color='green', alpha=0.2)
+    ax2.plot(mean_baseline_df.index, mean_baseline_df["z_560_Baseline"], color='red', alpha=0.8, linewidth=2, label='560nm')
+    ax2.fill_between(mean_baseline_df.index,
+                     mean_baseline_df["z_560_Baseline"] - sem_baseline_df["z_560_Baseline"],
+                     mean_baseline_df["z_560_Baseline"] + sem_baseline_df["z_560_Baseline"],
+                     color='red', alpha=0.2)
+    ax2.set_ylabel('Fluorescence (z-score)', color='green')
+    ax2.set_ylim(get_symmetric_ylim(
+        pd.concat([mean_baseline_df["z_470_Baseline"], mean_baseline_df["z_560_Baseline"]]),
+        pd.concat([sem_baseline_df["z_470_Baseline"], sem_baseline_df["z_560_Baseline"]])
+    ))
+    ax2.yaxis.label.set_color('green')
+    
+    # Motor velocity (NOT baselined)
+    ax3 = ax.twinx()
+    ax3.spines['right'].set_position(('outward', 50))
+    ax3.plot(mean_baseline_df.index, mean_baseline_df["Motor_Velocity"], color='#00008B', alpha=0.8, linewidth=2)
+    ax3.fill_between(mean_baseline_df.index,
+                     mean_baseline_df["Motor_Velocity"] - sem_baseline_df["Motor_Velocity"],
+                     mean_baseline_df["Motor_Velocity"] + sem_baseline_df["Motor_Velocity"],
+                     color='#00008B', alpha=0.2)
+    ax3.set_ylabel('Motor Velocity (deg/s²)', color='#00008B')
+    ax3.set_ylim(get_symmetric_ylim(mean_baseline_df["Motor_Velocity"], sem_baseline_df["Motor_Velocity"]))
+    ax3.yaxis.label.set_color('#00008B')
+    
+    # Running velocity (Velocity_0X) - BASELINED
+    ax4 = ax.twinx()
+    ax4.spines['right'].set_position(('outward', 100))
+    ax4.plot(mean_baseline_df.index, mean_baseline_df["Velocity_0X_Baseline"] * 1000, color='orange', alpha=0.8, linewidth=2)
+    ax4.fill_between(mean_baseline_df.index,
+                     (mean_baseline_df["Velocity_0X_Baseline"] - sem_baseline_df["Velocity_0X_Baseline"]) * 1000,
+                     (mean_baseline_df["Velocity_0X_Baseline"] + sem_baseline_df["Velocity_0X_Baseline"]) * 1000,
+                     color='orange', alpha=0.2)
+    ax4.set_ylabel('Running velocity (mm/s²)', color='orange')
+    ax4.set_ylim(get_symmetric_ylim(mean_baseline_df["Velocity_0X_Baseline"] * 1000, sem_baseline_df["Velocity_0X_Baseline"] * 1000))
+    ax4.yaxis.label.set_color('orange')
+    
+    # Turning velocity (Velocity_0Y) (NOT baselined)
+    ax5 = ax.twinx()
+    ax5.spines['right'].set_position(('outward', 150))
+    ax5.plot(mean_baseline_df.index, mean_baseline_df["Velocity_0Y"], color='#4682B4', alpha=0.8, linewidth=2)
+    ax5.fill_between(mean_baseline_df.index,
+                     mean_baseline_df["Velocity_0Y"] - sem_baseline_df["Velocity_0Y"],
+                     mean_baseline_df["Velocity_0Y"] + sem_baseline_df["Velocity_0Y"],
+                     color='#4682B4', alpha=0.2)
+    ax5.set_ylabel('Turning velocity (deg/s²)', color='#4682B4')
+    ax5.set_ylim(get_symmetric_ylim(mean_baseline_df["Velocity_0Y"], sem_baseline_df["Velocity_0Y"]))
+    ax5.yaxis.label.set_color('#4682B4')
+    
+    # Pupil diameter - BASELINED
+    if "Pupil.Diameter_eye1_Baseline" in mean_baseline_df.columns:
+        ax6 = ax.twinx()
+        ax6.spines['right'].set_position(('outward', 200))
+        ax6.plot(mean_baseline_df.index, mean_baseline_df["Pupil.Diameter_eye1_Baseline"], 
+                color='purple', alpha=0.8, linewidth=2, label='Pupil Diameter')
+        ax6.fill_between(mean_baseline_df.index,
+                        mean_baseline_df["Pupil.Diameter_eye1_Baseline"] - sem_baseline_df["Pupil.Diameter_eye1_Baseline"],
+                        mean_baseline_df["Pupil.Diameter_eye1_Baseline"] + sem_baseline_df["Pupil.Diameter_eye1_Baseline"],
+                        color='purple', alpha=0.2)
+        ax6.set_ylabel('Pupil Diameter (pixels)', color='purple')
+        ax6.set_ylim(get_symmetric_ylim(mean_baseline_df["Pupil.Diameter_eye1_Baseline"], 
+                                       sem_baseline_df["Pupil.Diameter_eye1_Baseline"]))
+        ax6.yaxis.label.set_color('purple')
+    
+    # Eye position X - BASELINED
+    if "Ellipse.Center.X_eye1_Baseline" in mean_baseline_df.columns:
+        ax7 = ax.twinx()
+        ax7.spines['right'].set_position(('outward', 250))
+        ax7.plot(mean_baseline_df.index, mean_baseline_df["Ellipse.Center.X_eye1_Baseline"], 
+                color='magenta', alpha=0.8, linewidth=2, label='Eye Position X')
+        ax7.fill_between(mean_baseline_df.index,
+                        mean_baseline_df["Ellipse.Center.X_eye1_Baseline"] - sem_baseline_df["Ellipse.Center.X_eye1_Baseline"],
+                        mean_baseline_df["Ellipse.Center.X_eye1_Baseline"] + sem_baseline_df["Ellipse.Center.X_eye1_Baseline"],
+                        color='magenta', alpha=0.2)
+        ax7.set_ylabel('Eye Position X (pixels)', color='magenta')
+        ax7.set_ylim(get_symmetric_ylim(mean_baseline_df["Ellipse.Center.X_eye1_Baseline"], 
+                                       sem_baseline_df["Ellipse.Center.X_eye1_Baseline"]))
+        ax7.yaxis.label.set_color('magenta')
+    
+    # Saccade probability (NOT baselined)
+    if "saccade_probability_eye1" in mean_baseline_df.columns:
+        ax8 = ax.twinx()
+        ax8.spines['right'].set_position(('outward', 300))
+        ax8.step(mean_baseline_df.index, 
+                mean_baseline_df["saccade_probability_eye1"],
+                where='mid', color='cyan', alpha=0.8, linewidth=2, label='Saccade Probability')
+        ax8.fill_between(mean_baseline_df.index,
+                        0, mean_baseline_df["saccade_probability_eye1"],
+                        step='mid', color='cyan', alpha=0.2)
+        ax8.set_ylabel('Saccade Probability', color='cyan')
+        ax8.yaxis.label.set_color('cyan')
+        # Autoscale based on actual data range
+        y_min = mean_baseline_df["saccade_probability_eye1"].min()
+        y_max = mean_baseline_df["saccade_probability_eye1"].max()
+        if y_max > y_min:
+            ax8.set_ylim(y_min * 0.9, y_max * 1.1)
+    
+    # Add vertical line at event time (t=0)
+    ax.axvline(x=0, color='black', linestyle='--', alpha=0.5, linewidth=1)
+    
+    fig.tight_layout()
+    
+    # Save the figure
+    figure_file = output_folder / f"{session_name}_{event_name}_baselined{suffix}.pdf"
+    fig.savefig(figure_file, format='pdf', bbox_inches='tight')
+    plt.close(fig)
+    
+    return figure_file
+
+
 def baseline_aligned_data_simple(aligned_df, left_turns_df, right_turns_df, baseline_window, mouse_name, session_name, event_name, output_folder, csv_file, plot_width=12, create_plots=True):
     """
     Simple baseline correction and plotting function.
@@ -3007,12 +3267,14 @@ def baseline_aligned_data_simple(aligned_df, left_turns_df, right_turns_df, base
             (df_copy["Time (s)"] <= baseline_window[1])
         ].groupby("Halt Time").mean(numeric_only=True)
         
-        # Create baseline-corrected columns (including eye tracking signals)
+        # Create baseline-corrected columns (only for specified signals)
+        # Baselined: fluorescence, running velocity, pupil diameter, eye position
+        # NOT baselined: motor velocity, turning velocity, saccade probability
         signals_to_baseline = [
-            "z_470", "z_560", 
-            "Motor_Velocity", "Velocity_0X", "Velocity_0Y",
-            "Pupil.Diameter_eye1",      # NEW
-            "Ellipse.Center.X_eye1"     # NEW
+            "z_470", "z_560",                    # Fluorescence - baselined
+            "Velocity_0X",                       # Running velocity - baselined
+            "Pupil.Diameter_eye1",               # Pupil diameter - baselined
+            "Ellipse.Center.X_eye1"              # Eye position X - baselined
         ]
         
         for signal_name in signals_to_baseline:
@@ -3053,152 +3315,74 @@ def baseline_aligned_data_simple(aligned_df, left_turns_df, right_turns_df, base
         print(f"      🔄 Processing right turns data...")
         right_turns_df_baselined = baseline_dataframe(right_turns_df, baseline_window, mouse_name, event_name, output_folder, "right_turns")
 
-    # ---------------- Mean and SEM for plotting (using main aligned data) ----------------
-    # Select only numeric columns for aggregation
-    numeric_columns = aligned_df_baselined.select_dtypes(include=['number']).columns
-    mean_baseline_df = aligned_df_baselined.groupby("Time (s)")[numeric_columns].mean()
-    sem_baseline_df = aligned_df_baselined.groupby("Time (s)")[numeric_columns].sem()
-
-    def get_symmetric_ylim(mean_data, sem_data):
-        max_abs_value = max(
-            abs(mean_data).max() + sem_data.max(),
-            abs(mean_data).min() - sem_data.min()
-        )
-        return (-max_abs_value, max_abs_value)
-
+    # ---------------- Plotting ----------------
     if create_plots:
-        print(f"      📊 Creating plot...")
-
-        # ---------------- Plotting ----------------
-        fig, ax = plt.subplots(figsize=(plot_width, 6))
-
-        # Photodiode
-        ax.plot(mean_baseline_df.index, mean_baseline_df["Photodiode_int"], color='grey', alpha=0.8, linewidth=2)
-        ax.fill_between(mean_baseline_df.index,
-                        mean_baseline_df["Photodiode_int"] - sem_baseline_df["Photodiode_int"],
-                        mean_baseline_df["Photodiode_int"] + sem_baseline_df["Photodiode_int"],
-                        color='grey', alpha=0.2)
-
-        ax.set_xlabel('Time (s) relative to halt')
-        ax.set_ylabel('Photodiode', color='grey')
-        ax.set_title(f'Baselined Signals - {mouse_name} ({session_name})')
-
-        # z_470 and z_560 (Fluorescence)
-        ax2 = ax.twinx()
-        ax2.plot(mean_baseline_df.index, mean_baseline_df["z_470_Baseline"], color='green', alpha=0.8, linewidth=2, label='470nm')
-        ax2.fill_between(mean_baseline_df.index,
-                         mean_baseline_df["z_470_Baseline"] - sem_baseline_df["z_470_Baseline"],
-                         mean_baseline_df["z_470_Baseline"] + sem_baseline_df["z_470_Baseline"],
-                         color='green', alpha=0.2)
-        ax2.plot(mean_baseline_df.index, mean_baseline_df["z_560_Baseline"], color='red', alpha=0.8, linewidth=2, label='560nm')
-        ax2.fill_between(mean_baseline_df.index,
-                         mean_baseline_df["z_560_Baseline"] - sem_baseline_df["z_560_Baseline"],
-                         mean_baseline_df["z_560_Baseline"] + sem_baseline_df["z_560_Baseline"],
-                         color='red', alpha=0.2)
-        ax2.set_ylabel('Fluorescence (z-score)', color='green')
-        ax2.set_ylim(get_symmetric_ylim(
-            pd.concat([mean_baseline_df["z_470_Baseline"], mean_baseline_df["z_560_Baseline"]]),
-            pd.concat([sem_baseline_df["z_470_Baseline"], sem_baseline_df["z_560_Baseline"]])
-        ))
-        ax2.yaxis.label.set_color('green')
-
-        # Motor velocity
-        ax3 = ax.twinx()
-        ax3.spines['right'].set_position(('outward', 50))
-        ax3.plot(mean_baseline_df.index, mean_baseline_df["Motor_Velocity_Baseline"], color='#00008B', alpha=0.8, linewidth=2)
-        ax3.fill_between(mean_baseline_df.index,
-                         mean_baseline_df["Motor_Velocity_Baseline"] - sem_baseline_df["Motor_Velocity_Baseline"],
-                         mean_baseline_df["Motor_Velocity_Baseline"] + sem_baseline_df["Motor_Velocity_Baseline"],
-                         color='#00008B', alpha=0.2)
-        ax3.set_ylabel('Motor Velocity (deg/s²)', color='#00008B')
-        ax3.set_ylim(get_symmetric_ylim(mean_baseline_df["Motor_Velocity_Baseline"], sem_baseline_df["Motor_Velocity_Baseline"]))
-        ax3.yaxis.label.set_color('#00008B')
-
-        # Running velocity (Velocity_0X)
-        ax4 = ax.twinx()
-        ax4.spines['right'].set_position(('outward', 100))
-        ax4.plot(mean_baseline_df.index, mean_baseline_df["Velocity_0X_Baseline"] * 1000, color='orange', alpha=0.8, linewidth=2)
-        ax4.fill_between(mean_baseline_df.index,
-                         (mean_baseline_df["Velocity_0X_Baseline"] - sem_baseline_df["Velocity_0X_Baseline"]) * 1000,
-                         (mean_baseline_df["Velocity_0X_Baseline"] + sem_baseline_df["Velocity_0X_Baseline"]) * 1000,
-                         color='orange', alpha=0.2)
-        ax4.set_ylabel('Running velocity (mm/s²)', color='orange')
-        ax4.set_ylim(get_symmetric_ylim(mean_baseline_df["Velocity_0X_Baseline"] * 1000, sem_baseline_df["Velocity_0X_Baseline"] * 1000))
-        ax4.yaxis.label.set_color('orange')
-
-        # Turning velocity (Velocity_0Y)
-        ax5 = ax.twinx()
-        ax5.spines['right'].set_position(('outward', 150))
-        ax5.plot(mean_baseline_df.index, mean_baseline_df["Velocity_0Y_Baseline"], color='#4682B4', alpha=0.8, linewidth=2)
-        ax5.fill_between(mean_baseline_df.index,
-                         mean_baseline_df["Velocity_0Y_Baseline"] - sem_baseline_df["Velocity_0Y_Baseline"],
-                         mean_baseline_df["Velocity_0Y_Baseline"] + sem_baseline_df["Velocity_0Y_Baseline"],
-                         color='#4682B4', alpha=0.2)
-        ax5.set_ylabel('Turning velocity (deg/s²)', color='#4682B4')
-        ax5.set_ylim(get_symmetric_ylim(mean_baseline_df["Velocity_0Y_Baseline"], sem_baseline_df["Velocity_0Y_Baseline"]))
-        ax5.yaxis.label.set_color('#4682B4')
-
-        # Pupil diameter (NEW)
-        if "Pupil.Diameter_eye1_Baseline" in mean_baseline_df.columns:
-            ax6 = ax.twinx()
-            ax6.spines['right'].set_position(('outward', 200))
-            ax6.plot(mean_baseline_df.index, mean_baseline_df["Pupil.Diameter_eye1_Baseline"], 
-                    color='purple', alpha=0.8, linewidth=2, label='Pupil Diameter')
-            ax6.fill_between(mean_baseline_df.index,
-                            mean_baseline_df["Pupil.Diameter_eye1_Baseline"] - sem_baseline_df["Pupil.Diameter_eye1_Baseline"],
-                            mean_baseline_df["Pupil.Diameter_eye1_Baseline"] + sem_baseline_df["Pupil.Diameter_eye1_Baseline"],
-                            color='purple', alpha=0.2)
-            ax6.set_ylabel('Pupil Diameter (pixels)', color='purple')
-            ax6.set_ylim(get_symmetric_ylim(mean_baseline_df["Pupil.Diameter_eye1_Baseline"], 
-                                           sem_baseline_df["Pupil.Diameter_eye1_Baseline"]))
-            ax6.yaxis.label.set_color('purple')
-
-        # Eye position X (NEW)
-        if "Ellipse.Center.X_eye1_Baseline" in mean_baseline_df.columns:
-            ax7 = ax.twinx()
-            ax7.spines['right'].set_position(('outward', 250))
-            ax7.plot(mean_baseline_df.index, mean_baseline_df["Ellipse.Center.X_eye1_Baseline"], 
-                    color='magenta', alpha=0.8, linewidth=2, label='Eye Position X')
-            ax7.fill_between(mean_baseline_df.index,
-                            mean_baseline_df["Ellipse.Center.X_eye1_Baseline"] - sem_baseline_df["Ellipse.Center.X_eye1_Baseline"],
-                            mean_baseline_df["Ellipse.Center.X_eye1_Baseline"] + sem_baseline_df["Ellipse.Center.X_eye1_Baseline"],
-                            color='magenta', alpha=0.2)
-            ax7.set_ylabel('Eye Position X (pixels)', color='magenta')
-            ax7.set_ylim(get_symmetric_ylim(mean_baseline_df["Ellipse.Center.X_eye1_Baseline"], 
-                                           sem_baseline_df["Ellipse.Center.X_eye1_Baseline"]))
-            ax7.yaxis.label.set_color('magenta')
-
-        # Saccade rate (NEW - not baselined, just raw rate)
-        if "saccade_rate_eye1" in mean_baseline_df.columns:
-            ax8 = ax.twinx()
-            ax8.spines['right'].set_position(('outward', 300))
-            # Use step plot to show binned density as a continuous-looking signal
-            # Note: saccade_rate_eye1 is already in Hz (saccades/second)
-            ax8.step(mean_baseline_df.index, 
-                    mean_baseline_df["saccade_rate_eye1"],
-                    where='mid', color='cyan', alpha=0.8, linewidth=2, label='Saccade Rate')
-            ax8.fill_between(mean_baseline_df.index,
-                            0, mean_baseline_df["saccade_rate_eye1"],
-                            step='mid', color='cyan', alpha=0.2)
-            ax8.set_ylabel('Saccade Rate (Hz)', color='cyan')
-            ax8.yaxis.label.set_color('cyan')
-            # Set y-limit starting from 0 (rates are non-negative)
-            y_max = mean_baseline_df["saccade_rate_eye1"].max()
-            if y_max > 0:
-                ax8.set_ylim(0, y_max * 1.2)
-
-        # Add vertical line at event time (t=0)
-        ax.axvline(x=0, color='black', linestyle='--', alpha=0.5, linewidth=1)
-
-        fig.tight_layout()
-
-        figure_file = output_folder / f"{session_name}_{event_name}_baselined.pdf"
-
-        # Save the figure
-        fig.savefig(figure_file, format='pdf', bbox_inches='tight')
-        print(f"      💾 Saved plot to: {figure_file.name}")
-        plt.close(fig)
-        return fig
+        print(f"      📊 Creating baseline plots...")
+        
+        # Plot 1: Combined (all events)
+        print(f"      📊 Creating combined plot (all events)...")
+        numeric_columns = aligned_df_baselined.select_dtypes(include=['number']).columns
+        mean_combined = aligned_df_baselined.groupby("Time (s)")[numeric_columns].mean()
+        sem_combined = aligned_df_baselined.groupby("Time (s)")[numeric_columns].sem()
+        
+        figure_file_combined = create_single_baseline_plot(
+            mean_baseline_df=mean_combined,
+            sem_baseline_df=sem_combined,
+            mouse_name=mouse_name,
+            session_name=session_name,
+            event_name=event_name,
+            output_folder=output_folder,
+            plot_width=plot_width,
+            suffix="",
+            turn_type=""
+        )
+        print(f"      💾 Saved combined plot to: {figure_file_combined.name}")
+        
+        # Plot 2: Left turns only
+        if left_turns_df_baselined is not None and len(left_turns_df_baselined) > 0:
+            print(f"      📊 Creating left turns plot...")
+            numeric_columns_left = left_turns_df_baselined.select_dtypes(include=['number']).columns
+            mean_left = left_turns_df_baselined.groupby("Time (s)")[numeric_columns_left].mean()
+            sem_left = left_turns_df_baselined.groupby("Time (s)")[numeric_columns_left].sem()
+            
+            figure_file_left = create_single_baseline_plot(
+                mean_baseline_df=mean_left,
+                sem_baseline_df=sem_left,
+                mouse_name=mouse_name,
+                session_name=session_name,
+                event_name=event_name,
+                output_folder=output_folder,
+                plot_width=plot_width,
+                suffix="_left_turns",
+                turn_type="LEFT TURNS ONLY"
+            )
+            print(f"      💾 Saved left turns plot to: {figure_file_left.name}")
+        else:
+            print(f"      ℹ️  No left turns detected - skipping left turns plot")
+        
+        # Plot 3: Right turns only
+        if right_turns_df_baselined is not None and len(right_turns_df_baselined) > 0:
+            print(f"      📊 Creating right turns plot...")
+            numeric_columns_right = right_turns_df_baselined.select_dtypes(include=['number']).columns
+            mean_right = right_turns_df_baselined.groupby("Time (s)")[numeric_columns_right].mean()
+            sem_right = right_turns_df_baselined.groupby("Time (s)")[numeric_columns_right].sem()
+            
+            figure_file_right = create_single_baseline_plot(
+                mean_baseline_df=mean_right,
+                sem_baseline_df=sem_right,
+                mouse_name=mouse_name,
+                session_name=session_name,
+                event_name=event_name,
+                output_folder=output_folder,
+                plot_width=plot_width,
+                suffix="_right_turns",
+                turn_type="RIGHT TURNS ONLY"
+            )
+            print(f"      💾 Saved right turns plot to: {figure_file_right.name}")
+        else:
+            print(f"      ℹ️  No right turns detected - skipping right turns plot")
+        
+        return figure_file_combined
     else:
         return None
 
