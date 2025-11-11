@@ -114,7 +114,7 @@ COHORT_OPTIONS = {
 }
 
 # Select cohort
-cohort_identifier = "Cohort1"  # Options: "Cohort1", "Cohort3"  # FIXME Ede change to cohort 1 when cohot 1
+cohort_identifier = "Cohort1"  # Options: "Cohort1", "Cohort3"
 
 # Select which animals to process (subset of the cohort's available mice).
 # Leave empty list [] to process all mice in the cohort.
@@ -132,12 +132,12 @@ selected_columns = [
 # summarised into metrics/grand averages in the first half of the notebook.
 COMPUTE_PER_MOUSE_ANALYSIS_OF_CALCIUM_DATA = {
     # Friendly name used in status prints / saved filenames.
-    "label": "Apply halt 2s", # FIXME to No halt when no halt is used 
+    "label": "Apply halt 2s", # change for Apply halt 2s / No halt 
     # Suffix appended to each mouse ID to locate aligned CSVs inside `aligned_data/`.
-    "event_suffix": "_Apply halt_2s_baselined_data.csv", # FIXME Ede to change No halt baselined data if nohalt "_Apply halt_2s_baselined_data.csv" "_No halt_baselined_data.csv"
+    "event_suffix": "_Apply halt_2s_baselined_data.csv", # change for halt / nohalt  "_Apply halt_2s_baselined_data.csv" "_No halt_baselined_data.csv"
     # One or more experiment-day directories that contain the aligned traces.
     "data_dirs": [
-        Path('/Volumes/RanczLab/Cohort1_rotation/Visual_mismatch_day3').expanduser(), # FIXME Ede change to cohort 1 when cohot 1
+        Path('/Volumes/RanczLab/Cohort1_rotation/Visual_mismatch_day3').expanduser(), # change per cohort
         Path('/Volumes/RanczLab/Cohort1_rotation/Visual_mismatch_day4').expanduser(),
     ],
 }
@@ -152,13 +152,13 @@ if not DATA_DIRS:
 
 SAVE_CSV = True      # Save grand averages with SEM as CSV file for plotting traces
 SAVE_SIGNAL_METRICS = True # FIXME True only the first run, otherwise False 
-SIGNAL_METRICS_OUTPUT_SUBDIR = Path('/Volumes/RanczLab/') # DATA_DIRS[0]
+SIGNAL_METRICS_OUTPUT_SUBDIR = DATA_DIRS[0].parent.parent
 
 # Signal feature metric settings (incorporated from SANDBOX 4 workflow)
 SIGNAL_METRIC_COLUMNS = [
     'z_560_Baseline',
 ]
-SIGNAL_METRIC_FEATURES = ( # FIXME EDE TO ADD EXTRA FEATURES (aad function cell ANALYSIS functions  )
+SIGNAL_METRIC_FEATURES = (
     'peak',
     'onset_time',
     'decay_tau1',
@@ -171,7 +171,7 @@ SIGNAL_METRIC_FEATURES = ( # FIXME EDE TO ADD EXTRA FEATURES (aad function cell 
 # Configure the post-alignment analysis window (seconds relative to alignment time).
 # Adjust POST_ALIGNMENT_WINDOW_DURATION to control the length of the comparison interval.
 POST_ALIGNMENT_WINDOW_START = 0.0 #aligment means halt time here  
-POST_ALIGNMENT_WINDOW_DURATION = 2.0 #FIXME EDE for OFFSET response analysis
+POST_ALIGNMENT_WINDOW_DURATION = 2.0
 POST_ALIGNMENT_WINDOW = (
     POST_ALIGNMENT_WINDOW_START,
     POST_ALIGNMENT_WINDOW_START + POST_ALIGNMENT_WINDOW_DURATION,
@@ -189,11 +189,11 @@ OFFSET_AUC_WINDOW = (2.0, 4.0)       # Window for area-under-curve calculation o
 # Configure the 2️⃣ cross-condition comparison module (halt vs no-halt, etc.).
 # Each entry stands on its own so it is easy to enable/disable or point to
 # different folders without touching the single-condition settings above.
-GENERATE_CONDITION_COMPARISON = False # FIXME EDE only first run, after that True 
+GENERATE_CONDITION_COMPARISON = False  
 # Each key defines one condition: give it a unique name, the event suffix to load,
 # the directories the aligned traces live in, and an optional list of already
 # computed metrics CSVs (leave empty to recompute on the fly).
-COMPARE_CALCIUM_METRICS_ACROSS_CONDITIONS = OrderedDict({    #FIXME EDE TO change after first
+COMPARE_CALCIUM_METRICS_ACROSS_CONDITIONS = OrderedDict({    # CHANGE according to cohort 
     "Apply_halt_day3": {
         "event_name": "_Apply halt_2s_baselined_data.csv",
         "data_dirs": [
@@ -3768,7 +3768,14 @@ if GENERATE_CONDITION_COMPARISON:
     print(f"{'='*60}")
 
     TARGET_SIGNAL = "z_560_Baseline"
-    TARGET_METRICS = ["peak", "onset_time", "decay_tau1", "mean_fluorescence_2_to_8s"]
+    TARGET_METRICS = [
+        "peak",
+        "onset_time",
+        "decay_tau1",
+        "mean_fluorescence_2_to_8s",
+        "main_peak_residual_auc",
+        "offset_residual_auc",
+    ]
     CONDITION_ORDER = ["Apply_halt_day3", "Apply_halt_day4", "No_halt"]
 
     condition_metrics_frames: Dict[str, pd.DataFrame] = {}
