@@ -1,11 +1,13 @@
 # Photometry_preprocessing
  For preprocessing photometry signal
- #### 1) preprocess_functions.py 
- All funcitons needed to perform preprocessing, saving a summary figure and output data files for further processing in the vestibular_vr_pipeline
- #### 2) preprocess_in_notebook_or_batch.ipynb 
- Example jupyter notebook for preprocessing and viewing an experiment step by step, or in a batch for a set of experiments 
- #### 3) run_preprocessing.py
- Example for running preprocessing from terminal. Created before Jan 2025 refactoring. If needed. should be updated based on the batch processing notebook. 
+#### 1) preprocess_functions.py 
+All funcitons needed to perform preprocessing, saving a summary figure and output data files for further processing in the vestibular_vr_pipeline
+#### 2) preprocess_in_notebook_or_batch.ipynb 
+Example jupyter notebook for preprocessing and viewing an experiment step by step, or in a batch for a set of experiments 
+#### 3) run_preprocessing.py
+Example for running preprocessing from terminal. Created before Jan 2025 refactoring. If needed. should be updated based on the batch processing notebook.
+#### 4) analyze_preprocessed_time_windows.py
+Script to analyze **already preprocessed** photometry data for specific time windows. Extracts mean z-scores of 470 signal between 10-15 minutes and during the last 5 minutes. Use this for recordings that cannot be aligned but have already been preprocessed. Simply loads `Processed_fluorescence.csv` and analyzes the specified time windows.
 
 ## Required data folder structure
 From [issue 25](https://github.com/ikharitonov/vestibular_vr_pipeline/issues/25) in vestibular_vr_pipeline. 

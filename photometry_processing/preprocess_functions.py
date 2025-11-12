@@ -973,3 +973,265 @@ class preprocess:
             plt.show()
         
         return self.ratiometric
+
+
+    def analyze_time_windows(self,
+                            first_window_start=10,  # minutes
+                            first_window_end=15,    # minutes
+                            last_window_duration=5,  # minutes
+                            signal_channel='470',
+                            save_figure=True,
+                            save_results_csv=True):
+        """
+        Analyze preprocessed photometry data and extract mean z-scores for specific time windows.
+        This method works on the already-processed data in memory.
+        
+        Parameters:
+        -----------
+        first_window_start : float
+            Start time of first window in minutes (default: 10)
+        first_window_end : float
+            End time of first window in minutes (default: 15)
+        last_window_duration : float
+            Duration of last window in minutes (default: 5)
+        signal_channel : str
+            Which signal channel to analyze (default: '470')
+        save_figure : bool
+            Whether to save a figure showing the analysis (default: True)
+        save_results_csv : bool
+            Whether to save results to CSV files (default: True)
+            
+        Returns:
+        --------
+        dict : Dictionary containing analysis results
+        """
+        
+        print(f"\n{'='*80}")
+        print(f"Analyzing time windows for preprocessed photometry data")
+        print(f"{'='*80}\n")
+        
+        # Check if we have the required data
+        if not hasattr(self, 'zscored') or not hasattr(self, 'data_seconds'):
+            raise AttributeError("No z-scored data found. Run the full preprocessing pipeline first.")
+        
+        # Extract time and z-scored signal
+        time_seconds = self.data_seconds['TimeStamp'].values
+        z_signal_col = f'z_{signal_channel}'
+        
+        if z_signal_col not in self.zscored.columns:
+            raise ValueError(f"Signal channel {signal_channel} not found in z-scored data. Available: {self.zscored.columns.tolist()}")
+        
+        z_signal = self.zscored[z_signal_col].values
+        
+        # Get mouse name
+        mouse_name = self.info.get('mousename', 'unknown')
+        
+        # Get total recording duration
+        total_duration_sec = time_seconds[-1]
+        total_duration_min = total_duration_sec / 60
+        
+        print(f"\nRecording duration: {total_duration_min:.2f} minutes ({total_duration_sec:.2f} seconds)")
+        print(f"Total data points: {len(time_seconds)}")
+        print(f"Sampling rate: ~{len(time_seconds)/total_duration_sec:.2f} Hz")
+        
+        # Extract mean z-score for first window
+        first_start_sec = first_window_start * 60
+        first_end_sec = first_window_end * 60
+        
+        if total_duration_sec < first_end_sec:
+            print(f"\nWARNING: Recording is too short for the {first_window_start}-{first_window_end} min window!")
+            print(f"Recording ends at {total_duration_min:.2f} minutes")
+            first_window_mean = np.nan
+            first_window_std = np.nan
+            first_window_median = np.nan
+            first_75th = np.nan
+            first_90th = np.nan
+            first_max = np.nan
+            first_n_samples = 0
+        else:
+            first_mask = (time_seconds >= first_start_sec) & (time_seconds <= first_end_sec)
+            first_window_data = z_signal[first_mask]
+            first_window_mean = np.mean(first_window_data)
+            first_window_std = np.std(first_window_data)
+            first_window_median = np.median(first_window_data)
+            first_75th = np.percentile(first_window_data, 75)
+            first_90th = np.percentile(first_window_data, 90)
+            first_max = np.max(first_window_data)
+            first_n_samples = len(first_window_data)
+            
+            print(f"\n{'='*80}")
+            print(f"FIRST WINDOW ({first_window_start}-{first_window_end} min):")
+            print(f"{'='*80}")
+            print(f"Time range: {first_start_sec:.1f} - {first_end_sec:.1f} seconds")
+            print(f"Data points: {first_n_samples}")
+            print(f"Mean z-score: {first_window_mean:.4f}")
+            print(f"Median z-score: {first_window_median:.4f}")
+            print(f"Std z-score: {first_window_std:.4f}")
+        
+        # Extract mean z-score for last window
+        last_start_sec = total_duration_sec - (last_window_duration * 60)
+        
+        if total_duration_sec < (last_window_duration * 60):
+            print(f"\nWARNING: Recording is shorter than {last_window_duration} minutes!")
+            last_window_mean = np.nan
+            last_window_std = np.nan
+            last_window_median = np.nan
+            last_75th = np.nan
+            last_90th = np.nan
+            last_max = np.nan
+            last_n_samples = 0
+        else:
+            last_mask = time_seconds >= last_start_sec
+            last_window_data = z_signal[last_mask]
+            last_window_mean = np.mean(last_window_data)
+            last_window_std = np.std(last_window_data)
+            last_window_median = np.median(last_window_data)
+            last_75th = np.percentile(last_window_data, 75)
+            last_90th = np.percentile(last_window_data, 90)
+            last_max = np.max(last_window_data)
+            last_n_samples = len(last_window_data)
+            
+            print(f"\n{'='*80}")
+            print(f"LAST WINDOW (last {last_window_duration} min):")
+            print(f"{'='*80}")
+            print(f"Time range: {last_start_sec:.1f} - {total_duration_sec:.1f} seconds")
+            print(f"Data points: {last_n_samples}")
+            print(f"Mean z-score: {last_window_mean:.4f}")
+            print(f"Median z-score: {last_window_median:.4f}")
+            print(f"Std z-score: {last_window_std:.4f}")
+        
+        # Create visualization
+        if save_figure:
+            fig, ax = plt.subplots(figsize=(15, 6))
+            
+            # Plot full z-scored signal
+            time_minutes = time_seconds / 60
+            ax.plot(time_minutes, z_signal, color='steelblue', linewidth=0.5, alpha=0.7, 
+                   label=f'Z-scored {signal_channel}')
+            
+            # Highlight first window
+            if not np.isnan(first_window_mean):
+                ax.axvspan(first_window_start, first_window_end, alpha=0.2, color='green', 
+                          label=f'First window ({first_window_start}-{first_window_end} min)\nMean: {first_window_mean:.3f}')
+                ax.axhline(first_window_mean, color='green', linestyle='--', linewidth=2,
+                          xmin=(first_window_start/total_duration_min), xmax=(first_window_end/total_duration_min))
+            
+            # Highlight last window
+            if not np.isnan(last_window_mean):
+                last_start_min = last_start_sec / 60
+                ax.axvspan(last_start_min, total_duration_min, alpha=0.2, color='orange',
+                          label=f'Last window (last {last_window_duration} min)\nMean: {last_window_mean:.3f}')
+                ax.axhline(last_window_mean, color='orange', linestyle='--', linewidth=2,
+                          xmin=(last_start_min/total_duration_min), xmax=1.0)
+            
+            ax.set_xlabel('Time (minutes)', fontsize=14)
+            ax.set_ylabel(f'Z-scored {signal_channel} signal', fontsize=14)
+            ax.set_title(f'Photometry Time Window Analysis - {mouse_name}', fontsize=16)
+            ax.legend(loc='best', fontsize=10)
+            ax.grid(True, alpha=0.3)
+            
+            plt.tight_layout()
+            
+            # Save figure
+            fig_path = os.path.join(self.save_path, f'{mouse_name}_time_windows_analysis.png')
+            plt.savefig(fig_path, dpi=300, bbox_inches='tight')
+            print(f"\nFigure saved to: {fig_path}")
+            plt.close()
+        
+        # Calculate changes and percent changes
+        change_mean = last_window_mean - first_window_mean
+        change_75th = last_75th - first_75th
+        
+        if first_window_mean != 0:
+            percent_change_mean = (change_mean / abs(first_window_mean)) * 100
+        else:
+            percent_change_mean = np.nan
+        
+        if first_75th != 0:
+            percent_change_75th = (change_75th / abs(first_75th)) * 100
+        else:
+            percent_change_75th = np.nan
+        
+        # Compile results
+        results = {
+            'Mouse': mouse_name,
+            'Signal_Channel': signal_channel,
+            'First_5min_Mean': first_window_mean,
+            'Last_5min_Mean': last_window_mean,
+            'First_5min_Median': first_window_median,
+            'Last_5min_Median': last_window_median,
+            'First_5min_75th_Percentile': first_75th,
+            'Last_5min_75th_Percentile': last_75th,
+            'First_5min_90th_Percentile': first_90th,
+            'Last_5min_90th_Percentile': last_90th,
+            'First_5min_Max': first_max,
+            'Last_5min_Max': last_max,
+            'Change_Mean': change_mean,
+            'Percent_Change_Mean': percent_change_mean,
+            'Change_75th_Percentile': change_75th,
+            'Percent_Change_75th_Percentile': percent_change_75th,
+            'First_5min_N_Samples': first_n_samples,
+            'Last_5min_N_Samples': last_n_samples,
+            'Recording_Duration_Min': total_duration_min,
+            'First_Window_Start_Min': first_window_start,
+            'First_Window_End_Min': first_window_end,
+            'Last_Window_Duration_Min': last_window_duration,
+        }
+        
+        # Save results to CSV if requested
+        if save_results_csv:
+            # Create detailed results DataFrame
+            results_df = pd.DataFrame([results])
+            
+            # Save detailed results
+            output_filename = f"{mouse_name}_z{signal_channel}_time_windows.csv"
+            output_path = os.path.join(self.save_path, output_filename)
+            results_df.to_csv(output_path, index=False)
+            print(f"\nDetailed results saved to: {output_path}")
+            
+            # Create summary in format matching original script
+            summary_results = {
+                'Mouse': mouse_name,
+                'First_5min_Mean': results['First_5min_Mean'],
+                'Last_5min_Mean': results['Last_5min_Mean'],
+                'First_5min_Median': results['First_5min_Median'],
+                'Last_5min_Median': results['Last_5min_Median'],
+                'First_5min_75th_Percentile': results['First_5min_75th_Percentile'],
+                'Last_5min_75th_Percentile': results['Last_5min_75th_Percentile'],
+                'First_5min_90th_Percentile': results['First_5min_90th_Percentile'],
+                'Last_5min_90th_Percentile': results['Last_5min_90th_Percentile'],
+                'First_5min_Max': results['First_5min_Max'],
+                'Last_5min_Max': results['Last_5min_Max'],
+                'Change_Mean': results['Change_Mean'],
+                'Percent_Change_Mean': results['Percent_Change_Mean'],
+                'Change_75th_Percentile': results['Change_75th_Percentile'],
+                'Percent_Change_75th_Percentile': results['Percent_Change_75th_Percentile'],
+                'First_5min_N_Samples': results['First_5min_N_Samples'],
+                'Last_5min_N_Samples': results['Last_5min_N_Samples'],
+            }
+            
+            summary_df = pd.DataFrame([summary_results])
+            
+            # Save summary to parent directory (where mouse data folder is)
+            parent_dir = os.path.dirname(os.path.dirname(self.save_path))
+            summary_filename = f"{mouse_name}_z{signal_channel}_change.csv"
+            summary_output_path = os.path.join(parent_dir, summary_filename)
+            summary_df.to_csv(summary_output_path, index=False)
+            print(f"Summary saved to: {summary_output_path}")
+        
+        # Print final summary
+        print("\n" + "#"*80)
+        print("#" + " "*78 + "#")
+        print("#" + " "*22 + "TIME WINDOW ANALYSIS COMPLETE" + " "*27 + "#")
+        print("#" + " "*78 + "#")
+        print("#"*80)
+        print(f"\nMouse: {mouse_name}")
+        print(f"Signal: z_{signal_channel}")
+        print(f"Recording duration: {total_duration_min:.2f} minutes")
+        print(f"\nMean z-score ({first_window_start}-{first_window_end} min): {first_window_mean:.4f}")
+        print(f"Mean z-score (last {last_window_duration} min): {last_window_mean:.4f}")
+        print(f"\nChange (absolute): {change_mean:.4f}")
+        print(f"Change (percent): {percent_change_mean:.2f}%")
+        print("\n" + "#"*80)
+        
+        return results
