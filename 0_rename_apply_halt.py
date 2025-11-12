@@ -60,7 +60,7 @@ def process_dirs_with_colon2s(root: Path, dry_run: bool):
     renamed = 0
     errors = 0
     for d in dirs_sorted:
-        new_name = d.name.replace(": 2s", "_2s")
+        new_name = d.name.replace("/ 2s", "_2s")
         new_path = d.with_name(new_name)
         ok = safe_move(d, new_path, dry_run)
         if ok:
