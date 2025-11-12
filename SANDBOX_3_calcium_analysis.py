@@ -114,7 +114,17 @@ COHORT_OPTIONS = {
 }
 
 # Select cohort
-cohort_identifier = "Cohort1"  # Options: "Cohort1", "Cohort3"
+cohort_identifier = "Cohort1"  # Options: "Cohort1", "Cohort3
+
+# which part of the notebook to run 
+# 1st run the save_signal_metrics first for "Apple_halt_2s", 
+# 2nd run the for "No_halt" - 
+# NB: input  files may need to be rename, i.e. removing spurious / or ; characters
+# 2nd run the generate_condition_comparison, then change cohorts 
+SAVE_SIGNAL_METRICS = False
+GENERATE_CONDITION_COMPARISON = True
+
+
 
 # Select which animals to process (subset of the cohort's available mice).
 # Leave empty list [] to process all mice in the cohort.
@@ -151,7 +161,7 @@ if not DATA_DIRS:
     raise ValueError("COMPUTE_PER_MOUSE_ANALYSIS_OF_CALCIUM_DATA must provide at least one data directory.")
 
 SAVE_CSV = True      # Save grand averages with SEM as CSV file for plotting traces
-SAVE_SIGNAL_METRICS = True # FIXME True only the first run, otherwise False 
+
 SIGNAL_METRICS_OUTPUT_SUBDIR = DATA_DIRS[0].parent.parent
 
 # Signal feature metric settings (incorporated from SANDBOX 4 workflow)
@@ -181,15 +191,15 @@ POST_ALIGNMENT_WINDOW = (
 OFFSET_BASELINE_WINDOW = (1.9, 2.0)  # Baseline window for direct peak amplitude calculation
 OFFSET_ANALYSIS_START = 2.0          # Start analyzing offset response after main peak
 OFFSET_ANALYSIS_END = 8.0            # End of offset analysis window
-OFFSET_AUC_WINDOW = (2.0, 4.0)       # Window for area-under-curve calculation on residuals
+OFFSET_AUC_WINDOW = (2.0, 6.0)       # Window for area-under-curve calculation on residuals
+DECAY_FIT_START_OFFSET = 0.0         # Extra time (seconds) added to peak time before starting exponential fit (0.0 = fit from peak)
 
 # ------------------------------------------------------------------
 # CONDITION COMPARISON SETUP
 # ------------------------------------------------------------------
 # Configure the 2️⃣ cross-condition comparison module (halt vs no-halt, etc.).
 # Each entry stands on its own so it is easy to enable/disable or point to
-# different folders without touching the single-condition settings above.
-GENERATE_CONDITION_COMPARISON = False  
+# different folders without touching the single-condition settings above.  
 # Each key defines one condition: give it a unique name, the event suffix to load,
 # the directories the aligned traces live in, and an optional list of already
 # computed metrics CSVs (leave empty to recompute on the fly).
@@ -1309,10 +1319,24 @@ def _estimate_double_exponential_decay(
     values: np.ndarray,
     peak_index: int,
     baseline: float,
+    fit_start_offset: float = 0.0,
 ) -> Tuple[float, float, float, float]:
     """
     Fit a double-exponential decay with baseline:
     y(t) = baseline + A1*exp(-t/tau1) + A2*exp(-t/tau2)
+    
+    Parameters
+    ----------
+    times : np.ndarray
+        Time points
+    values : np.ndarray
+        Signal values
+    peak_index : int
+        Index of the peak in the arrays
+    baseline : float
+        Baseline level
+    fit_start_offset : float
+        Additional time (seconds) to add to peak time before starting fit (default: 0.0)
     
     Returns
     -------
@@ -1326,9 +1350,17 @@ def _estimate_double_exponential_decay(
     if np.isnan(peak_value):
         return float(np.nan), float(np.nan), float(np.nan), float(np.nan)
     
-    # Use post-peak data for fitting
-    post_times = times[peak_index:]
-    post_values = values[peak_index:]
+    # Use post-peak data for fitting, optionally offset from peak time
+    peak_time = times[peak_index]
+    fit_start_time = peak_time + fit_start_offset
+    
+    # Find data points at or after the fit start time
+    fit_mask = times >= fit_start_time
+    if not fit_mask.any():
+        return float(np.nan), float(np.nan), float(np.nan), float(np.nan)
+    
+    post_times = times[fit_mask]
+    post_values = values[fit_mask]
     
     if post_times.size < 6:  # Need at least 6 points for 4-parameter fit
         return float(np.nan), float(np.nan), float(np.nan), float(np.nan)
@@ -1340,8 +1372,8 @@ def _estimate_double_exponential_decay(
     if total_amplitude <= 0:
         return float(np.nan), float(np.nan), float(np.nan), float(np.nan)
     
-    # Relative times from peak
-    rel_times = post_times - post_times[0]
+    # Relative times from fit start time
+    rel_times = post_times - fit_start_time
     
     # Initial parameter guesses
     # Fast component: ~70% of amplitude, tau ~0.3-0.5s
@@ -1807,7 +1839,7 @@ def _compute_signal_metrics_for_mouse(
     
     # Fit double-exponential decay using full data (for offset analysis)
     tau1, A1, tau2, A2 = _estimate_double_exponential_decay(
-        times, candidate, peak_index, baseline
+        times, candidate, peak_index, baseline, DECAY_FIT_START_OFFSET
     )
     
     # For main peak metrics, report only tau1 (fast component) as decay_tau1
@@ -3195,23 +3227,24 @@ def plot_exponential_fit_and_residuals_per_mouse(
     
     # Fit double-exponential decay
     tau1, A1, tau2, A2 = _estimate_double_exponential_decay(
-        times_clean, values_clean, peak_idx_full, baseline
+        times_clean, values_clean, peak_idx_full, baseline, DECAY_FIT_START_OFFSET
     )
     
-    # Reconstruct double-exponential decay (only from peak onward)
+    # Reconstruct double-exponential decay (from fit start time onward)
     exponential_fit = np.full_like(times_clean, np.nan)
     residuals = np.full_like(times_clean, np.nan)
     
     if np.isfinite(tau1) and tau1 > 0 and np.isfinite(A1):
-        # Only compute exponential from peak time onward (not before!)
-        post_peak_mask = times_clean >= peak_time
-        time_from_peak = times_clean[post_peak_mask] - peak_time
-        exponential_fit[post_peak_mask] = (
+        # Only compute exponential from fit start time onward (peak + offset)
+        fit_start_time = peak_time + DECAY_FIT_START_OFFSET
+        post_fit_mask = times_clean >= fit_start_time
+        time_from_fit_start = times_clean[post_fit_mask] - fit_start_time
+        exponential_fit[post_fit_mask] = (
             baseline + 
-            A1 * np.exp(-time_from_peak / tau1) + 
-            A2 * np.exp(-time_from_peak / tau2)
+            A1 * np.exp(-time_from_fit_start / tau1) + 
+            A2 * np.exp(-time_from_fit_start / tau2)
         )
-        residuals[post_peak_mask] = values_clean[post_peak_mask] - exponential_fit[post_peak_mask]
+        residuals[post_fit_mask] = values_clean[post_fit_mask] - exponential_fit[post_fit_mask]
     else:
         print(f"⚠️ Invalid tau1 ({tau1}) or A1 ({A1}) for mouse {mouse_id}")
     
@@ -3274,6 +3307,17 @@ def plot_exponential_fit_and_residuals_per_mouse(
             line=dict(color='green', width=2, dash='dot'),
             annotation_text=f"Onset: {onset_time:.2f}s",
             annotation_position="top",
+            row=1, col=1
+        )
+    
+    # Mark fit start time (if offset from peak)
+    if DECAY_FIT_START_OFFSET != 0.0:
+        fit_start_time = peak_time + DECAY_FIT_START_OFFSET
+        fig.add_vline(
+            x=fit_start_time,
+            line=dict(color='purple', width=2, dash='dashdot'),
+            annotation_text=f"Fit start: {fit_start_time:.2f}s",
+            annotation_position="bottom",
             row=1, col=1
         )
     
@@ -3418,9 +3462,10 @@ def plot_exponential_fit_and_residuals_per_mouse(
     fig.update_yaxes(title_text="Residual z-score", row=2, col=1)
     
     # Add title with metrics
+    fit_offset_text = f" | Fit offset: +{DECAY_FIT_START_OFFSET:.2f}s" if DECAY_FIT_START_OFFSET != 0.0 else ""
     metrics_text = (
         f"Mouse: {mouse_id} | {cohort_id} | {day_label}<br>"
-        f"<sub>Peak: {peak_value:.3f} | Baseline: {baseline:.3f}<br>"
+        f"<sub>Peak: {peak_value:.3f} | Baseline: {baseline:.3f}{fit_offset_text}<br>"
         f"Fast: τ1={tau1:.3f}s, A1={A1:.3f} | Slow: τ2={tau2:.3f}s, A2={A2:.3f}<br>"
         f"Main peak residual AUC: {main_peak_residual_auc:.3f} | "
         f"Offset AUC: {offset_residual_auc:.3f}</sub>"
@@ -3581,13 +3626,23 @@ def plot_condition_metric(
     signal_order: List[str],
     mouse_colors: Dict[str, tuple],
     connect_lines: bool = True,
+    no_line_conditions: Optional[List[str]] = None,
 ) -> plt.Figure:
     """Generate scatter plots for a given metric across conditions.
 
     When connect_lines is True, mice present in all conditions are shown with
     connecting lines; otherwise individual points are plotted without lines.
+    
+    Parameters
+    ----------
+    no_line_conditions : Optional[List[str]]
+        List of conditions that should always be plotted as individual points
+        without connecting lines (e.g., combined conditions like "day3+day4")
     """
     styled_mouse_colors = OrderedDict((str(mouse), color) for mouse, color in mouse_colors.items())
+    if no_line_conditions is None:
+        no_line_conditions = []
+    
     style_context = {
         "font.size": 15,
         "font.family": "sans-serif",
@@ -3629,6 +3684,10 @@ def plot_condition_metric(
         positions = np.arange(len(condition_order), dtype=float)
         mean_legend_handle = None
         mouse_handles: OrderedDict[str, object] = OrderedDict()
+        
+        # Separate conditions into paired (with lines) and unpaired (no lines)
+        paired_conditions = [c for c in condition_order if c not in no_line_conditions]
+        unpaired_conditions = [c for c in condition_order if c in no_line_conditions]
 
         for ax, signal in zip(axes, signals_present):
             subset = metric_df[metric_df["signal"] == signal].copy()
@@ -3641,19 +3700,26 @@ def plot_condition_metric(
             )
             subset = subset.sort_values(["mouse", "condition"])
 
-            for mouse, color in styled_mouse_colors.items():
-                mouse_subset = subset[subset["mouse"] == mouse]
-                if mouse_subset.empty:
-                    continue
-                mouse_series = mouse_subset.set_index("condition")["value"]
-                if connect_lines:
-                    mouse_series = mouse_series.reindex(condition_order)
-                    if mouse_series.isna().any():
+            # Plot paired conditions (with connecting lines if connect_lines=True)
+            if connect_lines and paired_conditions:
+                for mouse, color in styled_mouse_colors.items():
+                    mouse_subset = subset[subset["mouse"] == mouse]
+                    if mouse_subset.empty:
                         continue
-                    mouse_values = mouse_series.to_numpy(dtype=float)
+                    # Filter to only paired conditions to avoid duplicate index issues
+                    mouse_subset_paired = mouse_subset[mouse_subset["condition"].isin(paired_conditions)]
+                    if mouse_subset_paired.empty:
+                        continue
+                    mouse_series = mouse_subset_paired.set_index("condition")["value"]
+                    # Only plot paired conditions with lines
+                    paired_series = mouse_series.reindex(paired_conditions)
+                    if paired_series.isna().any():
+                        continue
+                    paired_values = paired_series.to_numpy(dtype=float)
+                    paired_positions = np.array([condition_order.index(c) for c in paired_conditions])
                     line, = ax.plot(
-                        positions,
-                        mouse_values,
+                        paired_positions,
+                        paired_values,
                         marker="o",
                         linestyle="-",
                         color=color,
@@ -3664,14 +3730,28 @@ def plot_condition_metric(
                     )
                     if mouse not in mouse_handles:
                         mouse_handles[mouse] = line
-                else:
+            elif not connect_lines:
+                # Original behavior when connect_lines=False (unpaired design)
+                for mouse, color in styled_mouse_colors.items():
+                    mouse_subset = subset[subset["mouse"] == mouse]
+                    if mouse_subset.empty:
+                        continue
+                    
                     jitter = (hash((mouse, signal)) % 5 - 2) * 0.04
-                    for idx, cond in enumerate(condition_order):
-                        value = mouse_series.get(cond)
+                    
+                    # Iterate through rows directly to handle any duplicate condition entries
+                    for _, row in mouse_subset.iterrows():
+                        cond = row["condition"]
+                        value = row["value"]
+                        
+                        if cond not in condition_order:
+                            continue
                         if pd.isna(value):
                             continue
+                        
+                        cond_idx = condition_order.index(cond)
                         point = ax.plot(
-                            positions[idx] + jitter,
+                            positions[cond_idx] + jitter,
                             float(value),
                             marker="o",
                             linestyle="None",
@@ -3682,6 +3762,42 @@ def plot_condition_metric(
                         )[0]
                         if mouse not in mouse_handles:
                             mouse_handles[mouse] = point
+            
+            # Plot unpaired conditions (no lines, just individual points)
+            # These conditions may have duplicate mouse entries (e.g., combined day3+day4)
+            if unpaired_conditions:
+                for mouse, color in styled_mouse_colors.items():
+                    mouse_subset = subset[subset["mouse"] == mouse]
+                    if mouse_subset.empty:
+                        continue
+                    # Filter to only unpaired conditions
+                    mouse_subset_unpaired = mouse_subset[mouse_subset["condition"].isin(unpaired_conditions)]
+                    if mouse_subset_unpaired.empty:
+                        continue
+                    
+                    jitter = (hash((mouse, signal)) % 5 - 2) * 0.04
+                    
+                    # Iterate through rows directly to handle duplicate condition entries
+                    for _, row in mouse_subset_unpaired.iterrows():
+                        cond = row["condition"]
+                        value = row["value"]
+                        
+                        if cond not in condition_order:
+                            continue
+                        if pd.isna(value):
+                            continue
+                        
+                        cond_idx = condition_order.index(cond)
+                        ax.plot(
+                            positions[cond_idx] + jitter,
+                            float(value),
+                            marker="o",
+                            linestyle="None",
+                            color=color,
+                            markersize=6,
+                            alpha=0.8,
+                            zorder=2,
+                        )
 
             means = subset.groupby("condition")["value"].mean().reindex(condition_order)
             sems = subset.groupby("condition")["value"].apply(_paired_sem).reindex(condition_order)
@@ -3777,6 +3893,16 @@ if GENERATE_CONDITION_COMPARISON:
         "offset_residual_auc",
     ]
     CONDITION_ORDER = ["Apply_halt_day3", "Apply_halt_day4", "No_halt"]
+    
+    # Metrics that should EXCLUDE "No halt" condition from plots and statistics
+    METRICS_EXCLUDE_NO_HALT = [
+        "offset_residual_auc",
+        "decay_tau1",
+        "onset_time",
+    ]
+    
+    print(f"🎯 TARGET_METRICS to process: {TARGET_METRICS}")
+    print(f"🚫 METRICS_EXCLUDE_NO_HALT: {METRICS_EXCLUDE_NO_HALT}")
 
     condition_metrics_frames: Dict[str, pd.DataFrame] = {}
     condition_sources_map: Dict[str, Dict[str, Path]] = {}
@@ -3832,6 +3958,15 @@ if GENERATE_CONDITION_COMPARISON:
         )
         long_df = long_df.dropna(subset=["value"])
         long_df = long_df[long_df["signal"] == TARGET_SIGNAL].copy()
+        
+        print(f"\n📊 After melting and filtering for {TARGET_SIGNAL}:")
+        print(f"   Total rows: {len(long_df)}")
+        print(f"   Available metrics: {sorted(long_df['metric'].unique())}")
+        print(f"   Available conditions: {sorted(long_df['condition'].unique())}")
+        print(f"\n   Metric value counts:")
+        for metric in sorted(long_df['metric'].unique()):
+            metric_rows = len(long_df[long_df['metric'] == metric])
+            print(f"      {metric}: {metric_rows} rows")
 
         if long_df.empty:
             print("⚠️ No z_560_Baseline data available for comparison; skipping analysis.")
@@ -3867,9 +4002,26 @@ if GENERATE_CONDITION_COMPARISON:
                 stats_records: List[pd.DataFrame] = []
 
                 for metric_name in TARGET_METRICS:
-                    condition_subset = [
-                        cond for cond in preferred_order if cond in long_df["condition"].unique()
-                    ]
+                    print(f"\n{'='*50}")
+                    print(f"🔍 PROCESSING METRIC: {metric_name}")
+                    print(f"{'='*50}")
+                    
+                    # Determine which conditions to include for this metric
+                    if metric_name in METRICS_EXCLUDE_NO_HALT:
+                        # Exclude "No_halt" condition for specific metrics
+                        condition_subset = [
+                            cond for cond in preferred_order 
+                            if cond in long_df["condition"].unique() and cond != "No_halt"
+                        ]
+                        print(f"📊 Metric '{metric_name}': excluding 'No_halt' condition from analysis")
+                    else:
+                        condition_subset = [
+                            cond for cond in preferred_order if cond in long_df["condition"].unique()
+                        ]
+                    
+                    print(f"   Available conditions in long_df: {sorted(long_df['condition'].unique())}")
+                    print(f"   Condition subset for analysis: {condition_subset}")
+                    
                     if len(condition_subset) < 2:
                         print(
                             f"⚠️ Metric '{metric_name}' does not have enough conditions for comparison; skipping."
@@ -3880,10 +4032,43 @@ if GENERATE_CONDITION_COMPARISON:
                         (long_df["metric"] == metric_name)
                         & (long_df["condition"].isin(condition_subset))
                     ].copy()
+                    
+                    print(f"   Rows in metric_long_full before processing: {len(metric_long_full)}")
+                    print(f"   Unique mice: {sorted(metric_long_full['mouse'].unique()) if not metric_long_full.empty else 'None'}")
+                    
+                    # For offset_residual_auc only: create combined day3+day4 condition
+                    add_combined_column = False
+                    if metric_name == "offset_residual_auc":
+                        print(f"   🎯 This is offset_residual_auc - checking for combined column...")
+                        print(f"   'Apply_halt_day3' in subset: {'Apply_halt_day3' in condition_subset}")
+                        print(f"   'Apply_halt_day4' in subset: {'Apply_halt_day4' in condition_subset}")
+                        
+                        if "Apply_halt_day3" in condition_subset and "Apply_halt_day4" in condition_subset:
+                            # Create combined condition with all day3 and day4 data
+                            combined_data = metric_long_full[
+                                metric_long_full["condition"].isin(["Apply_halt_day3", "Apply_halt_day4"])
+                            ].copy()
+                            print(f"   ✅ Creating combined column with {len(combined_data)} data points")
+                            combined_data["condition"] = "Apply_halt_day3+day4"
+                            combined_data["condition_label"] = "Apply halt day 3+4"
+                            
+                            # Append combined data to metric_long_full
+                            metric_long_full = pd.concat([metric_long_full, combined_data], ignore_index=True)
+                            
+                            # Add combined condition to subset (at the end)
+                            condition_subset = condition_subset + ["Apply_halt_day3+day4"]
+                            add_combined_column = True
+                            print(f"   📊 Added combined 'day3+day4' column")
+                            print(f"   Updated condition_subset: {condition_subset}")
+                        else:
+                            print(f"   ⚠️ Cannot create combined column - missing day3 or day4")
+                    
                     if metric_long_full.empty:
                         print(f"⚠️ No data for metric '{metric_name}', skipping.")
                         continue
                     metric_long_full["mouse"] = metric_long_full["mouse"].astype(str)
+                    
+                    print(f"   Final rows in metric_long_full: {len(metric_long_full)}")
 
                     mice_by_condition = {
                         cond: set(metric_long_full.loc[metric_long_full["condition"] == cond, "mouse"])
@@ -3946,14 +4131,34 @@ if GENERATE_CONDITION_COMPARISON:
                             "Unpaired design: mouse rosters differ across conditions."
                         )
 
+                    # For statistics, exclude combined conditions (which have duplicate mice)
+                    stats_condition_subset = [c for c in condition_subset if "+" not in c]
+                    stats_metric_long = metric_long[metric_long["condition"].isin(stats_condition_subset)].copy()
+                    
+                    if add_combined_column:
+                        print(f"   📊 Statistics will use conditions: {stats_condition_subset}")
+                        print(f"   📊 (excluding combined column from stats to avoid duplicate mice)")
+                        mode_notes.append(
+                            f"Combined condition '{[c for c in condition_subset if '+' in c]}' "
+                            "included in plot and descriptive statistics but excluded from "
+                            "inferential tests (ANOVA/pairwise) to avoid duplicate mouse entries."
+                        )
+                    
                     summary_df, pairwise_df, analysis_notes = compute_repeated_measures_stats(
-                        metric_long,
-                        condition_subset,
+                        stats_metric_long,
+                        stats_condition_subset,
                         signal_order,
                         metric_name,
                     )
                     analysis_notes = mode_notes + analysis_notes
 
+                    # Determine which conditions should not have connecting lines
+                    no_line_conditions_for_plot = []
+                    if add_combined_column:
+                        no_line_conditions_for_plot = ["Apply_halt_day3+day4"]
+                        print(f"   📊 Will plot with no_line_conditions: {no_line_conditions_for_plot}")
+                    
+                    print(f"   🎨 Creating plot for {metric_name}...")
                     fig = plot_condition_metric(
                         metric_name,
                         metric_long,
@@ -3961,6 +4166,7 @@ if GENERATE_CONDITION_COMPARISON:
                         signal_order,
                         mouse_colors,
                         connect_lines=(analysis_mode == "paired"),
+                        no_line_conditions=no_line_conditions_for_plot,
                     )
 
                     cohort_part = sanitize_for_filename(cohort_identifier, "cohort")
@@ -3971,8 +4177,10 @@ if GENERATE_CONDITION_COMPARISON:
                         comparison_output_dir
                         / f"{cohort_part}_{day_part}_{metric_part}_{analysis_mode}_condition_comparison.pdf"
                     )
+                    print(f"   💾 Saving plot to: {plot_filename}")
                     fig.savefig(plot_filename, dpi=300, bbox_inches="tight")
                     plt.close(fig)
+                    print(f"   ✅ Plot saved successfully")
 
                     plot_data_path = (
                         comparison_output_dir
