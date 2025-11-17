@@ -2203,6 +2203,178 @@ else:
             print(f"✅ Saved: eye_position_metrics_ttests.csv")
 
 
+# %%
+# Baseline Saccade Density Analysis
+# ----------------------------------------------------------------------
+# Quantify saccade probability during baseline window (-1 to 0s)
+
+baseline_saccade_df = pd.DataFrame()
+baseline_saccade_stats_df = pd.DataFrame()
+
+if not eye_tracking_df.empty and "saccade_pre_mean" in eye_tracking_df.columns:
+    print(f"\n📊 Analyzing baseline saccade density (window: {BASELINE_WINDOW[0]} to {BASELINE_WINDOW[1]}s)")
+    
+    # Aggregate baseline saccade probability per mouse (average across all turns)
+    baseline_saccade_per_mouse = (
+        eye_tracking_df.groupby(["group", "mouse"], dropna=False)
+        .agg({"saccade_pre_mean": "mean"})
+        .reset_index()
+        .rename(columns={"saccade_pre_mean": "baseline_saccade_probability"})
+    )
+    
+    baseline_saccade_df = baseline_saccade_per_mouse.copy()
+    
+    # Display per-mouse results
+    display(Markdown("#### Baseline saccade probability per mouse"))
+    display(baseline_saccade_df)
+    
+    # Save per-mouse baseline saccade data
+    if OUTPUT_DIR is not None:
+        baseline_saccade_df.to_csv(OUTPUT_DIR / "baseline_saccade_density_per_mouse.csv", index=False)
+        print(f"✅ Saved: baseline_saccade_density_per_mouse.csv")
+    
+    # Statistical comparison: Apply halt vs No halt
+    pivot_baseline_saccade = baseline_saccade_df.pivot(
+        index="mouse", 
+        columns="group", 
+        values="baseline_saccade_probability"
+    )
+    
+    if "Apply halt" in pivot_baseline_saccade.columns and "No halt" in pivot_baseline_saccade.columns:
+        stats_result = compute_paired_t_test(pivot_baseline_saccade, "No halt", "Apply halt")
+        
+        # Add descriptive statistics
+        no_halt_vals = pivot_baseline_saccade["No halt"].dropna()
+        apply_halt_vals = pivot_baseline_saccade["Apply halt"].dropna()
+        
+        baseline_saccade_stats_df = pd.DataFrame([{
+            "metric": "baseline_saccade_probability",
+            "metric_label": f"Baseline saccade probability ({BASELINE_WINDOW[0]} to {BASELINE_WINDOW[1]}s)",
+            "no_halt_mean": float(no_halt_vals.mean()) if len(no_halt_vals) > 0 else float("nan"),
+            "no_halt_sem": float(sem(no_halt_vals)) if len(no_halt_vals) > 1 else float("nan"),
+            "apply_halt_mean": float(apply_halt_vals.mean()) if len(apply_halt_vals) > 0 else float("nan"),
+            "apply_halt_sem": float(sem(apply_halt_vals)) if len(apply_halt_vals) > 1 else float("nan"),
+            "mean_difference": stats_result["mean_difference"],
+            "t_statistic": stats_result["t_statistic"],
+            "p_value": stats_result["p_value"],
+            "n_pairs": stats_result["n_pairs"],
+        }])
+        
+        display(Markdown("#### Baseline saccade probability: Paired t-test"))
+        display(baseline_saccade_stats_df)
+        
+        if OUTPUT_DIR is not None:
+            baseline_saccade_stats_df.to_csv(OUTPUT_DIR / "baseline_saccade_density_ttest.csv", index=False)
+            print(f"✅ Saved: baseline_saccade_density_ttest.csv")
+        
+        # Create comparison plot
+        fig, ax = plt.subplots(1, 1, figsize=(5, 5.5), sharey=False)
+        
+        groups_present = ["No halt", "Apply halt"]
+        x_positions = np.arange(len(groups_present), dtype=float)
+        
+        # Assign consistent mouse colors
+        baseline_mouse_colors = assign_mouse_colors_consistent(baseline_saccade_df["mouse"].dropna().unique())
+        
+        # Plot individual mice
+        for mouse in pivot_baseline_saccade.index:
+            values = pivot_baseline_saccade.loc[mouse, groups_present]
+            if values.isna().all():
+                continue
+            ax.plot(
+                x_positions,
+                values.to_numpy(dtype=float),
+                marker="o",
+                linewidth=1.1,
+                alpha=0.65,
+                color=baseline_mouse_colors.get(mouse, "#1f77b4"),
+                zorder=2,
+            )
+        
+        # Plot group means with SEM
+        group_means = pivot_baseline_saccade[groups_present].mean(axis=0)
+        group_sems = pivot_baseline_saccade[groups_present].apply(lambda col: sem(col.dropna()), axis=0)
+        mean_values = group_means.to_numpy(dtype=float)
+        sem_values = group_sems.to_numpy(dtype=float)
+        
+        # Add SEM shading
+        valid_mask = np.isfinite(mean_values) & np.isfinite(sem_values)
+        if valid_mask.any():
+            x_valid = x_positions[valid_mask]
+            mean_valid = mean_values[valid_mask]
+            sem_valid = sem_values[valid_mask]
+            ax.fill_between(
+                x_valid,
+                mean_valid - sem_valid,
+                mean_valid + sem_valid,
+                color="#b3b3b3",
+                alpha=0.3,
+                zorder=1,
+                linewidth=0,
+            )
+        
+        # Plot mean line
+        ax.errorbar(
+            x_positions,
+            mean_values,
+            yerr=sem_values,
+            fmt="o-",
+            color="#333333",
+            linewidth=2.1,
+            capsize=4,
+            label="Mean ± SEM",
+            zorder=3,
+        )
+        
+        # Formatting
+        ax.set_xticks(x_positions)
+        ax.set_xticklabels(groups_present)
+        ax.set_xlim(-0.3, len(groups_present) - 1 + 0.31)
+        ax.set_ylabel(f"Baseline saccade probability\n({BASELINE_WINDOW[0]} to {BASELINE_WINDOW[1]}s)")
+        ax.set_title(f"Baseline Saccade Density Comparison")
+        ax.grid(True, which="both", axis="y", linestyle=":", linewidth=0.7)
+        
+        # Add statistics annotation
+        p_val = stats_result["p_value"]
+        if p_val < 0.001:
+            sig_text = "***"
+            p_text = "p < 0.001"
+        elif p_val < 0.01:
+            sig_text = "**"
+            p_text = f"p = {p_val:.3f}"
+        elif p_val < 0.05:
+            sig_text = "*"
+            p_text = f"p = {p_val:.3f}"
+        else:
+            sig_text = "ns"
+            p_text = f"p = {p_val:.3f}"
+        
+        # Add text box with statistics
+        stats_text = f"n = {stats_result['n_pairs']} mice\n{p_text} {sig_text}"
+        ax.text(
+            0.98, 0.98,
+            stats_text,
+            transform=ax.transAxes,
+            ha="right",
+            va="top",
+            fontsize=9,
+            bbox=dict(boxstyle="round,pad=0.5", facecolor="white", edgecolor="grey", alpha=0.8),
+        )
+        
+        plt.tight_layout()
+        
+        if OUTPUT_DIR is not None:
+            fig.savefig(OUTPUT_DIR / "baseline_saccade_density_comparison.pdf", format="pdf", bbox_inches="tight")
+            print(f"✅ Saved: baseline_saccade_density_comparison.pdf")
+        
+        plt.show()
+        plt.close(fig)
+    else:
+        print("⚠️ Cannot perform statistical comparison - missing Apply halt or No halt data")
+else:
+    print("⚠️ No saccade data available for baseline analysis")
+
+
 # %% [markdown]
 # ### Turning velocity summary
 #
@@ -2347,6 +2519,13 @@ else:
 if combined.empty:
     print("⚠️ No turning metrics available for comparison")
 else:
+    # Save turning metrics combined (only mean absolute velocity)
+    if OUTPUT_DIR is not None and "mean_abs_velocity_0_2s" in combined.columns:
+        combined[["mouse", "group", "mean_abs_velocity_0_2s"]].to_csv(
+            OUTPUT_DIR / "turning_metrics_combined.csv", index=False
+        )
+        print(f"✅ Saved: turning_metrics_combined.csv")
+    
     available_specs = [(metric, label) for metric, label in metric_specs if metric in combined.columns]
     if not available_specs:
         print("⚠️ Metrics not found in aggregated data")
@@ -3132,4 +3311,173 @@ if OUTPUT_DIR is not None:
     print(f"   {OUTPUT_DIR / f'turning_velocity_{SINGLE_MOUSE_ID}.pdf'}")
     print(f"   {OUTPUT_DIR / f'running_velocity_{SINGLE_MOUSE_ID}.pdf'}")
     print(f"\n💡 To plot a different mouse, change SINGLE_MOUSE_ID at the top of the eye tracking cell")
+
+
+# %% [markdown]
+# ### Difference in Turning Velocity: Apply halt vs No halt
+# Compute the difference between Apply halt and No halt turning velocity averaged over 0-2s post-halt
+
+# %%
+# Compute turning velocity difference (Apply halt - No halt) for 0-2s window
+# ----------------------------------------------------------------------
+
+if trace_samples_df.empty:
+    print("⚠️ No turning traces available for difference analysis")
+    turning_velocity_diff_df = pd.DataFrame()
+else:
+    print(f"\n📊 Computing turning velocity difference (Apply halt - No halt) over 0-2s window")
+    
+    # Define analysis window (0-2s post-halt)
+    DIFF_WINDOW = (0.0, 2.0)
+    
+    # Compute mean absolute velocity in the window for each mouse and group
+    diff_analysis_records = []
+    
+    for (group, mouse), group_df in trace_samples_df.groupby(["group", "mouse"]):
+        # Filter to analysis window
+        window_mask = (group_df["time"] >= DIFF_WINDOW[0]) & (group_df["time"] <= DIFF_WINDOW[1])
+        window_df = group_df.loc[window_mask].copy()
+        
+        if not window_df.empty:
+            # Use absolute velocity to combine left and right turns
+            mean_abs_vel = float(window_df["velocity"].abs().mean())
+            diff_analysis_records.append({
+                "group": group,
+                "mouse": mouse,
+                "mean_abs_velocity_0_2s": mean_abs_vel,
+            })
+    
+    if not diff_analysis_records:
+        print("⚠️ No data available for difference analysis")
+        turning_velocity_diff_df = pd.DataFrame()
+    else:
+        diff_analysis_df = pd.DataFrame(diff_analysis_records)
+        
+        # Pivot to get Apply halt and No halt as columns
+        pivot_diff = diff_analysis_df.pivot(
+            index="mouse", 
+            columns="group", 
+            values="mean_abs_velocity_0_2s"
+        )
+        
+        # Check if both groups are present
+        if "Apply halt" not in pivot_diff.columns or "No halt" not in pivot_diff.columns:
+            print("⚠️ Missing Apply halt or No halt data")
+            turning_velocity_diff_df = pd.DataFrame()
+        else:
+            # Compute difference (Apply halt - No halt)
+            pivot_diff["velocity_difference"] = pivot_diff["Apply halt"] - pivot_diff["No halt"]
+            
+            # Create results dataframe
+            turning_velocity_diff_df = pivot_diff.reset_index()
+            
+            # Compute statistics
+            valid_diffs = turning_velocity_diff_df["velocity_difference"].dropna()
+            
+            if len(valid_diffs) > 0:
+                mean_diff = float(valid_diffs.mean())
+                sem_diff = float(sem(valid_diffs))
+                n_mice = len(valid_diffs)
+                
+                print(f"\n✅ Turning velocity difference (Apply halt - No halt):")
+                print(f"   Analysis window: {DIFF_WINDOW[0]}-{DIFF_WINDOW[1]}s")
+                print(f"   N mice: {n_mice}")
+                print(f"   Mean difference: {mean_diff:.3f} ± {sem_diff:.3f} deg/s (mean ± SEM)")
+                
+                # Paired t-test
+                if "Apply halt" in pivot_diff.columns and "No halt" in pivot_diff.columns:
+                    stats_result = compute_paired_t_test(pivot_diff, "No halt", "Apply halt")
+                    print(f"   Paired t-test: t = {stats_result['t_statistic']:.3f}, p = {stats_result['p_value']:.4f}")
+                    
+                    # Add to dataframe
+                    turning_velocity_diff_df["mean_difference"] = mean_diff
+                    turning_velocity_diff_df["sem_difference"] = sem_diff
+                    turning_velocity_diff_df["t_statistic"] = stats_result["t_statistic"]
+                    turning_velocity_diff_df["p_value"] = stats_result["p_value"]
+                
+                # Display results
+                display(Markdown("#### Turning velocity difference per mouse"))
+                display(turning_velocity_diff_df[["mouse", "No halt", "Apply halt", "velocity_difference"]])
+                
+                # Save to CSV
+                if OUTPUT_DIR is not None:
+                    turning_velocity_diff_df.to_csv(OUTPUT_DIR / "turning_velocity_difference.csv", index=False)
+                    print(f"✅ Saved: turning_velocity_difference.csv")
+                
+                # Create point plot
+                fig, ax = plt.subplots(1, 1, figsize=(4, 5))
+                
+                # Assign consistent colors
+                mouse_colors = assign_mouse_colors_consistent(turning_velocity_diff_df["mouse"].unique())
+                
+                # Plot individual mice
+                x_pos = 0
+                for idx, row in turning_velocity_diff_df.iterrows():
+                    if pd.notna(row["velocity_difference"]):
+                        ax.plot(
+                            x_pos,
+                            row["velocity_difference"],
+                            marker="o",
+                            markersize=8,
+                            color=mouse_colors.get(row["mouse"], "#1f77b4"),
+                            alpha=0.7,
+                            zorder=2,
+                        )
+                
+                # Plot mean ± SEM
+                ax.errorbar(
+                    x_pos,
+                    mean_diff,
+                    yerr=sem_diff,
+                    fmt="o",
+                    color="#333333",
+                    markersize=12,
+                    linewidth=2.5,
+                    capsize=8,
+                    capthick=2.5,
+                    label=f"Mean ± SEM",
+                    zorder=3,
+                )
+                
+                # Add horizontal line at zero
+                ax.axhline(0, color="grey", linestyle="--", linewidth=1, alpha=0.5)
+                
+                # Formatting
+                ax.set_xlim(-0.5, 0.5)
+                ax.set_xticks([])
+                ax.set_ylabel("Velocity difference (deg/s)\n(Apply halt - No halt)", fontsize=11)
+                ax.set_title(f"Turning Velocity Difference\n{DIFF_WINDOW[0]}-{DIFF_WINDOW[1]}s post-halt", fontsize=12)
+                ax.grid(True, axis="y", linestyle=":", linewidth=0.7, alpha=0.5)
+                
+                # Add statistics text
+                if stats_result["p_value"] < 0.001:
+                    p_text = "p < 0.001***"
+                elif stats_result["p_value"] < 0.01:
+                    p_text = f"p = {stats_result['p_value']:.3f}**"
+                elif stats_result["p_value"] < 0.05:
+                    p_text = f"p = {stats_result['p_value']:.3f}*"
+                else:
+                    p_text = f"p = {stats_result['p_value']:.3f} ns"
+                
+                ax.text(
+                    0.5, 0.98,
+                    f"n = {n_mice} mice\n{p_text}",
+                    transform=ax.transAxes,
+                    ha="center",
+                    va="top",
+                    fontsize=10,
+                    bbox=dict(boxstyle="round,pad=0.5", facecolor="white", edgecolor="grey", alpha=0.8),
+                )
+                
+                plt.tight_layout()
+                
+                if OUTPUT_DIR is not None:
+                    fig.savefig(OUTPUT_DIR / "turning_velocity_difference_plot.pdf", format="pdf", bbox_inches="tight")
+                    print(f"✅ Saved: turning_velocity_difference_plot.pdf")
+                
+                plt.show()
+                plt.close(fig)
+            else:
+                print("⚠️ No valid differences computed")
+                turning_velocity_diff_df = pd.DataFrame()
 
