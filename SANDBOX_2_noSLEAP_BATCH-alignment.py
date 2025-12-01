@@ -6,9 +6,9 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.16.7
+#       jupytext_version: 1.18.1
 #   kernelspec:
-#     display_name: aeon
+#     display_name: aeon2
 #     language: python
 #     name: python3
 # ---
@@ -96,12 +96,12 @@ data_dirs = [  # Add your data directories here
     # Path('~/RANCZLAB-NAS/data/ONIX/20250409_Cohort3_rotation/Vestibular_mismatch_day1').expanduser(),
     # Path('/home/ikharitonov/RANCZLAB-NAS/data/ONIX/20250923_Cohort6_rotation/EXP_1_fluoxetine_1').expanduser()
     # Path('/home/ikharitonov/RANCZLAB-NAS/data/ONIX/20250409_Cohort3_rotation/Visual_mismatch_day4').expanduser()
-    Path('/Volumes/RanczLab/20241125_Cohort1_rotation/Visual_mismatch_day3').expanduser()
+    Path('/home/ikharitonov/RANCZLAB-NAS/data/ONIX/20250409_Cohort3_rotation/Open_loop_day2').expanduser()
 ]
 # FIXME can we do this straight from the data_dirs path (i.e. walk one directory back?)
 # cohort_data_dir = Path('/Volumes/RanczLab2/Cohort1_rotation/').expanduser() # for Nora
 # cohort_data_dir = Path('/home/ikharitonov/RANCZLAB-NAS/data/ONIX/20250409_Cohort3_rotation').expanduser() 
-cohort_data_dir = Path('/Volumes/RanczLab/20241125_Cohort1_rotation').expanduser() 
+cohort_data_dir = Path('/home/ikharitonov/RANCZLAB-NAS/data/ONIX/20250409_Cohort3_rotation/').expanduser() 
 
 # Collect raw data paths (excluding '_processedData' dirs)
 # Only include directories that match the expected pattern (have a timestamp: YYYY-MM-DDTHH-MM-SS)
@@ -566,15 +566,28 @@ class BehavioralAnalyzer:
         
     def _is_visual_mismatch_experiment(self) -> bool:
         """
-        Check if this is a visual mismatch experiment based on the data path.
+        Check if this is a visual mismatch or open loop experiment based on the data path.
+        These experiments use block-based slicing instead of fixed 10-minute intervals.
         
         Returns:
         --------
         bool
-            True if visual mismatch experiment, False otherwise
+            True if visual mismatch or open loop experiment, False otherwise
         """
         path_str = str(self.data_path).lower()
-        return 'visual_mismatch' in path_str or 'visual mismatch' in path_str
+        return 'visual_mismatch' in path_str or 'visual mismatch' in path_str or 'open_loop' in path_str
+    
+    def _is_open_loop_experiment(self) -> bool:
+        """
+        Check if this is specifically an open loop experiment.
+        
+        Returns:
+        --------
+        bool
+            True if open loop experiment, False otherwise
+        """
+        path_str = str(self.data_path).lower()
+        return 'open_loop' in path_str
     
     def slice_data_until_block_timer_elapsed(self, interval: str = "first_10min"):
         """
@@ -1670,13 +1683,221 @@ class BehavioralAnalyzer:
             }
         }
 
+    def analyze_z470_change(self, save_dir: Path):
+        """
+        Analyze z_470 signal change between first 5 minutes of first block
+        and last 5 minutes of last block. Only for open loop experiments.
+        
+        Parameters:
+        -----------
+        save_dir : Path
+            Directory to save results
+        """
+        print(f"🔍 DEBUG: analyze_z470_change() called for {self.mouse_name}")
+        print(f"🔍 DEBUG: save_dir = {save_dir}")
+        
+        # Check if z_470 column exists
+        if 'z_470' not in self.photometry_tracking_encoder_data.columns:
+            print("⚠️ Warning: z_470 column not found in data. Skipping z_470 change analysis.")
+            self.results['z470_change'] = {
+                'first_block_first_5min_mean': np.nan,
+                'last_block_last_5min_mean': np.nan,
+                'change': np.nan,
+                'percent_change': np.nan
+            }
+            return
+        
+        # Get block timer elapsed events
+        block_elapsed_events = self.experiment_events[
+            self.experiment_events["Event"] == "Block timer elapsed"
+        ]
+        
+        if len(block_elapsed_events) < 2:
+            print("⚠️ Warning: Need at least 2 'Block timer elapsed' events for z_470 change analysis. Skipping.")
+            self.results['z470_change'] = {
+                'first_block_first_5min_mean': np.nan,
+                'last_block_last_5min_mean': np.nan,
+                'change': np.nan,
+                'percent_change': np.nan
+            }
+            return
+        
+        session_start_time = self.photometry_tracking_encoder_data.index[0]
+        first_block_end = block_elapsed_events.index[0]
+        last_block_end = block_elapsed_events.index[-1]
+        
+        # Define time windows
+        first_5min_start = session_start_time
+        first_5min_end = session_start_time + pd.Timedelta(minutes=5)
+        
+        # Find the start of the last block (which is the end of the first block)
+        last_block_start = first_block_end
+        last_5min_start = last_block_end - pd.Timedelta(minutes=5)
+        last_5min_end = last_block_end
+        
+        # Extract z_470 data for each window
+        first_5min_data = self.photometry_tracking_encoder_data[
+            (self.photometry_tracking_encoder_data.index >= first_5min_start) & 
+            (self.photometry_tracking_encoder_data.index <= first_5min_end)
+        ]['z_470']
+        
+        last_5min_data = self.photometry_tracking_encoder_data[
+            (self.photometry_tracking_encoder_data.index >= last_5min_start) & 
+            (self.photometry_tracking_encoder_data.index <= last_5min_end)
+        ]['z_470']
+        
+        # Calculate multiple statistics (ignoring NaNs)
+        first_5min_mean = first_5min_data.mean()
+        last_5min_mean = last_5min_data.mean()
+        
+        first_5min_median = first_5min_data.median()
+        last_5min_median = last_5min_data.median()
+        
+        first_5min_75th = first_5min_data.quantile(0.75)
+        last_5min_75th = last_5min_data.quantile(0.75)
+        
+        first_5min_90th = first_5min_data.quantile(0.90)
+        last_5min_90th = last_5min_data.quantile(0.90)
+        
+        first_5min_max = first_5min_data.max()
+        last_5min_max = last_5min_data.max()
+        
+        # Calculate change and percent change (using 75th percentile as default for visualization)
+        # 75th percentile is more robust to outliers than max but captures elevated activity better than mean
+        change_75th = last_5min_75th - first_5min_75th
+        if first_5min_75th != 0:
+            percent_change_75th = (change_75th / abs(first_5min_75th)) * 100
+        else:
+            percent_change_75th = np.nan
+        
+        # Also calculate for mean
+        change_mean = last_5min_mean - first_5min_mean
+        if first_5min_mean != 0:
+            percent_change_mean = (change_mean / abs(first_5min_mean)) * 100
+        else:
+            percent_change_mean = np.nan
+        
+        # Store results
+        self.results['z470_change'] = {
+            'first_block_first_5min_mean': first_5min_mean,
+            'last_block_last_5min_mean': last_5min_mean,
+            'first_block_first_5min_median': first_5min_median,
+            'last_block_last_5min_median': last_5min_median,
+            'first_block_first_5min_75th': first_5min_75th,
+            'last_block_last_5min_75th': last_5min_75th,
+            'first_block_first_5min_90th': first_5min_90th,
+            'last_block_last_5min_90th': last_5min_90th,
+            'first_block_first_5min_max': first_5min_max,
+            'last_block_last_5min_max': last_5min_max,
+            'change_mean': change_mean,
+            'percent_change_mean': percent_change_mean,
+            'change_75th': change_75th,
+            'percent_change_75th': percent_change_75th,
+            'first_5min_n_samples': len(first_5min_data),
+            'last_5min_n_samples': len(last_5min_data)
+        }
+        
+        # Save to CSV
+        df = pd.DataFrame([{
+            'Mouse': self.mouse_name,
+            'First_5min_Mean': first_5min_mean,
+            'Last_5min_Mean': last_5min_mean,
+            'First_5min_Median': first_5min_median,
+            'Last_5min_Median': last_5min_median,
+            'First_5min_75th_Percentile': first_5min_75th,
+            'Last_5min_75th_Percentile': last_5min_75th,
+            'First_5min_90th_Percentile': first_5min_90th,
+            'Last_5min_90th_Percentile': last_5min_90th,
+            'First_5min_Max': first_5min_max,
+            'Last_5min_Max': last_5min_max,
+            'Change_Mean': change_mean,
+            'Percent_Change_Mean': percent_change_mean,
+            'Change_75th_Percentile': change_75th,
+            'Percent_Change_75th_Percentile': percent_change_75th,
+            'First_5min_N_Samples': len(first_5min_data),
+            'Last_5min_N_Samples': len(last_5min_data)
+        }])
+        csv_path = save_dir / f"{self.mouse_name}_z470_change.csv"
+        df.to_csv(csv_path, index=False)
+        print(f"✅ Saved z_470 change analysis: {csv_path}")
+        print(f"   📊 Statistics Summary:")
+        print(f"      Mean:          First={first_5min_mean:.4f}, Last={last_5min_mean:.4f}, Change={change_mean:+.4f} ({percent_change_mean:+.1f}%)")
+        print(f"      Median:        First={first_5min_median:.4f}, Last={last_5min_median:.4f}")
+        print(f"      75th percentile: First={first_5min_75th:.4f}, Last={last_5min_75th:.4f}, Change={change_75th:+.4f} ({percent_change_75th:+.1f}%)")
+        print(f"      90th percentile: First={first_5min_90th:.4f}, Last={last_5min_90th:.4f}")
+        print(f"      Max:           First={first_5min_max:.4f}, Last={last_5min_max:.4f}")
+        
+        # Create box plot (whisker plot) to show full distributions
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        # Prepare data for box plot
+        data_to_plot = [first_5min_data.dropna(), last_5min_data.dropna()]
+        labels = ['First 5 min\n(Block 1)', 'Last 5 min\n(Block 2)']
+        
+        # Create box plot
+        bp = ax.boxplot(data_to_plot, 
+                        labels=labels,
+                        patch_artist=True,
+                        widths=0.6,
+                        showfliers=False,  # Don't show outliers as individual points (too many)
+                        medianprops=dict(color='black', linewidth=2),
+                        boxprops=dict(facecolor='lightblue', edgecolor='black', linewidth=1.5, alpha=0.7),
+                        whiskerprops=dict(color='black', linewidth=1.5),
+                        capprops=dict(color='black', linewidth=1.5))
+        
+        # Color the boxes differently
+        colors = ['#4A90E2', '#E94B3C']
+        for patch, color in zip(bp['boxes'], colors):
+            patch.set_facecolor(color)
+            patch.set_alpha(0.7)
+        
+        # Add text annotations for statistics
+        y_offset = ax.get_ylim()[1] * 0.05
+        for i, (data, label) in enumerate(zip(data_to_plot, labels)):
+            stats_text = f'n={len(data):,}\nMedian={data.median():.3f}\n75th={data.quantile(0.75):.3f}'
+            ax.text(i+1, ax.get_ylim()[1] - y_offset, stats_text,
+                   ha='center', va='top', fontsize=9,
+                   bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.8, edgecolor='gray'))
+        
+        # Add change annotation between the two boxes
+        mid_x = 1.5
+        y_pos = ax.get_ylim()[1] * 0.5
+        change_text = (f'Change (75th percentile):\n'
+                      f'Δ = {change_75th:+.3f} ({percent_change_75th:+.1f}%)\n\n'
+                      f'Change (median):\n'
+                      f'Δ = {last_5min_median - first_5min_median:+.3f}')
+        ax.text(mid_x, y_pos, change_text,
+               ha='center', va='center', fontsize=10, fontweight='bold',
+               bbox=dict(boxstyle='round,pad=0.8', facecolor='yellow', alpha=0.3, edgecolor='orange', linewidth=2))
+        
+        # Formatting
+        ax.set_ylabel('z-scored 470 nm signal', fontsize=12, fontweight='bold')
+        ax.set_title(f'z_470 Signal Distribution Comparison - {self.mouse_name}\n(Box plot shows full distribution)', 
+                    fontsize=14, fontweight='bold', pad=20)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.grid(axis='y', alpha=0.3, linestyle='--')
+        
+        # Add zero line for reference
+        ax.axhline(y=0, color='gray', linestyle='--', linewidth=1, alpha=0.5, label='Zero baseline')
+        
+        # Save figure
+        plot_path = save_dir / f"{self.mouse_name}_z470_change_barplot.png"
+        plt.tight_layout()
+        fig.savefig(plot_path, dpi=300, bbox_inches='tight')
+        plt.close(fig)
+        print(f"✅ Saved z_470 change bar plot: {plot_path}")
+        
+        # Store figure path
+        self.figures['z470_change_barplot'] = plot_path
+
     
     def run_full_analysis(self, output_dir: Path, encoder_column: str = "Motor_Velocity",
                          experiment_day: str = None):
         """
         Run complete analysis pipeline.
         
-        For visual mismatch experiments, runs analysis twice:
+        For visual mismatch and open loop experiments, runs analysis twice:
         1. First interval: until first "Block timer elapsed"
         2. Second interval: until last "Block timer elapsed"
         
@@ -1696,13 +1917,19 @@ class BehavioralAnalyzer:
         # Store experiment day for later use
         self.experiment_day = experiment_day if experiment_day else "Unknown"
         
-        # Check if this is a visual mismatch experiment
+        # Check if this is a visual mismatch or open loop experiment
         is_visual_mismatch = self._is_visual_mismatch_experiment()
+        is_open_loop = self._is_open_loop_experiment()
+        
+        print(f"🔍 DEBUG: Path = {self.data_path}")
+        print(f"🔍 DEBUG: is_visual_mismatch = {is_visual_mismatch}")
+        print(f"🔍 DEBUG: is_open_loop = {is_open_loop}")
         
         if is_visual_mismatch:
-            # Visual mismatch: analyze two intervals
+            # Visual mismatch or open loop: analyze two intervals
+            experiment_type = "OPEN LOOP" if is_open_loop else "VISUAL MISMATCH"
             print(f"\n{'='*60}")
-            print(f"VISUAL MISMATCH EXPERIMENT DETECTED")
+            print(f"{experiment_type} EXPERIMENT DETECTED")
             print(f"STARTING FULL ANALYSIS FOR: {self.mouse_name}")
             print(f"Experiment Day: {self.experiment_day}")
             print(f"Output directory: {save_dir}")
@@ -1729,6 +1956,13 @@ class BehavioralAnalyzer:
             self.analyze_platform_velocity(save_dir, encoder_column, suffix="_last_block")
             self.analyze_pupil_correlations(save_dir, suffix="_last_block")
             self.summarize_saccade_types(save_dir, suffix="_last_block")
+            
+            # For open loop experiments: analyze z_470 change
+            if is_open_loop:
+                print(f"\n{'='*60}")
+                print(f"ANALYZING z_470 CHANGE (first 5 min vs last 5 min)")
+                print(f"{'='*60}")
+                self.analyze_z470_change(save_dir)
             
         else:
             # Standard analysis: first 10 minutes
@@ -1867,7 +2101,7 @@ class BehavioralAnalyzer:
         has_last_block = 'running_last_block' in self.results
         
         if has_first_block and has_last_block:
-            # Visual mismatch: add both intervals
+            # Visual mismatch or open loop: add both intervals
             add_behavioral_data('running_first_block', 'first_block')
             add_behavioral_data('turning_first_block', 'first_block')
             add_behavioral_data('platform_velocity_first_block', 'first_block')
@@ -1879,6 +2113,28 @@ class BehavioralAnalyzer:
             add_behavioral_data('platform_velocity_last_block', 'last_block')
             add_behavioral_data('pupil_metrics_last_block', 'last_block')
             add_behavioral_data('saccade_metrics_last_block', 'last_block')
+            
+            # Add z_470 change metrics if available (for open loop experiments)
+            if 'z470_change' in self.results:
+                z470_data = self.results['z470_change']
+                row_data.update({
+                    'z470_first_5min_mean': z470_data.get('first_block_first_5min_mean', np.nan),
+                    'z470_last_5min_mean': z470_data.get('last_block_last_5min_mean', np.nan),
+                    'z470_first_5min_median': z470_data.get('first_block_first_5min_median', np.nan),
+                    'z470_last_5min_median': z470_data.get('last_block_last_5min_median', np.nan),
+                    'z470_first_5min_75th': z470_data.get('first_block_first_5min_75th', np.nan),
+                    'z470_last_5min_75th': z470_data.get('last_block_last_5min_75th', np.nan),
+                    'z470_first_5min_90th': z470_data.get('first_block_first_5min_90th', np.nan),
+                    'z470_last_5min_90th': z470_data.get('last_block_last_5min_90th', np.nan),
+                    'z470_first_5min_max': z470_data.get('first_block_first_5min_max', np.nan),
+                    'z470_last_5min_max': z470_data.get('last_block_last_5min_max', np.nan),
+                    'z470_change_mean': z470_data.get('change_mean', np.nan),
+                    'z470_percent_change_mean': z470_data.get('percent_change_mean', np.nan),
+                    'z470_change_75th': z470_data.get('change_75th', np.nan),
+                    'z470_percent_change_75th': z470_data.get('percent_change_75th', np.nan),
+                    'z470_first_5min_n_samples': z470_data.get('first_5min_n_samples', 0),
+                    'z470_last_5min_n_samples': z470_data.get('last_5min_n_samples', 0)
+                })
         else:
             # Standard: add single interval data
             add_behavioral_data('running', '')
