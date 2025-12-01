@@ -3,8 +3,8 @@
 rename_2s.py
 
 Find every directory named "aligned_data" under ROOT_DIR, and:
- - rename files containing ":2s" -> "_2s"
- - optionally rename directories containing ":2s" -> "_2s" (bottom-up to avoid traversal issues)
+ - rename files containing ": 2s" -> "_2s"
+ - optionally rename directories containing ": 2s" -> "_2s" (bottom-up to avoid traversal issues)
 
 Usage:
     python3 rename_2s.py [--root ROOT_DIR] [--rename-dirs] [--dry-run]
@@ -39,7 +39,8 @@ def safe_move(src: Path, dst: Path, dry_run: bool):
 def process_files_in_dir(aligned_dir: Path, dry_run: bool):
     renamed = 0
     errors = 0
-    for f in aligned_dir.iterdir():
+    # Use rglob to recursively find all files in subdirectories
+    for f in aligned_dir.rglob('*'):
         # only files (not directories)
         if f.is_file() and ": 2s" in f.name:
             new_name = f.name.replace(": 2s", "_2s")
@@ -52,14 +53,14 @@ def process_files_in_dir(aligned_dir: Path, dry_run: bool):
     return renamed, errors
 
 def process_dirs_with_colon2s(root: Path, dry_run: bool):
-    # Rename directories containing ":2s"
+    # Rename directories containing ": 2s"
     # Do bottom-up so we don't break traversal (sort by depth descending)
-    dirs = [p for p in root.rglob('*') if p.is_dir() and ":2s" in p.name]
+    dirs = [p for p in root.rglob('*') if p.is_dir() and ": 2s" in p.name]
     dirs_sorted = sorted(dirs, key=lambda p: len(p.parts), reverse=True)
     renamed = 0
     errors = 0
     for d in dirs_sorted:
-        new_name = d.name.replace(": 2s", "_2s")
+        new_name = d.name.replace("/ 2s", "_2s")
         new_path = d.with_name(new_name)
         ok = safe_move(d, new_path, dry_run)
         if ok:
@@ -71,7 +72,7 @@ def process_dirs_with_colon2s(root: Path, dry_run: bool):
 def main():
     parser = argparse.ArgumentParser(description="Rename ': 2s' -> '_2s' in files inside aligned_data folders.")
     parser.add_argument('--root', '-r',
-                        default="/home/ikharitonov/RANCZLAB-NAS/data/ONIX/20250409_Cohort3_rotation,
+                        default="/Volumes/RanczLab2/DATA_NEW/Cohort3_rotation",
                         help="Root directory to search under.")
     parser.add_argument('--rename-dirs', action='store_true',
                         help="Also rename directories containing ': 2s' -> '_2s' (bottom-up).")

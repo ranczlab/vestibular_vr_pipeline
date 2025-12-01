@@ -248,7 +248,7 @@ for idx, data_path in enumerate(data_paths, start=1):
                     video_df_aligned = video_df_aligned.groupby(video_df_aligned.index).mean()
                 
                 # Report the alignment
-                print(f"⚠️ {video_key}: Timestamp misalignment corrected (avg difference: {mean_diff_ms:.3f} ms)")
+                print(f"ℹ️ {video_key}: Timestamp misalignment corrected (avg difference: {mean_diff_ms:.3f} ms)")
                 
                 # Replace original video_df with aligned version
                 video_df = video_df_aligned
@@ -306,7 +306,7 @@ for idx, data_path in enumerate(data_paths, start=1):
                             saccade_summary_aligned[col] = saccade_summary_indexed[col].iloc[saccade_indices_for_photo].values
                         
                         # Report alignment
-                        print(f"⚠️ {video_key} saccade summary: Timestamps reindexed to photometry (avg difference: {mean_diff_ms:.3f} ms)")
+                        print(f"ℹ️ {video_key} saccade summary: Timestamps reindexed to photometry (avg difference: {mean_diff_ms:.3f} ms)")
                         
                         video_saccade_summaries[video_key] = saccade_summary_aligned
                     else:
@@ -340,7 +340,7 @@ for idx, data_path in enumerate(data_paths, start=1):
                     # But first check if it was artificially expanded by reindexing
                     if len(saccade_df) == len(photometry_tracking_encoder_data):
                         # This was reindexed to match photometry - we need original data
-                        print(f"⚠️ {video_key}: Saccade data was reindexed, need original CSV")
+                        print(f"ℹ️ {video_key}: Saccade data was reindexed, need original CSV")
                         # Re-read the original CSV to get true saccade times
                         saccade_summary_path = data_path / f"{video_key}_saccade_summary.csv"
                         if saccade_summary_path.exists():
@@ -415,91 +415,369 @@ for idx, data_path in enumerate(data_paths, start=1):
 
 print(f"\n✅ Finished loading data for all {len(loaded_data)} successfully processed data paths")
 
+# %%
+# Plot of timeseries for 2025 SfN poster or publications
+# # saving SVG of example saccades for SfN poster 
+# # (filtered only version; 5 Hz cutoff for Ellipse.Center.* and 1 Hz cutoff for Pupil.Diameter_eye1 traces)
+
+# import plotly.graph_objs as go
+# from plotly.subplots import make_subplots
+# import pathlib
+# import sys
+# import pandas as pd
+# import numpy as np
+# import scipy.signal
+
+# # Mouse and time window
+# mouse_to_plot = "B6J2782"
+# t0 = pd.Timestamp("1904-01-05T00:01:05.012") 
+# t1 = pd.Timestamp("1904-01-05T00:03:40.012") # poster is 1:40 for short, 3:40 for longer
+
+# # Columns to plot (plot only if present in df)
+# # REMOVE VELOCITY COLUMNS for this plot
+# columns_to_plot = [
+#     "Ellipse.Center.X_eye1",
+#     "Ellipse.Center.X_eye2",
+#     "Pupil.Diameter_eye1",
+#     "Position_0X",
+#     "Position_0Y",
+#     "Encoder_Unwrapped"
+#     # "Velocity_0X",
+#     # "Velocity_0Y",
+#     # "Motor_Velocity"
+# ]
+
+# # Locate the B6J2782 dataset
+# b6j2782_key = None
+# for key, d in loaded_data.items():
+#     if d.get('mouse_name', '') == mouse_to_plot:
+#         b6j2782_key = key
+#         break
+# if b6j2782_key is None:
+#     raise ValueError(f"Mouse '{mouse_to_plot}' not found in loaded_data.")
+
+# # Get photometry df and video df for eye1 (use VideoData1) and eye2 (use VideoData2)
+# photometry_df = loaded_data[b6j2782_key]["photometry_tracking_encoder_data"]
+# video_eye1_df = loaded_data[b6j2782_key]["video_data"].get("VideoData1", None)
+# video_eye2_df = loaded_data[b6j2782_key]["video_data"].get("VideoData2", None)
+
+# # Combine into one DataFrame with shared index, but first check and ensure unique columns
+# # Restrict to [t0, t1]
+# photometry_slice = photometry_df.loc[(photometry_df.index >= t0) & (photometry_df.index <= t1)].copy()
+# dfs_to_merge = [photometry_slice]
+
+# if video_eye1_df is not None:
+#     video_eye1_slice = video_eye1_df.loc[(video_eye1_df.index >= t0) & (video_eye1_df.index <= t1)].copy()
+
+#     # First, check for duplicate columns between photometry_slice and video_eye1_slice
+#     # If any, remove duplicates from video_eye1_slice
+#     overlap = set(photometry_slice.columns) & set(video_eye1_slice.columns)
+#     if overlap:
+#         video_eye1_slice = video_eye1_slice.drop(columns=list(overlap))
+
+#     dfs_to_merge.append(video_eye1_slice)
+
+# if video_eye2_df is not None:
+#     video_eye2_slice = video_eye2_df.loc[(video_eye2_df.index >= t0) & (video_eye2_df.index <= t1)].copy()
+
+#     # Check for duplicate columns with all existing dfs
+#     existing_cols = set()
+#     for df in dfs_to_merge:
+#         existing_cols.update(df.columns)
+#     overlap = existing_cols & set(video_eye2_slice.columns)
+#     if overlap:
+#         video_eye2_slice = video_eye2_slice.drop(columns=list(overlap))
+
+#     dfs_to_merge.append(video_eye2_slice)
+
+# # Merge (outer join on index)
+# if len(dfs_to_merge) > 1:
+#     plot_df = pd.concat(dfs_to_merge, axis=1)
+# else:
+#     plot_df = dfs_to_merge[0]
+# plot_df = plot_df.loc[(plot_df.index >= t0) & (plot_df.index <= t1)]
+
+# # Store original X_eye2 before flipping (for combined plot)
+# if "Ellipse.Center.X_eye2" in plot_df.columns:
+#     plot_df["Ellipse.Center.X_eye2_original"] = plot_df["Ellipse.Center.X_eye2"].copy()
+
+# # Flip the sign of Ellipse.Center.X_eye2 (positive becomes negative)
+# if "Ellipse.Center.X_eye2" in plot_df.columns:
+#     plot_df["Ellipse.Center.X_eye2"] = -plot_df["Ellipse.Center.X_eye2"]
+
+# # Calculate the actual sampling interval for filtering in Hz
+# if len(plot_df.index) > 1:
+#     dt = plot_df.index.to_series().diff().dropna().median().total_seconds()
+#     fs = 1.0 / dt
+# else:
+#     raise ValueError("Not enough data points in selected window for filtering.")
+
+# # Filtering helpers
+# def butter_lowpass_filter(data, cutoff, fs, order=3):
+#     nyq = 0.5 * fs
+#     if cutoff >= nyq:
+#         cutoff = nyq * 0.99  # avoid error if very low- or downsampled
+#     normal_cutoff = cutoff / nyq
+#     b, a = scipy.signal.butter(order, normal_cutoff, btype='low', analog=False)
+#     return scipy.signal.filtfilt(b, a, data)
+
+# # Apply 5 Hz cutoff to Ellipse.Center.X_eye1, Ellipse.Center.X_eye2, and 1 Hz to Pupil.Diameter_eye1
+# filtered_columns = {
+#     "Ellipse.Center.X_eye1": {"cutoff": 5},
+#     "Ellipse.Center.X_eye2": {"cutoff": 5},
+#     "Ellipse.Center.X_eye2_original": {"cutoff": 5},
+#     "Pupil.Diameter_eye1": {"cutoff": 1},
+# }
+
+# # Determine which columns are present
+# cols_found = []
+# seen = set()
+# for col in columns_to_plot:
+#     if col in plot_df.columns and col not in seen:
+#         cols_found.append(col)
+#         seen.add(col)
+# nplots = len(cols_found)
+
+# # Check if we should add a combined X_eye1 + X_eye2 plot
+# add_combined_plot = ("Ellipse.Center.X_eye1" in plot_df.columns and 
+#                      "Ellipse.Center.X_eye2_original" in plot_df.columns)
+# if add_combined_plot:
+#     nplots += 1  # Add one more subplot for combined plot
+
+# # Prepare data for plotting (filtered: specific, others are unfiltered)
+# filtered_plot_df = pd.DataFrame(index=plot_df.index)
+
+# # Create list of all columns to filter (including the original X_eye2)
+# cols_to_filter = cols_found.copy()
+# if "Ellipse.Center.X_eye2_original" in plot_df.columns:
+#     cols_to_filter.append("Ellipse.Center.X_eye2_original")
+
+# for col in cols_to_filter:
+#     if col in filtered_columns:
+#         # Check if enough non-nan to filter
+#         signal_raw = plot_df[col].values
+#         if np.sum(~np.isnan(signal_raw)) >= 10:
+#             # Fill NaN (filtfilt cannot handle NaN), then revert to nan
+#             mask = np.isnan(signal_raw)
+#             mean_val = np.nanmean(signal_raw)
+#             clean_signal = np.copy(signal_raw)
+#             clean_signal[mask] = mean_val
+#             filtered = butter_lowpass_filter(clean_signal, cutoff=filtered_columns[col]["cutoff"], fs=fs, order=3)
+#             filtered[mask] = np.nan
+#         else:
+#             filtered = np.full_like(signal_raw, np.nan)
+#         filtered_plot_df[col] = filtered
+#     else:
+#         filtered_plot_df[col] = plot_df[col].values  # raw/unfiltered for non-filtered columns
+
+# plot_time = (plot_df.index - plot_df.index[0]).total_seconds()
+
+# # 1. Plot filtered traces only (NO raw traces on filtered plot!)
+# # Build subplot titles
+# subplot_titles_list = [f"{col} (filtered)" if col in filtered_columns else col for col in cols_found]
+# if add_combined_plot:
+#     subplot_titles_list.append("X_eye1 + X_eye2 (unflipped, filtered)")
+
+# # Build specs to enable secondary y-axis for the combined plot
+# specs = [[{"secondary_y": False}] for _ in range(len(cols_found))]
+# if add_combined_plot:
+#     specs.append([{"secondary_y": True}])  # Last subplot has secondary y-axis
+
+# fig_filt_only = make_subplots(
+#     rows=nplots, cols=1, shared_xaxes=True, vertical_spacing=0.02,
+#     subplot_titles=subplot_titles_list,
+#     specs=specs
+# )
+
+# # Plot individual traces
+# for i, col in enumerate(cols_found, start=1):
+#     fig_filt_only.add_trace(
+#         go.Scatter(
+#             x=plot_time,
+#             y=filtered_plot_df[col],
+#             mode="lines",
+#             name=f"{col} (filtered)" if col in filtered_columns else col,
+#             line=dict(width=2),  # All lines width 2 for filtered plot
+#             showlegend=False  # Don't show legend for individual traces
+#         ),
+#         row=i, col=1
+#     )
+#     fig_filt_only.update_yaxes(title_text=col, row=i, col=1)
+
+# # Add combined plot of X_eye1 and X_eye2 (unflipped) if both are present
+# if add_combined_plot:
+#     combined_row = len(cols_found) + 1
+    
+#     # Baseline using 0.7 - 4.7 seconds window
+#     baseline_mask = (plot_time >= 2.7) & (plot_time <= 4.7)
+#     x_eye1_data = filtered_plot_df["Ellipse.Center.X_eye1"].values
+#     x_eye2_data = filtered_plot_df["Ellipse.Center.X_eye2_original"].values
+    
+#     # Calculate baselines (mean of 0.7-4.7s window, ignoring NaN)
+#     x_eye1_baseline = np.nanmean(x_eye1_data[baseline_mask])
+#     x_eye2_baseline = np.nanmean(x_eye2_data[baseline_mask])
+    
+#     # Debug: Print baseline values
+#     print(f"X_eye1 baseline: {x_eye1_baseline:.2f}, valid points in window: {np.sum(~np.isnan(x_eye1_data[baseline_mask]))}")
+#     print(f"X_eye2 baseline: {x_eye2_baseline:.2f}, valid points in window: {np.sum(~np.isnan(x_eye2_data[baseline_mask]))}")
+    
+#     # Subtract baselines
+#     x_eye1_baselined = x_eye1_data - x_eye1_baseline
+#     x_eye2_baselined = x_eye2_data - x_eye2_baseline
+    
+#     # Add X_eye1 trace (left axis)
+#     fig_filt_only.add_trace(
+#         go.Scatter(
+#             x=plot_time,
+#             y=x_eye1_baselined,
+#             mode="lines",
+#             name="X_eye1 (baselined)",
+#             line=dict(width=2, color="blue")
+#         ),
+#         row=combined_row, col=1,
+#         secondary_y=False
+#     )
+#     # Add X_eye2 (unflipped) trace (right axis)
+#     fig_filt_only.add_trace(
+#         go.Scatter(
+#             x=plot_time,
+#             y=x_eye2_baselined,
+#             mode="lines",
+#             name="X_eye2 unflipped (baselined)",
+#             line=dict(width=2, color="red")
+#         ),
+#         row=combined_row, col=1,
+#         secondary_y=True
+#     )
+    
+#     # Calculate symmetric y-axis ranges so zero is aligned
+#     x_eye1_max = np.nanmax(np.abs(x_eye1_baselined))
+#     x_eye2_max = np.nanmax(np.abs(x_eye2_baselined))
+    
+#     # Update primary y-axis (left, X_eye1) with symmetric range
+#     fig_filt_only.update_yaxes(title_text="X_eye1 Δ (px)", title_font=dict(color="blue"), 
+#                                 tickfont=dict(color="blue"), 
+#                                 range=[-x_eye1_max, x_eye1_max],
+#                                 row=combined_row, col=1, secondary_y=False)
+    
+#     # Update secondary y-axis (right, X_eye2) with symmetric range
+#     fig_filt_only.update_yaxes(title_text="X_eye2 Δ (px)", title_font=dict(color="red"), 
+#                                 tickfont=dict(color="red"),
+#                                 range=[-x_eye2_max, x_eye2_max],
+#                                 row=combined_row, col=1, secondary_y=True)
+
+# fig_filt_only.update_layout(
+#     height=220 * nplots + 100,
+#     title=f"Mouse {mouse_to_plot}: Filtered signals only ({t0} to {t1})",
+#     showlegend=True,  # Show legend for combined plot
+#     xaxis_title="Time since window start (s)"
+# )
+
+# import plotly.io as pio
+
+# if not isinstance(data_path, pathlib.Path):
+#     data_path = pathlib.Path(data_path)
+# save_path_filt_only = data_path / "Example_saccades_filtered_only_longer_window.svg"
+
+# try:
+#     fig_filt_only.write_image(str(save_path_filt_only), format="svg")
+#     print(f"SVG filtered-only plot saved to: {save_path_filt_only}")
+# except ValueError as err:
+#     print(f"⚠️ Problem saving SVG (filtered-only) with plotly's kaleido: {err}", file=sys.stderr)
+#     html_save_path_filt_only = save_path_filt_only.with_suffix('.html')
+#     fig_filt_only.write_html(str(html_save_path_filt_only))
+#     print(f"Fallback: Interactive FILTERED-ONLY plot saved to: {html_save_path_filt_only}")
+
+# fig_filt_only.show()
+
+
+
+
 
 # %%
 # DIAGNOSTIC: Plot saccade density across entire session timeseries
 #-------------------------------
 # This plots the saccade boolean column to verify saccades are properly marked
 
-for idx, (data_path, data_dict) in enumerate(loaded_data.items(), start=1):
-    print(f"\n{'='*60}")
-    print(f"SACCADE DENSITY DIAGNOSTIC {idx}/{len(loaded_data)}")
-    print(f"Session: {data_dict['mouse_name']}")
-    print(f"{'='*60}")
+# for idx, (data_path, data_dict) in enumerate(loaded_data.items(), start=1):
+#     print(f"\n{'='*60}")
+#     print(f"SACCADE DENSITY DIAGNOSTIC {idx}/{len(loaded_data)}")
+#     print(f"Session: {data_dict['mouse_name']}")
+#     print(f"{'='*60}")
     
-    df = data_dict["photometry_tracking_encoder_data"]
+#     df = data_dict["photometry_tracking_encoder_data"]
     
-    # Check if saccade columns exist
-    saccade_cols = [col for col in df.columns if 'saccade_event_' in col]
-    if not saccade_cols:
-        print(f"⚠️ No saccade event columns found in this session")
-        continue
+#     # Check if saccade columns exist
+#     saccade_cols = [col for col in df.columns if 'saccade_event_' in col]
+#     if not saccade_cols:
+#         print(f"⚠️ No saccade event columns found in this session")
+#         continue
     
-    # Calculate rolling saccade density (probability in time windows)
-    window_size_s = saccade_bin_size_s  # Use same bin size as analysis
-    sampling_rate = 1000  # Hz (from common_resampled_rate)
-    window_samples = int(window_size_s * sampling_rate)
+#     # Calculate rolling saccade density (probability in time windows)
+#     window_size_s = saccade_bin_size_s  # Use same bin size as analysis
+#     sampling_rate = 1000  # Hz (from common_resampled_rate)
+#     window_samples = int(window_size_s * sampling_rate)
     
-    fig, axes = plt.subplots(len(saccade_cols), 1, figsize=(14, 4*len(saccade_cols)), sharex=True)
-    if len(saccade_cols) == 1:
-        axes = [axes]
+#     fig, axes = plt.subplots(len(saccade_cols), 1, figsize=(14, 4*len(saccade_cols)), sharex=True)
+#     if len(saccade_cols) == 1:
+#         axes = [axes]
     
-    for ax, col in zip(axes, saccade_cols):
-        # Calculate rolling saccade probability (proportion of samples with saccades in window)
-        saccade_bool = df[col].astype(float)  # Convert True/False to 1/0
-        rolling_prob = saccade_bool.rolling(window=window_samples, center=True).mean()
+#     for ax, col in zip(axes, saccade_cols):
+#         # Calculate rolling saccade probability (proportion of samples with saccades in window)
+#         saccade_bool = df[col].astype(float)  # Convert True/False to 1/0
+#         rolling_prob = saccade_bool.rolling(window=window_samples, center=True).mean()
         
-        # Calculate rolling saccade rate (Hz)
-        rolling_count = saccade_bool.rolling(window=window_samples, center=True).sum()
-        rolling_rate = rolling_count / window_size_s
+#         # Calculate rolling saccade rate (Hz)
+#         rolling_count = saccade_bool.rolling(window=window_samples, center=True).sum()
+#         rolling_rate = rolling_count / window_size_s
         
-        # Convert index to seconds for plotting
-        time_seconds = (df.index - df.index[0]).total_seconds()
+#         # Convert index to seconds for plotting
+#         time_seconds = (df.index - df.index[0]).total_seconds()
         
-        # Plot probability
-        ax_prob = ax
-        ax_prob.plot(time_seconds, rolling_prob, color='blue', linewidth=1, label=f'{col} (probability)')
-        ax_prob.set_ylabel(f'Saccade Probability\n({window_size_s*1000:.0f}ms bins)', color='blue')
-        ax_prob.tick_params(axis='y', labelcolor='blue')
-        ax_prob.set_ylim(0, 1)
-        ax_prob.grid(True, alpha=0.3)
+#         # Plot probability
+#         ax_prob = ax
+#         ax_prob.plot(time_seconds, rolling_prob, color='blue', linewidth=1, label=f'{col} (probability)')
+#         ax_prob.set_ylabel(f'Saccade Probability\n({window_size_s*1000:.0f}ms bins)', color='blue')
+#         ax_prob.tick_params(axis='y', labelcolor='blue')
+#         ax_prob.set_ylim(0, 1)
+#         ax_prob.grid(True, alpha=0.3)
         
-        # Plot rate on secondary axis
-        ax_rate = ax.twinx()
-        ax_rate.plot(time_seconds, rolling_rate, color='red', linewidth=1, alpha=0.7, label=f'{col} (rate Hz)')
-        ax_rate.set_ylabel('Saccade Rate (Hz)', color='red')
-        ax_rate.tick_params(axis='y', labelcolor='red')
-        ax_rate.set_ylim(0, max(rolling_rate.max() * 1.2, 50))  # Set max to at least 50 Hz
+#         # Plot rate on secondary axis
+#         ax_rate = ax.twinx()
+#         ax_rate.plot(time_seconds, rolling_rate, color='red', linewidth=1, alpha=0.7, label=f'{col} (rate Hz)')
+#         ax_rate.set_ylabel('Saccade Rate (Hz)', color='red')
+#         ax_rate.tick_params(axis='y', labelcolor='red')
+#         ax_rate.set_ylim(0, max(rolling_rate.max() * 1.2, 50))  # Set max to at least 50 Hz
         
-        # Statistics
-        total_saccades = int(saccade_bool.sum())
-        mean_prob = rolling_prob.mean()
-        mean_rate = rolling_rate.mean()
+#         # Statistics
+#         total_saccades = int(saccade_bool.sum())
+#         mean_prob = rolling_prob.mean()
+#         mean_rate = rolling_rate.mean()
         
-        ax.set_title(f'{col}: {total_saccades} saccades | Mean prob: {mean_prob:.3f} | Mean rate: {mean_rate:.2f} Hz')
-        ax.legend(loc='upper left')
-        ax_rate.legend(loc='upper right')
+#         ax.set_title(f'{col}: {total_saccades} saccades | Mean prob: {mean_prob:.3f} | Mean rate: {mean_rate:.2f} Hz')
+#         ax.legend(loc='upper left')
+#         ax_rate.legend(loc='upper right')
     
-    axes[-1].set_xlabel('Time (seconds)')
-    fig.suptitle(f"Saccade Density Diagnostic - {data_dict['mouse_name']}", fontsize=14, fontweight='bold')
-    plt.tight_layout()
+#     axes[-1].set_xlabel('Time (seconds)')
+#     fig.suptitle(f"Saccade Density Diagnostic - {data_dict['mouse_name']}", fontsize=14, fontweight='bold')
+#     plt.tight_layout()
     
-    # Save diagnostic plot
-    diagnostic_path = data_path.parent / f"{data_dict['mouse_name']}_saccade_density_diagnostic.pdf"
-    plt.savefig(diagnostic_path, dpi=150, bbox_inches='tight')
-    print(f"✅ Saved diagnostic plot: {diagnostic_path}")
-    plt.close(fig)
+#     # Save diagnostic plot
+#     diagnostic_path = data_path.parent / f"{data_dict['mouse_name']}_saccade_density_diagnostic.pdf"
+#     plt.savefig(diagnostic_path, dpi=150, bbox_inches='tight')
+#     print(f"✅ Saved diagnostic plot: {diagnostic_path}")
+#     plt.close(fig)
     
-    # Print summary statistics
-    for col in saccade_cols:
-        saccade_bool = df[col].astype(float)
-        total_saccades = int(saccade_bool.sum())
-        total_duration_s = (df.index[-1] - df.index[0]).total_seconds()
-        overall_rate = total_saccades / total_duration_s if total_duration_s > 0 else 0
-        print(f"\n{col} summary:")
-        print(f"  Total saccades: {total_saccades}")
-        print(f"  Session duration: {total_duration_s:.1f} seconds ({total_duration_s/60:.1f} minutes)")
-        print(f"  Overall saccade rate: {overall_rate:.2f} Hz")
+#     # Print summary statistics
+#     for col in saccade_cols:
+#         saccade_bool = df[col].astype(float)
+#         total_saccades = int(saccade_bool.sum())
+#         total_duration_s = (df.index[-1] - df.index[0]).total_seconds()
+#         overall_rate = total_saccades / total_duration_s if total_duration_s > 0 else 0
+#         print(f"\n{col} summary:")
+#         print(f"  Total saccades: {total_saccades}")
+#         print(f"  Session duration: {total_duration_s:.1f} seconds ({total_duration_s/60:.1f} minutes)")
+#         print(f"  Overall saccade rate: {overall_rate:.2f} Hz")
 
 
 # %%
