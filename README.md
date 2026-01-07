@@ -75,6 +75,8 @@ pip install pympler # usefull for monitoring memory during dev
 #### 6. Install yet other packages
 Some required packages will need to be installed manually when you run into package not found errors. 
 
+## Recorded data streams 
+[here](https://docs.google.com/spreadsheets/d/1P-x9D8tPEta5BiX8FPnXMCIhDHmawuJMk9X9icllRH0/edit?gid=926392599#gid=926392599)
 
 ## Folder structure conventions at acquisition 
 - CohortX (numbered cohort of animals) 
