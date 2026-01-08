@@ -3,6 +3,7 @@
 This is the general pipeline for loading, preprocessing, aligning, quality checking and applying basic analysis to the data recorded on the <a href=https://ranczlab.github.io/RPM/>RPM</a> (e.g. running) using <a href=https://harp-tech.org/index.html>HARP devices</a>, eye movements data derived from <a href=https://sleap.ai/>SLEAP</a> and neural data (fiber photometry, Neuropixels).
 
 The definitions and parameters of the data streams are [here](https://docs.google.com/spreadsheets/d/1P-x9D8tPEta5BiX8FPnXMCIhDHmawuJMk9X9icllRH0/edit?usp=drive_link).
+The general logic of the hardware, software and experimental setup is [here](https://github.com/ranczlab/vestibular_vr_pipeline/blob/main/setup.md).
 
 
 ## Installation
