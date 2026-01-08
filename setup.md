@@ -1,16 +1,20 @@
+# INGREDIENTS
+
 ## [BONSAI-RX](https://bonsai-rx.org/)
 This is the software environment used for hardware and experimental control as well as recording.  
 :information_source: [Discord channel](https://discord.com/channels/722881880122327101/727928858757562430) for support and general discussions.
 
 ### vestibular-VR SETUP
 The repo is [here](https://github.com/neurogears/vestibular-vr), managed by NeuroGears.  
-This contains all experimental Bonsai workflows and development. Experimental protocol schemas are .yaml files, living in the [src](https://github.com/neurogears/vestibular-vr/tree/main/src) folder. 
+This contains all experimental Bonsai workflows and development.  
+Bonsai workflows and experimental protocol schemas (.yaml files) live in the [src](https://github.com/neurogears/vestibular-vr/tree/main/src) folder. 
 
 ### [BonVision](https://bonvision.github.io/)  
 A Bonsai package for generating VR visual scenes. Can create simple objects and textures. Can take blender or CAD (OBJ) scenes for more complex scenarios.  
   
-## HARP
-This is the [hardware platform](https://harp-tech.org/articles/about.html) used for control and most recordings.  
+## [HARP](https://harp-tech.org/articles/about.html)
+This is the hardware platform used for control and most recordings.  
+Uses micro-controller based devices for I/O (RPM, lick, load cells, etc...) leveraging a synchronised clock. Sends time-stamped events to Bonsai.  
   
 ### [Clock synchroniser](https://github.com/harp-tech/device.clocksynchronizer)
 Used in generator mode to syncronise accross HARP devices.  
@@ -28,7 +32,15 @@ This is the hardware platform used for neuropixels recording and other analogue 
 :information_source: [Discord channel](https://discord.com/channels/932637696503971850/946378096288882718) for support and general discussions.
 [Bonsai package](https://github.com/open-ephys/bonsai-onix1)
 
-
+# SETUP logic
+  
+Experimental schema .yaml file sets workflow parameters for the Bonsai workflow.  
+Bonsai computer <-> H1 on platform <-> optical flow sensor, camera trigger, lick, reward valves  
+Bonsai computer <-> H2 off platform <->  motor, encoder, homing sensor  
+Bonsai computer -> photometry syncronisation signal via ONIX  
+Bonsai computer -> visual VR to 4 off-platform screens    
+Bonsai computer <- photodiode for VR timing via ONIX    
+Bonsai computer <- NPX recordings via ONIX  
 
 
 
