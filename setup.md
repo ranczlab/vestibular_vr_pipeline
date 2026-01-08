@@ -10,15 +10,8 @@ The repo is [here](https://github.com/neurogears/vestibular-vr), managed by Neur
   
 # HARP
 This is the [hardware platform](https://harp-tech.org/articles/about.html) used for control and most recordings.  
-
-
+## Clock synchroniser  
   
-# ONIX
-This is the [hardware platform](https://open-ephys.org/onix) used for neuropixels recordings.  
-:information_source: [Discord channel](https://discord.com/channels/932637696503971850/946378096288882718) for support and general discussions.
-
-
-
 
 ## H1 board
 HARP board located on the rotating platform with multiple input and output registers.  
@@ -29,5 +22,16 @@ repo [here](https://github.com/harp-tech/device.vestibularH1)
 HARP board located off the rotating platform with multiple input and output registers, chiefly responsible for motor control.  
 repo [here](https://github.com/harp-tech/device.vestibularH2)  
 [list of registers](https://github.com/harp-tech/device.vestibularH2/blob/main/Firmware/VestibularVrH2/registers.xls)  
+
+
+
+
+  
+# ONIX
+This is the [hardware platform](https://open-ephys.org/onix) used for neuropixels recordings.  
+:information_source: [Discord channel](https://discord.com/channels/932637696503971850/946378096288882718) for support and general discussions.
+
+
+
 
 
