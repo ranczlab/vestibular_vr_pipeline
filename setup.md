@@ -2,6 +2,9 @@
 This is the [software environment](https://bonsai-rx.org/) used for hardware and experimental control as well as recording.  
 :information_source: [Discord channel](https://discord.com/channels/722881880122327101/727928858757562430) for support and general discussions.
 
+## vestibular-VR SETUP
+The repo is [here](https://github.com/neurogears/vestibular-vr), managed by NeuroGears.  
+
 ## BonVision  
 
   
@@ -15,9 +18,7 @@ This is the [hardware platform](https://open-ephys.org/onix) used for neuropixel
 :information_source: [Discord channel](https://discord.com/channels/932637696503971850/946378096288882718) for support and general discussions.
 
 
-  
-# SETUP
-The repo is [here](https://github.com/neurogears/vestibular-vr), managed by NeuroGears.  
+
 
 ## H1 board
 HARP board located on the rotating platform with multiple input and output registers.  
@@ -28,4 +29,5 @@ repo [here](https://github.com/harp-tech/device.vestibularH1)
 HARP board located off the rotating platform with multiple input and output registers, chiefly responsible for motor control.  
 repo [here](https://github.com/harp-tech/device.vestibularH2)  
 [list of registers](https://github.com/harp-tech/device.vestibularH2/blob/main/Firmware/VestibularVrH2/registers.xls)  
+
 
