@@ -27,9 +27,11 @@ conda install pip
 ```
 git clone https://github.com/SainsburyWellcomeCentre/aeon_mecha.git
 ```
-12/01/2026 : aeon_mecha repository not working (.io missing)
+12/01/2026 : aeon_mecha repository not working (.io missing) 
 
-Instead download the aeon_mecha file from [here](https://drive.google.com/file/d/1m7oQGKcmLhSkHo71kzHqD6FFXzmXnril/view?usp=sharing) and put it in your home directory
+Instead download the aeon_mecha folder from [here](https://drive.google.com/file/d/1m7oQGKcmLhSkHo71kzHqD6FFXzmXnril/view?usp=sharing) and put it in your home directory 
+
+You may want to take only the aeon_mecha folder inside the first aeon_mecha folder without the __MACOSX folder, or re-do the 'cd aeon_mecha' step for the install to work. Make sure you only have one aeon_mecha folder in your home directory. 
 
 Then proceed
 ```
@@ -56,9 +58,11 @@ cd ~
 conda install python=3.11
 git clone https://github.com/SainsburyWellcomeCentre/aeon_mecha.git
 ```
-12/01/2026 : aeon_mecha repository not working (.io missing)
+12/01/2026 : aeon_mecha repository not working (.io missing) 
 
-Instead download the aeon_mecha file from [here](https://drive.google.com/file/d/1m7oQGKcmLhSkHo71kzHqD6FFXzmXnril/view?usp=sharing) and put it in your home directory
+Instead download the aeon_mecha file from [here](https://drive.google.com/file/d/1m7oQGKcmLhSkHo71kzHqD6FFXzmXnril/view?usp=sharing) and put it in your home directory. 
+
+You may want to take only the aeon_mecha folder inside the first aeon_mecha folder without the __MACOSX folder, or re-do the 'cd aeon_mecha' step for the install to work. Make sure you only have one aeon_mecha folder in your home directory. 
 
 Then proceed
 ```
