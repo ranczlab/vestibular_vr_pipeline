@@ -28,7 +28,9 @@ conda install pip
 git clone https://github.com/SainsburyWellcomeCentre/aeon_mecha.git
 ```
 12/01/2026 : aeon_mecha repository not working (.io missing)
+
 Instead download the aeon_mecha file from [here](https://drive.google.com/file/d/1m7oQGKcmLhSkHo71kzHqD6FFXzmXnril/view?usp=sharing) and put it in your home directory
+
 Then proceed
 ```
 cd aeon_mecha
@@ -55,7 +57,9 @@ conda install python=3.11
 git clone https://github.com/SainsburyWellcomeCentre/aeon_mecha.git
 ```
 12/01/2026 : aeon_mecha repository not working (.io missing)
+
 Instead download the aeon_mecha file from [here](https://drive.google.com/file/d/1m7oQGKcmLhSkHo71kzHqD6FFXzmXnril/view?usp=sharing) and put it in your home directory
+
 Then proceed
 ```
 cd aeon_mecha
