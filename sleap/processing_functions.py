@@ -870,7 +870,15 @@ def remove_outliers_and_interpolate(video_data, columns_of_interest, outlier_sd_
     }
 
 
-def analyze_instance_score_distribution(video_data, blink_instance_score_threshold, fps, video_label="", debug=False, plot=True):
+def analyze_instance_score_distribution(
+    video_data,
+    blink_instance_score_threshold,
+    fps,
+    video_label="",
+    debug=False,
+    plot=True,
+    threshold_label="Applied threshold",
+):
     """
     Analyze instance score distribution and plot histogram.
     
@@ -879,7 +887,7 @@ def analyze_instance_score_distribution(video_data, blink_instance_score_thresho
     video_data : pd.DataFrame
         Video data with 'instance.score' column
     blink_instance_score_threshold : float
-        Hard threshold for blink detection
+        Threshold used for blink detection
     fps : float
         Frames per second (for time calculations)
     video_label : str
@@ -901,7 +909,7 @@ def analyze_instance_score_distribution(video_data, blink_instance_score_thresho
         plt.figure(figsize=(6, 5))
         plt.hist(video_data['instance.score'].dropna(), bins=30, color='skyblue', edgecolor='black')
         plt.axvline(blink_instance_score_threshold, color='red', linestyle='--', linewidth=2, 
-                    label=f'Hard threshold = {blink_instance_score_threshold}')
+                    label=f'{threshold_label} = {blink_instance_score_threshold}')
         plt.yscale('log')
         plt.title(f"Distribution of instance.score ({video_label})")
         plt.xlabel("instance.score")
@@ -923,7 +931,7 @@ def analyze_instance_score_distribution(video_data, blink_instance_score_thresho
     
     # Always print key stats
     print(f"\n{video_label} - Instance Score Threshold Analysis:")
-    print(f"  Hard threshold: {blink_instance_score_threshold}")
+    print(f"  {threshold_label}: {blink_instance_score_threshold}")
     print(f"  Frames below threshold: {num_low} / {total} ({pct_low:.2f}%)")
     print(f"  Longest consecutive segment: {longest_consecutive} frames", end="")
     if longest_consecutive_ms:
@@ -959,8 +967,14 @@ def analyze_instance_score_distribution(video_data, blink_instance_score_thresho
     }
 
 
-def plot_instance_score_distributions_combined(video_data1, video_data2, blink_instance_score_threshold, 
-                                               has_v1=False, has_v2=False):
+def plot_instance_score_distributions_combined(
+    video_data1,
+    video_data2,
+    blink_instance_score_threshold,
+    has_v1=False,
+    has_v2=False,
+    threshold_label="Applied threshold",
+):
     """
     Plot combined histograms for instance.score distributions (both videos in one figure).
     
@@ -970,8 +984,9 @@ def plot_instance_score_distributions_combined(video_data1, video_data2, blink_i
         Video data 1 with 'instance.score' column
     video_data2 : pd.DataFrame or None
         Video data 2 with 'instance.score' column
-    blink_instance_score_threshold : float
-        Hard threshold for blink detection
+    blink_instance_score_threshold : float or dict
+        Threshold for blink detection. Can be a single float for both plots or
+        a dict with per-video values, e.g. {"VideoData1": 3.7, "VideoData2": 3.4}
     has_v1 : bool
         Whether video_data1 exists and should be plotted
     has_v2 : bool
@@ -983,11 +998,24 @@ def plot_instance_score_distributions_combined(video_data1, video_data2, blink_i
     plt.figure(figsize=(12, 5))
     plot_index = 1
     
+    if isinstance(blink_instance_score_threshold, dict):
+        threshold_v1 = blink_instance_score_threshold.get("VideoData1")
+        threshold_v2 = blink_instance_score_threshold.get("VideoData2")
+    else:
+        threshold_v1 = blink_instance_score_threshold
+        threshold_v2 = blink_instance_score_threshold
+
     if has_v1:
         plt.subplot(1, 2 if has_v2 else 1, plot_index)
         plt.hist(video_data1['instance.score'].dropna(), bins=30, color='skyblue', edgecolor='black')
-        plt.axvline(blink_instance_score_threshold, color='red', linestyle='--', linewidth=2, 
-                    label=f'Hard threshold = {blink_instance_score_threshold}')
+        if threshold_v1 is not None:
+            plt.axvline(
+                threshold_v1,
+                color='red',
+                linestyle='--',
+                linewidth=2,
+                label=f'{threshold_label} = {threshold_v1}',
+            )
         plt.yscale('log')
         plt.title("Distribution of instance.score (VideoData1)")
         plt.xlabel("instance.score")
@@ -998,8 +1026,14 @@ def plot_instance_score_distributions_combined(video_data1, video_data2, blink_i
     if has_v2:
         plt.subplot(1, 2 if has_v1 else 1, plot_index)
         plt.hist(video_data2['instance.score'].dropna(), bins=30, color='salmon', edgecolor='black')
-        plt.axvline(blink_instance_score_threshold, color='red', linestyle='--', linewidth=2,
-                    label=f'Hard threshold = {blink_instance_score_threshold}')
+        if threshold_v2 is not None:
+            plt.axvline(
+                threshold_v2,
+                color='red',
+                linestyle='--',
+                linewidth=2,
+                label=f'{threshold_label} = {threshold_v2}',
+            )
         plt.yscale('log')
         plt.title("Distribution of instance.score (VideoData2)")
         plt.xlabel("instance.score")
