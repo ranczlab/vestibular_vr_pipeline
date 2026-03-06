@@ -20,7 +20,7 @@
 # - input contract + loading of selected eye parquet from `1_2` metadata
 # - detection + k-sweep parameter block
 # - preprocessing (`X_raw`, `X_smooth`, `vel_x_smooth`)
-# - adaptive `k` sweep (coarse + fine) with heuristic selection
+# - adaptive single-pass `k` sweep with heuristic selection
 # - final detection run at selected `k`
 # - optional debug plot of `Ellipse.Center.X`
 #
@@ -40,9 +40,20 @@ from plotly.subplots import make_subplots
 # Cell 1: Input contract + load selected eye data from 1_2 metadata
 ##########################################################################
 
+# good S/N
 data_path = Path(
-    "/Users/rancze/Documents/Data/vestVR/20241125_Cohort1_rotation/Visual_mismatch_day4/B6J2718-2024-12-11T13-49-13"
+    "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4/B6J2783-2025-04-28T14-57-30"
 )
+
+# #bad S/N
+# data_path = Path(
+#     "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4/B6J2782-2025-04-28T14-22-03"
+# )
+
+# data_path = Path(
+#     "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4/B6J2781-2025-04-28T13-45-40"
+# )
+
 
 debug = False
 
@@ -146,25 +157,160 @@ else:
 # Cell 2: Detection and k-sweep parameters
 ##########################################################################
 
-k = 4.5
-refractory_period_s = 0.1
-peak_width_time_s = 0.005
-onset_offset_fraction = 0.2
+# mostly tweek:
+# k_overdetect_offset for overdetection (often needed high for transient detection)
+# for transient removal: refractory_period_s, transient_pair_max_net_displacement_px
+# for amplitude filtering: min_saccade_amplitude_px
 
-pre_window_s = 0.15
-post_window_s = 0.5
+# --- Signal preprocessing ---
+smoothing_window_s = 0.08  # median smoothing window before velocity calculation
 
-baseline_window_start_s = -0.06
-baseline_window_end_s = -0.02
+# --- Velocity-threshold event detection ---
+peak_width_time_s = 0.005  # minimum peak width for velocity peaks
+onset_fraction = (
+    0.2  # for saccade duration, start boundary when |vel| falls below this * threshold
+)
+offset_fraction = (
+    0.1  # for saccade duration, end boundary when |vel| falls below this * threshold
+)
 
-min_segment_duration_s = 0.2
-min_saccade_amplitude_px = 3.0
-k_overdetect_offset = -0.3
-stability_guardrail_drop = 5.0
-smoothing_window_s = 0.08
-plot_detection_qc = True
+# --- k-sweep search space + scoring ---
+fine_step = 0.1  # k-grid resolution
+k_hard_min = 2.0  # lower bound for tested/selected k
+k_hard_max = 4.0  # upper bound for tested/selected k
+overdetect_bias_strength = 1  # >0 favors slightly lower k (more detections)
+k_overdetect_offset = (
+    -0.25
+)  # extra push toward lower k after heuristic selection for strong overdetection
+stability_guardrail_drop = 5.0  # max allowed stability loss after k offset
+k_fallback = 4  # legacy fallback if sweep cannot produce a valid suggestion
+
+# --- Post-detection filtering ---
+refractory_period_s = 0.2  # to detect transients, transient-pair ISI window (not used in find_peaks spacing)
+same_direction_dedup_window_s = (
+    refractory_period_s  # collapse close same-direction duplicates
+)
+transient_pair_max_net_displacement_px = 5.0  # max pair net displacement to classify close opposite-direction transient, i.e. does the transient come back to baseline?
+min_saccade_amplitude_px = 4.0  # minimum amplitude to keep final event
+
+# --- Optional downstream analysis/QC controls ---
+pre_window_s = 0.15  # peri-event snippet window before event time
+post_window_s = 0.5  # peri-event snippet window after event time
+baseline_window_start_s = -0.06  # baseline window start (relative to event)
+baseline_window_end_s = -0.02  # baseline window end (relative to event)
+plot_detection_qc = True  # render Cell 8/9 QC figures
+
+# If metadata already has saved parameters, override defaults from this cell.
+loaded_params = metadata.get("saccade_detection_parameters", {})
+if isinstance(loaded_params, dict) and len(loaded_params) > 0:
+
+    def _as_bool(value):
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+        return bool(value)
+
+    def _param_or_default(key, default, caster):
+        raw_value = loaded_params.get(key, default)
+        try:
+            return caster(raw_value)
+        except (TypeError, ValueError):
+            return default
+
+    # Signal preprocessing
+    smoothing_window_s = _param_or_default(
+        "smoothing_window_s", smoothing_window_s, float
+    )
+    # Velocity-threshold event detection
+    peak_width_time_s = _param_or_default("peak_width_time_s", peak_width_time_s, float)
+    onset_fraction = _param_or_default("onset_fraction", onset_fraction, float)
+    offset_fraction = _param_or_default("offset_fraction", offset_fraction, float)
+    # k-sweep search space + scoring
+    fine_step = _param_or_default("fine_step", fine_step, float)
+    k_hard_min = _param_or_default("k_hard_min", k_hard_min, float)
+    k_hard_max = _param_or_default("k_hard_max", k_hard_max, float)
+    overdetect_bias_strength = _param_or_default(
+        "overdetect_bias_strength", overdetect_bias_strength, float
+    )
+    k_overdetect_offset = _param_or_default(
+        "k_overdetect_offset", k_overdetect_offset, float
+    )
+    stability_guardrail_drop = _param_or_default(
+        "stability_guardrail_drop", stability_guardrail_drop, float
+    )
+    k_fallback = _param_or_default("k_fallback", k_fallback, float)
+    # Post-detection filtering
+    refractory_period_s = _param_or_default(
+        "refractory_period_s", refractory_period_s, float
+    )
+    same_direction_dedup_window_s = _param_or_default(
+        "same_direction_dedup_window_s", same_direction_dedup_window_s, float
+    )
+    transient_pair_max_net_displacement_px = _param_or_default(
+        "transient_pair_max_net_displacement_px",
+        transient_pair_max_net_displacement_px,
+        float,
+    )
+    min_saccade_amplitude_px = _param_or_default(
+        "min_saccade_amplitude_px", min_saccade_amplitude_px, float
+    )
+    # Optional downstream analysis/QC controls
+    pre_window_s = _param_or_default("pre_window_s", pre_window_s, float)
+    post_window_s = _param_or_default("post_window_s", post_window_s, float)
+    baseline_window_start_s = _param_or_default(
+        "baseline_window_start_s", baseline_window_start_s, float
+    )
+    baseline_window_end_s = _param_or_default(
+        "baseline_window_end_s", baseline_window_end_s, float
+    )
+    plot_detection_qc = _param_or_default("plot_detection_qc", plot_detection_qc, _as_bool)
+
+    print("ℹ️ Loaded Cell 2 parameter overrides from metadata.")
 
 print("✅ Detection and k-sweep parameters initialized")
+
+
+# %%
+# Cell 2b: Save Cell 2 parameters into metadata
+##########################################################################
+cell2_params = {
+    # Signal preprocessing
+    "smoothing_window_s": float(smoothing_window_s),
+    # Velocity-threshold event detection
+    "peak_width_time_s": float(peak_width_time_s),
+    "onset_fraction": float(onset_fraction),
+    "offset_fraction": float(offset_fraction),
+    # k-sweep search space + scoring
+    "fine_step": float(fine_step),
+    "k_hard_min": float(k_hard_min),
+    "k_hard_max": float(k_hard_max),
+    "overdetect_bias_strength": float(overdetect_bias_strength),
+    "k_overdetect_offset": float(k_overdetect_offset),
+    "stability_guardrail_drop": float(stability_guardrail_drop),
+    "k_fallback": float(k_fallback),
+    # Post-detection filtering
+    "refractory_period_s": float(refractory_period_s),
+    "same_direction_dedup_window_s": float(same_direction_dedup_window_s),
+    "transient_pair_max_net_displacement_px": float(
+        transient_pair_max_net_displacement_px
+    ),
+    "min_saccade_amplitude_px": float(min_saccade_amplitude_px),
+    # Optional downstream analysis/QC controls
+    "pre_window_s": float(pre_window_s),
+    "post_window_s": float(post_window_s),
+    "baseline_window_start_s": float(baseline_window_start_s),
+    "baseline_window_end_s": float(baseline_window_end_s),
+    "plot_detection_qc": bool(plot_detection_qc),
+}
+
+metadata["saccade_detection_parameters"] = cell2_params
+with open(metadata_path, "w") as f:
+    json.dump(metadata, f, indent=2)
+
+print(f"✅ Saved Cell 2 parameters to metadata: {metadata_path}")
 
 
 # %%
@@ -215,24 +361,93 @@ print("ℹ️ Velocity summary prepared for k-sweep detection workflow.")
 
 
 # %%
-# Cell 5: k-value sweep (coarse -> fine) for adaptive threshold tuning
+# Cell 5: Single-pass k-value sweep for adaptive threshold tuning
 ##########################################################################
-k_coarse_values = np.arange(2.5, 7.0 + 1e-9, 0.5)
-near_refractory_factor = 1.2  # "near" refractory if ISI <= refractory * factor
-fine_step = 0.1
-fine_half_range = 0.5
-overdetect_bias_strength = 1  # >0 favors slightly lower k (more detections)
-near_refractory_soft_cap_pct = 20.0  # strong penalty if exceeded
-k_hard_min = 2.0
-k_hard_max = 8.0
-max_fine_expansions = 4
+k_sweep_values = np.arange(2.5, 7.0 + 1e-9, fine_step)
+
+# Enforce hard bounds for sweep grids.
+k_sweep_values = k_sweep_values[
+    (k_sweep_values >= k_hard_min) & (k_sweep_values <= k_hard_max)
+]
 
 v = df_work["vel_x_smooth"].to_numpy()
 x = df_work["X_raw"].to_numpy()
 t = df_work["Seconds"].to_numpy()
 f = df_work["frame_idx"].to_numpy()
 peak_width_points = max(1, int(round(peak_width_time_s * fps)))
-refractory_points = max(1, int(round(refractory_period_s * fps)))
+
+
+def _split_transient_pairs(
+    events_df: pd.DataFrame, max_isi_s: float, max_net_displacement_px: float
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split events into kept vs transient-pair filtered (dropped) events."""
+    if len(events_df) < 2:
+        return events_df.reset_index(drop=True), pd.DataFrame(columns=events_df.columns)
+
+    times = events_df["time"].to_numpy(dtype=float)
+    directions = events_df["direction"].to_numpy()
+    starts = events_df["start_position"].to_numpy(dtype=float)
+    ends = events_df["end_position"].to_numpy(dtype=float)
+    keep_mask = np.ones(len(events_df), dtype=bool)
+
+    i = 0
+    while i < len(events_df) - 1:
+        isi = times[i + 1] - times[i]
+        opposite_direction = directions[i] != directions[i + 1]
+        pair_net_disp = abs(ends[i + 1] - starts[i])
+        if (
+            isi <= max_isi_s
+            and opposite_direction
+            and pair_net_disp <= max_net_displacement_px
+        ):
+            keep_mask[i] = False
+            keep_mask[i + 1] = False
+            i += 2
+            continue
+        i += 1
+
+    kept_df = events_df.loc[keep_mask].reset_index(drop=True)
+    dropped_df = events_df.loc[~keep_mask].reset_index(drop=True)
+    return kept_df, dropped_df
+
+
+def _dedupe_same_direction_events(
+    events_df: pd.DataFrame, min_isi_s: float
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Keep strongest event within close same-direction clusters."""
+    if len(events_df) < 2:
+        return events_df.reset_index(drop=True), pd.DataFrame(columns=events_df.columns)
+
+    times = events_df["time"].to_numpy(dtype=float)
+    directions = events_df["direction"].to_numpy()
+    peak_abs_vel = np.abs(events_df["velocity"].to_numpy(dtype=float))
+    keep_mask = np.ones(len(events_df), dtype=bool)
+
+    i = 0
+    while i < len(events_df):
+        cluster_indices = [i]
+        j = i + 1
+        while (
+            j < len(events_df)
+            and directions[j] == directions[j - 1]
+            and (times[j] - times[j - 1]) <= min_isi_s
+        ):
+            cluster_indices.append(j)
+            j += 1
+
+        if len(cluster_indices) > 1:
+            strongest_idx = cluster_indices[
+                int(np.argmax(peak_abs_vel[cluster_indices]))
+            ]
+            for idx in cluster_indices:
+                if idx != strongest_idx:
+                    keep_mask[idx] = False
+
+        i = j
+
+    kept_df = events_df.loc[keep_mask].reset_index(drop=True)
+    dropped_df = events_df.loc[~keep_mask].reset_index(drop=True)
+    return kept_df, dropped_df
 
 
 def _events_for_k(k_value: float) -> tuple[pd.DataFrame, float, float, float]:
@@ -244,13 +459,11 @@ def _events_for_k(k_value: float) -> tuple[pd.DataFrame, float, float, float]:
     pos_peaks_k, _ = find_peaks(
         v,
         height=vel_thresh_k,
-        distance=refractory_points,
         width=peak_width_points,
     )
     neg_peaks_k, _ = find_peaks(
         -v,
         height=vel_thresh_k,
-        distance=refractory_points,
         width=peak_width_points,
     )
 
@@ -260,13 +473,13 @@ def _events_for_k(k_value: float) -> tuple[pd.DataFrame, float, float, float]:
             start_idx = int(peak_idx)
             end_idx = int(peak_idx)
 
-            while (
-                start_idx > 0
-                and abs(v[start_idx]) > vel_thresh_k * onset_offset_fraction
-            ):
+            while start_idx > 0 and abs(v[start_idx]) > vel_thresh_k * onset_fraction:
                 start_idx -= 1
 
-            while end_idx < len(v) - 1 and abs(v[end_idx]) > vel_thresh_k:
+            while (
+                end_idx < len(v) - 1
+                and abs(v[end_idx]) > vel_thresh_k * offset_fraction
+            ):
                 end_idx += 1
             if end_idx < len(v) - 1:
                 end_idx += 1
@@ -303,18 +516,25 @@ def _events_for_k(k_value: float) -> tuple[pd.DataFrame, float, float, float]:
 
 
 def _evaluate_k_grid(k_values: np.ndarray, label: str) -> pd.DataFrame:
+    if len(k_values) == 0:
+        return pd.DataFrame(
+            columns=[
+                "sweep",
+                "k",
+                "vel_thresh",
+                "vel_mean",
+                "vel_std",
+                "n_saccades",
+                "median_duration",
+                "median_amplitude",
+                "stability_score",
+            ]
+        )
+
     rows = []
     for kval in k_values:
         events_df, thr, m, s = _events_for_k(float(kval))
         n = len(events_df)
-        isi = np.diff(events_df["time"].to_numpy()) if n >= 2 else np.array([])
-        pct_near_ref = (
-            float(
-                np.mean(isi <= (refractory_period_s * near_refractory_factor)) * 100.0
-            )
-            if len(isi) > 0
-            else 0.0
-        )
         rows.append(
             {
                 "sweep": label,
@@ -323,7 +543,6 @@ def _evaluate_k_grid(k_values: np.ndarray, label: str) -> pd.DataFrame:
                 "vel_mean": float(m),
                 "vel_std": float(s),
                 "n_saccades": int(n),
-                "pct_near_refractory": pct_near_ref,
                 "median_duration": float(events_df["duration"].median())
                 if n > 0
                 else np.nan,
@@ -366,120 +585,61 @@ def _add_composite_score(df_metrics: pd.DataFrame) -> pd.DataFrame:
         return df_metrics
 
     norm = lambda s: (s - s.mean()) / (s.std(ddof=0) + 1e-9)
-    near_ref_penalty = np.clip(
-        (df_metrics["pct_near_refractory"] - near_refractory_soft_cap_pct)
-        / max(near_refractory_soft_cap_pct, 1e-9),
-        a_min=0.0,
-        a_max=None,
-    )
     composite_score = (
         norm(df_metrics["stability_score"])
-        - norm(df_metrics["pct_near_refractory"])
         + overdetect_bias_strength * norm(df_metrics["n_saccades"])
         - 0.25 * norm(df_metrics["k"])
-        - 2.0 * near_ref_penalty
     )
     df_metrics["composite_score"] = composite_score
     return df_metrics
 
 
-coarse_metrics_df = _evaluate_k_grid(k_coarse_values, label="coarse")
-print("✅ Coarse k sweep complete")
+sweep_metrics_df = _evaluate_k_grid(k_sweep_values, label="sweep")
+sweep_metrics_df = _add_composite_score(sweep_metrics_df)
+print("✅ k sweep complete")
 if debug:
-    display(coarse_metrics_df)
+    display(sweep_metrics_df)
 
-# Heuristic coarse-k candidate for fine sweep center.
-if len(coarse_metrics_df) >= 3:
-    coarse_metrics_df = _add_composite_score(coarse_metrics_df)
-    k_coarse_best = float(
-        coarse_metrics_df.loc[coarse_metrics_df["composite_score"].idxmax(), "k"]
-    )
-else:
-    k_coarse_best = float(k)
-
-print(f"Suggested coarse-k center for fine sweep: {k_coarse_best:.2f}")
-
-k_fine_values = np.round(
-    np.arange(
-        k_coarse_best - fine_half_range,
-        k_coarse_best + fine_half_range + 1e-9,
-        fine_step,
-    ),
-    3,
-)
-k_fine_values = k_fine_values[
-    (k_fine_values >= k_hard_min) & (k_fine_values <= k_hard_max)
-]
-fine_metrics_df = _evaluate_k_grid(k_fine_values, label="fine")
-fine_metrics_df = _add_composite_score(fine_metrics_df)
-
-# Adaptive fine-sweep expansion when optimum lands on boundary.
-for _ in range(max_fine_expansions):
-    if len(fine_metrics_df) < 3 or fine_metrics_df["composite_score"].isna().all():
-        break
-
-    idx_best = int(fine_metrics_df["composite_score"].idxmax())
-    k_best_now = float(fine_metrics_df.loc[idx_best, "k"])
-    k_min_now = float(fine_metrics_df["k"].min())
-    k_max_now = float(fine_metrics_df["k"].max())
-    at_lower_edge = np.isclose(k_best_now, k_min_now)
-    at_upper_edge = np.isclose(k_best_now, k_max_now)
-
-    if not (at_lower_edge or at_upper_edge):
-        break
-
-    if at_lower_edge and k_min_now > k_hard_min:
-        new_center = max(k_hard_min, k_best_now - fine_half_range)
-    elif at_upper_edge and k_max_now < k_hard_max:
-        new_center = min(k_hard_max, k_best_now + fine_half_range)
-    else:
-        break
-
-    k_fine_values = np.round(
-        np.arange(
-            new_center - fine_half_range, new_center + fine_half_range + 1e-9, fine_step
-        ),
-        3,
-    )
-    k_fine_values = k_fine_values[
-        (k_fine_values >= k_hard_min) & (k_fine_values <= k_hard_max)
-    ]
-    fine_metrics_df = _evaluate_k_grid(k_fine_values, label="fine")
-    fine_metrics_df = _add_composite_score(fine_metrics_df)
-
-print("✅ Fine k sweep complete")
-if debug:
-    display(fine_metrics_df)
-
-# Suggested k from final fine sweep
-if len(fine_metrics_df) >= 3 and not fine_metrics_df["composite_score"].isna().all():
+# Suggested k from single sweep
+if len(sweep_metrics_df) >= 3 and not sweep_metrics_df["composite_score"].isna().all():
     k_suggested = float(
-        fine_metrics_df.loc[fine_metrics_df["composite_score"].idxmax(), "k"]
+        sweep_metrics_df.loc[sweep_metrics_df["composite_score"].idxmax(), "k"]
     )
 else:
-    k_suggested = float(k_coarse_best)
+    k_suggested = float(k_fallback)
 
-print(f"🎯 Suggested k from fine sweep: {k_suggested:.2f}")
+print(f"🎯 Suggested k from sweep: {k_suggested:.2f}")
 
 # Apply absolute over-detection offset with stability guardrail.
-fine_k_vals = fine_metrics_df["k"].to_numpy(dtype=float)
-fine_stability_vals = fine_metrics_df["stability_score"].to_numpy(dtype=float)
-best_stability = float(np.interp(k_suggested, fine_k_vals, fine_stability_vals))
+if len(sweep_metrics_df) > 0 and sweep_metrics_df["stability_score"].notna().any():
+    sweep_k_vals = sweep_metrics_df["k"].to_numpy(dtype=float)
+    sweep_stability_vals = sweep_metrics_df["stability_score"].to_numpy(dtype=float)
+    best_stability = float(np.interp(k_suggested, sweep_k_vals, sweep_stability_vals))
 
-k_offset_applied = float(k_overdetect_offset)
-while True:
-    k_candidate = float(np.clip(k_suggested + k_offset_applied, k_hard_min, k_hard_max))
-    stability_candidate = float(
-        np.interp(k_candidate, fine_k_vals, fine_stability_vals)
+    k_offset_applied = float(k_overdetect_offset)
+    while True:
+        k_candidate = float(
+            np.clip(k_suggested + k_offset_applied, k_hard_min, k_hard_max)
+        )
+        stability_candidate = float(
+            np.interp(k_candidate, sweep_k_vals, sweep_stability_vals)
+        )
+        if stability_candidate >= (best_stability - stability_guardrail_drop):
+            break
+        if k_offset_applied >= 0.0:
+            break
+        k_offset_applied = min(0.0, k_offset_applied + 0.05)
+
+    k_selected = float(np.clip(k_suggested + k_offset_applied, k_hard_min, k_hard_max))
+    stability_selected = float(
+        np.interp(k_selected, sweep_k_vals, sweep_stability_vals)
     )
-    if stability_candidate >= (best_stability - stability_guardrail_drop):
-        break
-    if k_offset_applied >= 0.0:
-        break
-    k_offset_applied = min(0.0, k_offset_applied + 0.05)
-
-k_selected = float(np.clip(k_suggested + k_offset_applied, k_hard_min, k_hard_max))
-stability_selected = float(np.interp(k_selected, fine_k_vals, fine_stability_vals))
+else:
+    # Fallback when sweep grid is empty after hard-bound clipping.
+    k_offset_applied = 0.0
+    k_selected = float(np.clip(k_suggested, k_hard_min, k_hard_max))
+    best_stability = np.nan
+    stability_selected = np.nan
 
 # Run final detection using the guardrail-adjusted selected k for downstream QC/analysis.
 selected_events_df, vel_thresh, vel_mean, vel_std = _events_for_k(k_selected)
@@ -513,7 +673,7 @@ fig_k = make_subplots(
     cols=2,
     subplot_titles=(
         "Number of saccades",
-        "% near refractory limit",
+        "Velocity threshold",
         "Median duration",
         "Median amplitude",
         "Stability score",
@@ -541,38 +701,19 @@ def _add_metric_trace(
     )
 
 
-_add_metric_trace(coarse_metrics_df, "k", "n_saccades", 1, 1, "coarse", "royalblue")
-_add_metric_trace(fine_metrics_df, "k", "n_saccades", 1, 1, "fine", "darkorange")
+_add_metric_trace(sweep_metrics_df, "k", "n_saccades", 1, 1, "sweep", "royalblue")
 
-_add_metric_trace(
-    coarse_metrics_df, "k", "pct_near_refractory", 1, 2, "coarse", "royalblue"
-)
-_add_metric_trace(
-    fine_metrics_df, "k", "pct_near_refractory", 1, 2, "fine", "darkorange"
-)
+_add_metric_trace(sweep_metrics_df, "k", "vel_thresh", 1, 2, "sweep", "royalblue")
 
-_add_metric_trace(
-    coarse_metrics_df, "k", "median_duration", 2, 1, "coarse", "royalblue"
-)
-_add_metric_trace(fine_metrics_df, "k", "median_duration", 2, 1, "fine", "darkorange")
+_add_metric_trace(sweep_metrics_df, "k", "median_duration", 2, 1, "sweep", "royalblue")
 
-_add_metric_trace(
-    coarse_metrics_df, "k", "median_amplitude", 2, 2, "coarse", "royalblue"
-)
-_add_metric_trace(fine_metrics_df, "k", "median_amplitude", 2, 2, "fine", "darkorange")
+_add_metric_trace(sweep_metrics_df, "k", "median_amplitude", 2, 2, "sweep", "royalblue")
 
-_add_metric_trace(
-    coarse_metrics_df, "k", "stability_score", 3, 1, "coarse", "royalblue"
-)
-_add_metric_trace(fine_metrics_df, "k", "stability_score", 3, 1, "fine", "darkorange")
+_add_metric_trace(sweep_metrics_df, "k", "stability_score", 3, 1, "sweep", "royalblue")
 
-if "composite_score" in coarse_metrics_df.columns:
+if "composite_score" in sweep_metrics_df.columns:
     _add_metric_trace(
-        coarse_metrics_df, "k", "composite_score", 3, 2, "coarse", "royalblue"
-    )
-if "composite_score" in fine_metrics_df.columns:
-    _add_metric_trace(
-        fine_metrics_df, "k", "composite_score", 3, 2, "fine", "darkorange"
+        sweep_metrics_df, "k", "composite_score", 3, 2, "sweep", "royalblue"
     )
 
 for r in (1, 2, 3):
@@ -580,7 +721,7 @@ for r in (1, 2, 3):
         fig_k.update_xaxes(title_text="k", row=r, col=c)
 
 fig_k.update_yaxes(title_text="count", row=1, col=1)
-fig_k.update_yaxes(title_text="%", row=1, col=2)
+fig_k.update_yaxes(title_text="px/s", row=1, col=2)
 fig_k.update_yaxes(title_text="seconds", row=2, col=1)
 fig_k.update_yaxes(title_text="pixels", row=2, col=2)
 fig_k.update_yaxes(title_text="0-100", row=3, col=1)
@@ -607,14 +748,11 @@ fig_k.update_yaxes(tickfont=dict(size=9), title_font=dict(size=10))
 fig_k.show()
 
 print("\nSuggested k-selection approach:")
-print("- Prefer k values with high stability_score and low % near refractory.")
+print("- Prefer k values with high stability_score and smooth count-vs-k behavior.")
 print(
     "- This heuristic is intentionally biased toward slight over-detection (lower k / more events)."
 )
-print(
-    f"- Strong penalty applied when % near refractory exceeds ~{near_refractory_soft_cap_pct:.0f}%."
-)
-print("- Fine-sweep range auto-expands if the best k lands on an edge.")
+print("- Single-pass sweep uses the coarse k-range with fine-step resolution.")
 print(
     "- Use median duration/amplitude curves as sanity checks; abrupt jumps suggest unstable detection."
 )
@@ -626,12 +764,54 @@ print(
 
 
 # %%
-# Cell 7: Amplitude filter (post-detection cleanup)
+# Cell 7: Post-detection cleanup (transient filter, then amplitude filter)
 ##########################################################################
 all_saccades_df_pre_filter = all_saccades_df.copy()
 upward_saccades_df_pre_filter = upward_saccades_df.copy()
 downward_saccades_df_pre_filter = downward_saccades_df.copy()
 
+# 1) Same-direction de-dup first (keep strongest in close clusters).
+all_saccades_df_after_detection = all_saccades_df_pre_filter.sort_values(
+    "time"
+).reset_index(drop=True)
+all_saccades_df_after_dedup, dedup_removed_saccades_df = _dedupe_same_direction_events(
+    all_saccades_df_after_detection,
+    min_isi_s=same_direction_dedup_window_s,
+)
+n_before_dedup = len(all_saccades_df_after_detection)
+n_after_dedup = len(all_saccades_df_after_dedup)
+n_removed_dedup = len(dedup_removed_saccades_df)
+removed_dedup_pct = (
+    (100.0 * n_removed_dedup / n_before_dedup) if n_before_dedup > 0 else 0.0
+)
+print(
+    f"✅ Same-direction de-dup applied (window={same_direction_dedup_window_s:.3f}s) | "
+    f"kept={n_after_dedup}/{n_before_dedup}, removed={n_removed_dedup} ({removed_dedup_pct:.1f}%)"
+)
+
+# 2) Transient-pair filter second (teal markers in Cell 8).
+all_saccades_df, transient_removed_saccades_df = _split_transient_pairs(
+    all_saccades_df_after_dedup,
+    max_isi_s=refractory_period_s,
+    max_net_displacement_px=transient_pair_max_net_displacement_px,
+)
+n_before_transient = len(all_saccades_df_after_dedup)
+n_after_transient = len(all_saccades_df)
+n_removed_transient = len(transient_removed_saccades_df)
+removed_transient_pct = (
+    (100.0 * n_removed_transient / n_before_transient)
+    if n_before_transient > 0
+    else 0.0
+)
+print(
+    f"✅ Transient-pair filter applied (window={refractory_period_s:.3f}s, "
+    f"net_disp<={transient_pair_max_net_displacement_px:.2f} px) | "
+    f"kept={n_after_transient}/{n_before_transient}, "
+    f"removed={n_removed_transient} ({removed_transient_pct:.1f}%)"
+)
+
+# 3) Amplitude filter third (gray markers in Cell 8).
+all_saccades_df_pre_amplitude = all_saccades_df.copy()
 all_saccades_df = all_saccades_df[
     all_saccades_df["amplitude"] >= min_saccade_amplitude_px
 ].copy()
@@ -640,20 +820,20 @@ upward_saccades_df = all_saccades_df[all_saccades_df["direction"] == "upward"].c
 downward_saccades_df = all_saccades_df[
     all_saccades_df["direction"] == "downward"
 ].copy()
-removed_saccades_df = all_saccades_df_pre_filter[
-    all_saccades_df_pre_filter["amplitude"] < min_saccade_amplitude_px
+removed_saccades_df = all_saccades_df_pre_amplitude[
+    all_saccades_df_pre_amplitude["amplitude"] < min_saccade_amplitude_px
 ].copy()
 
-n_before = len(all_saccades_df_pre_filter)
-n_after = len(all_saccades_df)
-n_removed = n_before - n_after
-removed_pct = (100.0 * n_removed / n_before) if n_before > 0 else 0.0
+n_before_amp = len(all_saccades_df_pre_amplitude)
+n_after_amp = len(all_saccades_df)
+n_removed_amp = len(removed_saccades_df)
+removed_amp_pct = (100.0 * n_removed_amp / n_before_amp) if n_before_amp > 0 else 0.0
 print(
     f"✅ Amplitude filter applied (min_saccade_amplitude_px={min_saccade_amplitude_px:.2f} px) | "
-    f"kept={n_after}/{n_before}, removed={n_removed} ({removed_pct:.1f}%)"
+    f"kept={n_after_amp}/{n_before_amp}, removed={n_removed_amp} ({removed_amp_pct:.1f}%)"
 )
 
-if debug and n_removed > 0:
+if debug and n_removed_amp > 0:
     display(
         removed_saccades_df[
             [
@@ -673,6 +853,13 @@ if debug and n_removed > 0:
 # Cell 8: QC plots for selected-k detection (after amplitude filtering)
 ##########################################################################
 if plot_detection_qc:
+    print(
+        "ℹ️ QC note: In decimated plots, rectangle widths may not always reflect true "
+        "saccade duration exactly."
+    )
+    print("ℹ️ Filled circles: detected saccade points (velocity threshold crossings).")
+    print("ℹ️ Teal hollow circles: transient-pair filtered events.")
+    print("ℹ️ Gray hollow circles: events dropped by the amplitude threshold.")
     # Fast QC settings
     qc_max_points_global = 30000
     qc_max_points_velocity = 150000
@@ -680,7 +867,7 @@ if plot_detection_qc:
     qc_density_step_s = 10.0
     qc_local_window_s = 30.0
 
-    # 1) Global lightweight overview (decimated traces + event rugs)
+    # 1) Global lightweight overview (decimated traces + event spans/peaks)
     time_rel_s = (df_work["Seconds"] - df_work["Seconds"].iloc[0]).to_numpy()
     n_pts = len(df_work)
     stride_pos = max(1, int(np.ceil(n_pts / qc_max_points_global)))
@@ -695,7 +882,7 @@ if plot_detection_qc:
         vertical_spacing=0.08,
         subplot_titles=(
             "X position (decimated)",
-            "Velocity with threshold + event rugs",
+            "Velocity with threshold",
         ),
     )
 
@@ -739,33 +926,103 @@ if plot_detection_qc:
         col=1,
     )
 
-    # Event rugs are much faster than drawing hundreds of rectangles.
+    # Direction-colored threshold-crossing markers on position panel.
+    # Use start_time (onset crossing) and draw as dots.
     if len(upward_saccades_df) > 0:
+        up_x = upward_saccades_df["start_time"] - df_work["Seconds"].iloc[0]
+        up_y = np.interp(
+            upward_saccades_df["start_time"].to_numpy(dtype=float),
+            df_work["Seconds"].to_numpy(dtype=float),
+            df_work["X_raw"].to_numpy(dtype=float),
+        )
         fig_overlay.add_trace(
             go.Scatter(
-                x=upward_saccades_df["time"] - df_work["Seconds"].iloc[0],
-                y=np.full(len(upward_saccades_df), vel_thresh * 1.02),
+                x=up_x,
+                y=up_y,
                 mode="markers",
-                name="upward events (rug)",
-                marker=dict(color="limegreen", size=5, symbol="line-ns"),
+                name="upward threshold-crossing",
+                marker=dict(color="limegreen", size=7, symbol="circle"),
             ),
-            row=2,
+            row=1,
             col=1,
         )
     if len(downward_saccades_df) > 0:
+        down_x = downward_saccades_df["start_time"] - df_work["Seconds"].iloc[0]
+        down_y = np.interp(
+            downward_saccades_df["start_time"].to_numpy(dtype=float),
+            df_work["Seconds"].to_numpy(dtype=float),
+            df_work["X_raw"].to_numpy(dtype=float),
+        )
         fig_overlay.add_trace(
             go.Scatter(
-                x=downward_saccades_df["time"] - df_work["Seconds"].iloc[0],
-                y=np.full(len(downward_saccades_df), -vel_thresh * 1.02),
+                x=down_x,
+                y=down_y,
                 mode="markers",
-                name="downward events (rug)",
-                marker=dict(color="mediumpurple", size=5, symbol="line-ns"),
+                name="downward threshold-crossing",
+                marker=dict(color="mediumpurple", size=7, symbol="circle"),
             ),
-            row=2,
+            row=1,
             col=1,
         )
 
-    # Direction-colored event spans on X-position panel only (row 1).
+    # Threshold-crossings filtered as transient pairs (post-hoc refractory logic).
+    # Show as teal hollow circles on position panel only (no duration rectangles).
+    if (
+        "transient_removed_saccades_df" in globals()
+        and len(transient_removed_saccades_df) > 0
+    ):
+        transient_x = (
+            transient_removed_saccades_df["start_time"] - df_work["Seconds"].iloc[0]
+        )
+        transient_y = np.interp(
+            transient_removed_saccades_df["start_time"].to_numpy(dtype=float),
+            df_work["Seconds"].to_numpy(dtype=float),
+            df_work["X_raw"].to_numpy(dtype=float),
+        )
+        fig_overlay.add_trace(
+            go.Scatter(
+                x=transient_x,
+                y=transient_y,
+                mode="markers",
+                name="transient-pair filtered threshold-crossing",
+                marker=dict(
+                    color="rgba(0,0,0,0)",
+                    size=8,
+                    symbol="circle",
+                    line=dict(color="darkcyan", width=1.5),
+                ),
+            ),
+            row=1,
+            col=1,
+        )
+
+    # Threshold-crossings that were filtered out by amplitude threshold.
+    # Show as gray hollow circles on position panel only (no duration rectangles).
+    if "removed_saccades_df" in globals() and len(removed_saccades_df) > 0:
+        removed_x = removed_saccades_df["start_time"] - df_work["Seconds"].iloc[0]
+        removed_y = np.interp(
+            removed_saccades_df["start_time"].to_numpy(dtype=float),
+            df_work["Seconds"].to_numpy(dtype=float),
+            df_work["X_raw"].to_numpy(dtype=float),
+        )
+        fig_overlay.add_trace(
+            go.Scatter(
+                x=removed_x,
+                y=removed_y,
+                mode="markers",
+                name="amplitude-filtered threshold-crossing",
+                marker=dict(
+                    color="rgba(0,0,0,0)",
+                    size=8,
+                    symbol="circle",
+                    line=dict(color="gray", width=1.5),
+                ),
+            ),
+            row=1,
+            col=1,
+        )
+
+    # Direction-colored event spans only on position panel (start_time->end_time).
     # Build all shapes first, then assign once (much faster than add_shape in a loop).
     if len(all_saccades_df) > 0:
         t0 = float(df_work["Seconds"].iloc[0])
@@ -883,44 +1140,51 @@ if plot_detection_qc:
             col=3,
         )
 
-        if len(all_saccades_df) >= 2:
-            isi = np.diff(np.sort(all_saccades_df["time"].to_numpy()))
-            isi = isi[isi > 0]
-            if len(isi) > 0:
-                isi_min = float(np.min(isi))
-                isi_max = float(np.max(isi))
-                if np.isclose(isi_min, isi_max):
-                    bins = np.array([isi_min * 0.8, isi_max * 1.2])
-                else:
-                    bins = np.logspace(np.log10(isi_min), np.log10(isi_max), 80)
-                counts, edges = np.histogram(isi, bins=bins)
-                centers = np.sqrt(edges[:-1] * edges[1:])
-                fig_dist.add_trace(
-                    go.Bar(
-                        x=centers,
-                        y=counts,
-                        width=np.diff(edges),
-                        marker_color="darkcyan",
-                        opacity=0.85,
-                        name="ISI (kept)",
-                    ),
-                    row=1,
-                    col=4,
-                )
-                fig_dist.update_xaxes(type="log", row=1, col=4)
-                fig_dist.add_vline(
-                    x=refractory_period_s,
-                    line_dash="dash",
-                    line_color="red",
-                    row=1,
-                    col=4,
-                )
+        isi_kept = (
+            np.diff(np.sort(all_saccades_df["time"].to_numpy()))
+            if len(all_saccades_df) >= 2
+            else np.array([])
+        )
+        isi_kept = isi_kept[isi_kept > 0]
+
+        if len(isi_kept) > 0:
+            isi_min = float(np.min(isi_kept))
+            isi_max = float(np.max(isi_kept))
+            if np.isclose(isi_min, isi_max):
+                bins = np.array([isi_min * 0.8, isi_max * 1.2])
             else:
-                print(
-                    "ℹ️ ISI panel empty (all ISI values are non-positive after filtering)."
-                )
+                bins = np.logspace(np.log10(isi_min), np.log10(isi_max), 80)
+
+            counts_kept, edges_kept = np.histogram(isi_kept, bins=bins)
+            centers_kept = np.sqrt(edges_kept[:-1] * edges_kept[1:])
+            fig_dist.add_trace(
+                go.Bar(
+                    x=centers_kept,
+                    y=counts_kept,
+                    width=np.diff(edges_kept),
+                    marker_color="darkcyan",
+                    opacity=0.85,
+                    name=f"ISI kept (n={len(isi_kept)})",
+                ),
+                row=1,
+                col=4,
+            )
+
+            fig_dist.update_xaxes(type="log", row=1, col=4)
+            fig_dist.update_xaxes(
+                range=[np.log10(0.1), np.log10(max(isi_max, 0.1 * 1.01))],
+                row=1,
+                col=4,
+            )
+            fig_dist.add_vline(
+                x=refractory_period_s,
+                line_dash="dash",
+                line_color="red",
+                row=1,
+                col=4,
+            )
         else:
-            print("ℹ️ ISI panel empty (need at least 2 detected saccades).")
+            print("ℹ️ ISI panel empty (need at least 2 kept detected saccades).")
 
         fig_dist.update_layout(
             template="plotly_white",
@@ -951,17 +1215,14 @@ if plot_detection_qc:
 ##########################################################################
 # Relative-time windows requested for detailed inspection
 manual_qc_windows = [
-    (162.0, 164.0, ""),
+    (162, 164, "overdetection"),
     (216.0, 218.0, "fast transient"),
-    (466.0, 468.0, ""),
-    (488.0, 490.0, ""),
-    (569.0, 571.0, "blinkdrop"),
-    (571.0, 573.0, "blinkdrop"),
-    (573.0, 575.0, "blinkdrop"),
-    (780.0, 782.0, ""),
-    (1210.0, 1212.0, ""),
-    (1214.0, 1216.0, ""),
-    (1592.0, 1594.0, ""),
+    (575.0, 576.0, ""),
+    (640.0, 645.0, "small saccade filtering"),
+    (1031.0, 1033.0, "fast transient"),
+    (1305.0, 1310.0, "undetected"),
+    (1370.0, 1375.0, "undetected"),
+    (1540.0, 1543.0, "undetected"),
 ]
 
 if plot_detection_qc:
@@ -1057,7 +1318,116 @@ if plot_detection_qc:
             col=col,
         )
 
-        # Direction-colored event spans on both position and velocity panels.
+        # Keep-event threshold-crossing markers on position panel.
+        up_local = upward_saccades_df[
+            (upward_saccades_df["start_time"] >= ws_abs)
+            & (upward_saccades_df["start_time"] <= we_abs)
+        ]
+        if len(up_local) > 0:
+            up_x = up_local["start_time"] - t0
+            up_y = np.interp(
+                up_local["start_time"].to_numpy(dtype=float),
+                df_work["Seconds"].to_numpy(dtype=float),
+                df_work["X_raw"].to_numpy(dtype=float),
+            )
+            fig_manual_pairs.add_trace(
+                go.Scatter(
+                    x=up_x,
+                    y=up_y,
+                    mode="markers",
+                    name="upward threshold-crossing",
+                    marker=dict(color="limegreen", size=7, symbol="circle"),
+                    showlegend=(i == 0),
+                ),
+                row=row_pos,
+                col=col,
+            )
+
+        down_local = downward_saccades_df[
+            (downward_saccades_df["start_time"] >= ws_abs)
+            & (downward_saccades_df["start_time"] <= we_abs)
+        ]
+        if len(down_local) > 0:
+            down_x = down_local["start_time"] - t0
+            down_y = np.interp(
+                down_local["start_time"].to_numpy(dtype=float),
+                df_work["Seconds"].to_numpy(dtype=float),
+                df_work["X_raw"].to_numpy(dtype=float),
+            )
+            fig_manual_pairs.add_trace(
+                go.Scatter(
+                    x=down_x,
+                    y=down_y,
+                    mode="markers",
+                    name="downward threshold-crossing",
+                    marker=dict(color="mediumpurple", size=7, symbol="circle"),
+                    showlegend=(i == 0),
+                ),
+                row=row_pos,
+                col=col,
+            )
+
+        # Transient-pair filtered events (teal hollow circles) on position panel.
+        transient_local = transient_removed_saccades_df[
+            (transient_removed_saccades_df["start_time"] >= ws_abs)
+            & (transient_removed_saccades_df["start_time"] <= we_abs)
+        ]
+        if len(transient_local) > 0:
+            transient_x = transient_local["start_time"] - t0
+            transient_y = np.interp(
+                transient_local["start_time"].to_numpy(dtype=float),
+                df_work["Seconds"].to_numpy(dtype=float),
+                df_work["X_raw"].to_numpy(dtype=float),
+            )
+            fig_manual_pairs.add_trace(
+                go.Scatter(
+                    x=transient_x,
+                    y=transient_y,
+                    mode="markers",
+                    name="transient-pair filtered threshold-crossing",
+                    marker=dict(
+                        color="rgba(0,0,0,0)",
+                        size=8,
+                        symbol="circle",
+                        line=dict(color="darkcyan", width=1.5),
+                    ),
+                    showlegend=(i == 0),
+                ),
+                row=row_pos,
+                col=col,
+            )
+
+        # Amplitude-filtered events (gray hollow circles) on position panel.
+        amp_removed_local = removed_saccades_df[
+            (removed_saccades_df["start_time"] >= ws_abs)
+            & (removed_saccades_df["start_time"] <= we_abs)
+        ]
+        if len(amp_removed_local) > 0:
+            amp_removed_x = amp_removed_local["start_time"] - t0
+            amp_removed_y = np.interp(
+                amp_removed_local["start_time"].to_numpy(dtype=float),
+                df_work["Seconds"].to_numpy(dtype=float),
+                df_work["X_raw"].to_numpy(dtype=float),
+            )
+            fig_manual_pairs.add_trace(
+                go.Scatter(
+                    x=amp_removed_x,
+                    y=amp_removed_y,
+                    mode="markers",
+                    name="amplitude-filtered threshold-crossing",
+                    marker=dict(
+                        color="rgba(0,0,0,0)",
+                        size=8,
+                        symbol="circle",
+                        line=dict(color="gray", width=1.5),
+                    ),
+                    showlegend=(i == 0),
+                ),
+                row=row_pos,
+                col=col,
+            )
+
+        # Keep-event duration spans on position panel only.
         # Use overlap condition so spans appear even if peak is just outside window.
         events_local = all_saccades_df[
             (all_saccades_df["start_time"] <= we_abs)
@@ -1083,14 +1453,6 @@ if plot_detection_qc:
                     fillcolor=fill,
                     line=dict(color=line, width=1),
                     row=row_pos,
-                    col=col,
-                )
-                fig_manual_pairs.add_vrect(
-                    x0=x0,
-                    x1=x1,
-                    fillcolor=fill,
-                    line=dict(color=line, width=1),
-                    row=row_vel,
                     col=col,
                 )
 
@@ -1128,3 +1490,60 @@ if plot_detection_qc:
                 title_font=dict(size=10),
             )
     fig_manual_pairs.show()
+
+
+# %%
+# Cell 10: Manual QC count entry (user-reported misses/overdetections)
+##########################################################################
+existing_manual_qc = metadata.get("manual_qc_counts", {})
+default_missed_saccades = int(existing_manual_qc.get("manual_missed_saccades", 0))
+default_false_positives = int(existing_manual_qc.get("manual_false_positives", 0))
+
+try:
+    import ipywidgets as widgets
+
+    header = widgets.HTML(
+        value="<b>Manual QC entry</b>: enter count of missed true saccades and overdetections."
+    )
+    missed_input = widgets.BoundedIntText(
+        value=max(0, default_missed_saccades),
+        min=0,
+        step=1,
+        description="Missed drops:",
+        style={"description_width": "120px"},
+        layout=widgets.Layout(width="320px"),
+    )
+    false_pos_input = widgets.BoundedIntText(
+        value=max(0, default_false_positives),
+        min=0,
+        step=1,
+        description="Overdetect.:",
+        style={"description_width": "120px"},
+        layout=widgets.Layout(width="320px"),
+    )
+    save_button = widgets.Button(
+        description="Save QC counts to metadata",
+        button_style="success",
+        icon="save",
+        layout=widgets.Layout(width="320px"),
+    )
+    status = widgets.HTML()
+
+    def _save_manual_qc_counts(_):
+        metadata["manual_qc_counts"] = {
+            "manual_missed_saccades": int(missed_input.value),
+            "manual_false_positives": int(false_pos_input.value),
+            "updated_utc": pd.Timestamp.utcnow().isoformat(),
+        }
+        with open(metadata_path, "w") as f:
+            json.dump(metadata, f, indent=2)
+        status.value = (
+            "✅ Saved manual QC counts: "
+            f"missed={int(missed_input.value)}, "
+            f"overdetections={int(false_pos_input.value)}"
+        )
+
+    save_button.on_click(_save_manual_qc_counts)
+    display(widgets.VBox([header, missed_input, false_pos_input, save_button, status]))
+except Exception:
+    print("⚠️ ipywidgets unavailable. Manual QC widget could not be displayed.")
