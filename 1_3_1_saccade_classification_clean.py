@@ -18,10 +18,9 @@
 #
 # This notebook currently includes only:
 # - input contract + loading of selected eye parquet from `1_2` metadata
-# - detection + k-sweep parameter block
+# - detection + filtering parameter block
 # - preprocessing (`X_raw`, `X_smooth`, `vel_x_smooth`)
-# - adaptive single-pass `k` sweep with heuristic selection
-# - final detection run at selected `k`
+# - fixed `k` detection run
 # - optional debug plot of `Ellipse.Center.X`
 #
 
@@ -154,18 +153,14 @@ else:
 
 
 # %%
-# Cell 2: Detection and k-sweep parameters
+# Cell 2: Detection and filtering parameters
 ##########################################################################
-
-# mostly tweek:
-# k_overdetect_offset for overdetection (often needed high for transient detection)
-# for transient removal: refractory_period_s, transient_pair_max_net_displacement_px
-# for amplitude filtering: min_saccade_amplitude_px
 
 # --- Signal preprocessing ---
 smoothing_window_s = 0.08  # median smoothing window before velocity calculation
 
 # --- Velocity-threshold event detection ---
+k = 2.5  # single detection sensitivity parameter
 peak_width_time_s = 0.005  # minimum peak width for velocity peaks
 onset_fraction = (
     0.2  # for saccade duration, start boundary when |vel| falls below this * threshold
@@ -173,17 +168,6 @@ onset_fraction = (
 offset_fraction = (
     0.1  # for saccade duration, end boundary when |vel| falls below this * threshold
 )
-
-# --- k-sweep search space + scoring ---
-fine_step = 0.1  # k-grid resolution
-k_hard_min = 2.0  # lower bound for tested/selected k
-k_hard_max = 4.0  # upper bound for tested/selected k
-overdetect_bias_strength = 1  # >0 favors slightly lower k (more detections)
-k_overdetect_offset = (
-    -0.25
-)  # extra push toward lower k after heuristic selection for strong overdetection
-stability_guardrail_drop = 5.0  # max allowed stability loss after k offset
-k_fallback = 4  # legacy fallback if sweep cannot produce a valid suggestion
 
 # --- Post-detection filtering ---
 refractory_period_s = 0.2  # to detect transients, transient-pair ISI window (not used in find_peaks spacing)
@@ -225,23 +209,10 @@ if isinstance(loaded_params, dict) and len(loaded_params) > 0:
         "smoothing_window_s", smoothing_window_s, float
     )
     # Velocity-threshold event detection
+    k = _param_or_default("k", k, float)
     peak_width_time_s = _param_or_default("peak_width_time_s", peak_width_time_s, float)
     onset_fraction = _param_or_default("onset_fraction", onset_fraction, float)
     offset_fraction = _param_or_default("offset_fraction", offset_fraction, float)
-    # k-sweep search space + scoring
-    fine_step = _param_or_default("fine_step", fine_step, float)
-    k_hard_min = _param_or_default("k_hard_min", k_hard_min, float)
-    k_hard_max = _param_or_default("k_hard_max", k_hard_max, float)
-    overdetect_bias_strength = _param_or_default(
-        "overdetect_bias_strength", overdetect_bias_strength, float
-    )
-    k_overdetect_offset = _param_or_default(
-        "k_overdetect_offset", k_overdetect_offset, float
-    )
-    stability_guardrail_drop = _param_or_default(
-        "stability_guardrail_drop", stability_guardrail_drop, float
-    )
-    k_fallback = _param_or_default("k_fallback", k_fallback, float)
     # Post-detection filtering
     refractory_period_s = _param_or_default(
         "refractory_period_s", refractory_period_s, float
@@ -270,7 +241,7 @@ if isinstance(loaded_params, dict) and len(loaded_params) > 0:
 
     print("ℹ️ Loaded Cell 2 parameter overrides from metadata.")
 
-print("✅ Detection and k-sweep parameters initialized")
+print("✅ Detection and filtering parameters initialized")
 
 
 # %%
@@ -280,17 +251,10 @@ cell2_params = {
     # Signal preprocessing
     "smoothing_window_s": float(smoothing_window_s),
     # Velocity-threshold event detection
+    "k": float(k),
     "peak_width_time_s": float(peak_width_time_s),
     "onset_fraction": float(onset_fraction),
     "offset_fraction": float(offset_fraction),
-    # k-sweep search space + scoring
-    "fine_step": float(fine_step),
-    "k_hard_min": float(k_hard_min),
-    "k_hard_max": float(k_hard_max),
-    "overdetect_bias_strength": float(overdetect_bias_strength),
-    "k_overdetect_offset": float(k_overdetect_offset),
-    "stability_guardrail_drop": float(stability_guardrail_drop),
-    "k_fallback": float(k_fallback),
     # Post-detection filtering
     "refractory_period_s": float(refractory_period_s),
     "same_direction_dedup_window_s": float(same_direction_dedup_window_s),
@@ -351,25 +315,18 @@ print(
 
 
 # %%
-# Cell 4: Prepare shared velocity summary for k-sweep
+# Cell 4: Prepare shared velocity summary for detection
 ##########################################################################
-# Keep one shared velocity summary for sweeps
+# Keep one shared velocity summary for thresholding.
 abs_vel = df_work["vel_x_smooth"].abs().dropna()
 if len(abs_vel) == 0:
     raise ValueError("No finite velocity samples available for saccade detection.")
-print("ℹ️ Velocity summary prepared for k-sweep detection workflow.")
+print("ℹ️ Velocity summary prepared for fixed-k detection workflow.")
 
 
 # %%
-# Cell 5: Single-pass k-value sweep for adaptive threshold tuning
+# Cell 5: Detection run with fixed k
 ##########################################################################
-k_sweep_values = np.arange(2.5, 7.0 + 1e-9, fine_step)
-
-# Enforce hard bounds for sweep grids.
-k_sweep_values = k_sweep_values[
-    (k_sweep_values >= k_hard_min) & (k_sweep_values <= k_hard_max)
-]
-
 v = df_work["vel_x_smooth"].to_numpy()
 x = df_work["X_raw"].to_numpy()
 t = df_work["Seconds"].to_numpy()
@@ -515,133 +472,8 @@ def _events_for_k(k_value: float) -> tuple[pd.DataFrame, float, float, float]:
     return events_df, vel_thresh_k, vel_mean_k, vel_std_k
 
 
-def _evaluate_k_grid(k_values: np.ndarray, label: str) -> pd.DataFrame:
-    if len(k_values) == 0:
-        return pd.DataFrame(
-            columns=[
-                "sweep",
-                "k",
-                "vel_thresh",
-                "vel_mean",
-                "vel_std",
-                "n_saccades",
-                "median_duration",
-                "median_amplitude",
-                "stability_score",
-            ]
-        )
-
-    rows = []
-    for kval in k_values:
-        events_df, thr, m, s = _events_for_k(float(kval))
-        n = len(events_df)
-        rows.append(
-            {
-                "sweep": label,
-                "k": float(kval),
-                "vel_thresh": float(thr),
-                "vel_mean": float(m),
-                "vel_std": float(s),
-                "n_saccades": int(n),
-                "median_duration": float(events_df["duration"].median())
-                if n > 0
-                else np.nan,
-                "median_amplitude": float(events_df["amplitude"].median())
-                if n > 0
-                else np.nan,
-            }
-        )
-
-    df_metrics = pd.DataFrame(rows).sort_values("k").reset_index(drop=True)
-
-    # Stability across neighboring k values based on count-change percentage.
-    n_vals = df_metrics["n_saccades"].astype(float).to_numpy()
-    local_change_pct = []
-    for i in range(len(df_metrics)):
-        changes = []
-        if i > 0 and n_vals[i - 1] > 0:
-            changes.append(abs(n_vals[i] - n_vals[i - 1]) / n_vals[i - 1] * 100.0)
-        if i < len(df_metrics) - 1 and n_vals[i + 1] > 0:
-            changes.append(
-                abs(n_vals[i + 1] - n_vals[i]) / n_vals[i] * 100.0
-                if n_vals[i] > 0
-                else np.nan
-            )
-        local_change_pct.append(
-            float(np.nanmean(changes)) if len(changes) > 0 else np.nan
-        )
-
-    # Only keep stability_score (derived from neighboring count consistency).
-    df_metrics["stability_score"] = np.clip(
-        100.0 - np.array(local_change_pct), 0.0, 100.0
-    )
-    return df_metrics
-
-
-def _add_composite_score(df_metrics: pd.DataFrame) -> pd.DataFrame:
-    """Add selection heuristic score with slight over-detection bias."""
-    if len(df_metrics) < 3:
-        df_metrics["composite_score"] = np.nan
-        return df_metrics
-
-    norm = lambda s: (s - s.mean()) / (s.std(ddof=0) + 1e-9)
-    composite_score = (
-        norm(df_metrics["stability_score"])
-        + overdetect_bias_strength * norm(df_metrics["n_saccades"])
-        - 0.25 * norm(df_metrics["k"])
-    )
-    df_metrics["composite_score"] = composite_score
-    return df_metrics
-
-
-sweep_metrics_df = _evaluate_k_grid(k_sweep_values, label="sweep")
-sweep_metrics_df = _add_composite_score(sweep_metrics_df)
-print("✅ k sweep complete")
-if debug:
-    display(sweep_metrics_df)
-
-# Suggested k from single sweep
-if len(sweep_metrics_df) >= 3 and not sweep_metrics_df["composite_score"].isna().all():
-    k_suggested = float(
-        sweep_metrics_df.loc[sweep_metrics_df["composite_score"].idxmax(), "k"]
-    )
-else:
-    k_suggested = float(k_fallback)
-
-print(f"🎯 Suggested k from sweep: {k_suggested:.2f}")
-
-# Apply absolute over-detection offset with stability guardrail.
-if len(sweep_metrics_df) > 0 and sweep_metrics_df["stability_score"].notna().any():
-    sweep_k_vals = sweep_metrics_df["k"].to_numpy(dtype=float)
-    sweep_stability_vals = sweep_metrics_df["stability_score"].to_numpy(dtype=float)
-    best_stability = float(np.interp(k_suggested, sweep_k_vals, sweep_stability_vals))
-
-    k_offset_applied = float(k_overdetect_offset)
-    while True:
-        k_candidate = float(
-            np.clip(k_suggested + k_offset_applied, k_hard_min, k_hard_max)
-        )
-        stability_candidate = float(
-            np.interp(k_candidate, sweep_k_vals, sweep_stability_vals)
-        )
-        if stability_candidate >= (best_stability - stability_guardrail_drop):
-            break
-        if k_offset_applied >= 0.0:
-            break
-        k_offset_applied = min(0.0, k_offset_applied + 0.05)
-
-    k_selected = float(np.clip(k_suggested + k_offset_applied, k_hard_min, k_hard_max))
-    stability_selected = float(
-        np.interp(k_selected, sweep_k_vals, sweep_stability_vals)
-    )
-else:
-    # Fallback when sweep grid is empty after hard-bound clipping.
-    k_offset_applied = 0.0
-    k_selected = float(np.clip(k_suggested, k_hard_min, k_hard_max))
-    best_stability = np.nan
-    stability_selected = np.nan
-
-# Run final detection using the guardrail-adjusted selected k for downstream QC/analysis.
+# Run detection using fixed k for downstream QC/analysis.
+k_selected = float(k)
 selected_events_df, vel_thresh, vel_mean, vel_std = _events_for_k(k_selected)
 all_saccades_df = selected_events_df.copy()
 upward_saccades_df = all_saccades_df[all_saccades_df["direction"] == "upward"].copy()
@@ -649,16 +481,8 @@ downward_saccades_df = all_saccades_df[
     all_saccades_df["direction"] == "downward"
 ].copy()
 
-print("✅ Final detection re-run complete (using guardrail-adjusted k)")
-print(f"  k_suggested={k_suggested:.2f}")
-print(
-    f"  requested_offset={k_overdetect_offset:+.2f}, applied_offset={k_offset_applied:+.2f}, "
-    f"k_selected={k_selected:.2f}"
-)
-print(
-    f"  stability(best={best_stability:.2f}, selected={stability_selected:.2f}, "
-    f"guardrail_drop={stability_guardrail_drop:.2f})"
-)
+print("✅ Detection complete (fixed k)")
+print(f"  k={k_selected:.2f}")
 print(f"  vel_thresh={vel_thresh:.2f} px/s")
 print(
     f"  upward={len(upward_saccades_df)}, downward={len(downward_saccades_df)}, total={len(all_saccades_df)}"
@@ -666,101 +490,7 @@ print(
 
 
 # %%
-# Cell 6: k-sweep metric curves and interpretation helpers
-##########################################################################
-fig_k = make_subplots(
-    rows=3,
-    cols=2,
-    subplot_titles=(
-        "Number of saccades",
-        "Velocity threshold",
-        "Median duration",
-        "Median amplitude",
-        "Stability score",
-        "Composite score (selection heuristic)",
-    ),
-    vertical_spacing=0.12,
-    horizontal_spacing=0.12,
-)
-
-
-def _add_metric_trace(
-    dfm: pd.DataFrame, x_col: str, y_col: str, row: int, col: int, name: str, color: str
-):
-    fig_k.add_trace(
-        go.Scatter(
-            x=dfm[x_col],
-            y=dfm[y_col],
-            mode="lines+markers",
-            name=name,
-            line=dict(color=color, width=2),
-            marker=dict(size=6),
-        ),
-        row=row,
-        col=col,
-    )
-
-
-_add_metric_trace(sweep_metrics_df, "k", "n_saccades", 1, 1, "sweep", "royalblue")
-
-_add_metric_trace(sweep_metrics_df, "k", "vel_thresh", 1, 2, "sweep", "royalblue")
-
-_add_metric_trace(sweep_metrics_df, "k", "median_duration", 2, 1, "sweep", "royalblue")
-
-_add_metric_trace(sweep_metrics_df, "k", "median_amplitude", 2, 2, "sweep", "royalblue")
-
-_add_metric_trace(sweep_metrics_df, "k", "stability_score", 3, 1, "sweep", "royalblue")
-
-if "composite_score" in sweep_metrics_df.columns:
-    _add_metric_trace(
-        sweep_metrics_df, "k", "composite_score", 3, 2, "sweep", "royalblue"
-    )
-
-for r in (1, 2, 3):
-    for c in (1, 2):
-        fig_k.update_xaxes(title_text="k", row=r, col=c)
-
-fig_k.update_yaxes(title_text="count", row=1, col=1)
-fig_k.update_yaxes(title_text="px/s", row=1, col=2)
-fig_k.update_yaxes(title_text="seconds", row=2, col=1)
-fig_k.update_yaxes(title_text="pixels", row=2, col=2)
-fig_k.update_yaxes(title_text="0-100", row=3, col=1)
-fig_k.update_yaxes(title_text="a.u.", row=3, col=2)
-
-fig_k.add_vline(x=k_suggested, line_dash="dash", line_color="green")
-fig_k.add_vline(x=k_selected, line_dash="dot", line_color="purple")
-fig_k.update_layout(
-    title=(
-        f"k-sweep metrics ({eye_with_least_low_confidence}, eye={selected_eye_code}) | "
-        f"suggested k={k_suggested:.2f}, selected k={k_selected:.2f}"
-    ),
-    template="plotly_white",
-    width=900,
-    height=650,
-    font=dict(size=10),
-    title_font=dict(size=14),
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.0),
-    legend_font=dict(size=9),
-)
-fig_k.update_annotations(font=dict(size=10))
-fig_k.update_xaxes(tickfont=dict(size=9), title_font=dict(size=10))
-fig_k.update_yaxes(tickfont=dict(size=9), title_font=dict(size=10))
-fig_k.show()
-
-print("\nSuggested k-selection approach:")
-print("- Prefer k values with high stability_score and smooth count-vs-k behavior.")
-print(
-    "- This heuristic is intentionally biased toward slight over-detection (lower k / more events)."
-)
-print("- Single-pass sweep uses the coarse k-range with fine-step resolution.")
-print(
-    "- Use median duration/amplitude curves as sanity checks; abrupt jumps suggest unstable detection."
-)
-print(f"- Current heuristic suggestion: k = {k_suggested:.2f}")
-print(
-    f"- Final selected k applies absolute offset ({k_overdetect_offset:+.2f}) with "
-    f"stability guardrail ({stability_guardrail_drop:.1f} points): k = {k_selected:.2f}"
-)
+# Cell 6 removed: k-sweep diagnostics were replaced with fixed-k detection.
 
 
 # %%
@@ -850,7 +580,7 @@ if debug and n_removed_amp > 0:
 
 
 # %%
-# Cell 8: QC plots for selected-k detection (after amplitude filtering)
+# Cell 8: QC plots for fixed-k detection (after amplitude filtering)
 ##########################################################################
 if plot_detection_qc:
     print(
@@ -1056,7 +786,7 @@ if plot_detection_qc:
         fig_overlay.update_layout(shapes=overlay_shapes)
 
     fig_overlay.update_layout(
-        title=f"Selected-k detection QC (global, fast) ({eye_with_least_low_confidence}, eye={selected_eye_code})",
+        title=f"Fixed-k detection QC (global, fast) ({eye_with_least_low_confidence}, eye={selected_eye_code})",
         template="plotly_white",
         height=650,
         legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0.0),
@@ -1498,12 +1228,24 @@ if plot_detection_qc:
 existing_manual_qc = metadata.get("manual_qc_counts", {})
 default_missed_saccades = int(existing_manual_qc.get("manual_missed_saccades", 0))
 default_false_positives = int(existing_manual_qc.get("manual_false_positives", 0))
+auto_detected_final_saccades = int(len(all_saccades_df))
 
 try:
     import ipywidgets as widgets
 
     header = widgets.HTML(
         value="<b>Manual QC entry</b>: enter count of missed true saccades and overdetections."
+    )
+    tuning_help = widgets.HTML(
+        value=(
+            "<b>Tuning suggestions</b><br>"
+            "- Change <code>k</code> for detection sensitivity "
+            "(keep in mind slight overdetection can help transient detection).<br>"
+            "- Increase <code>transient_pair_max_net_displacement_px</code> if transients are underdetected.<br>"
+            "- Increase <code>refractory_period_s</code> if transients are underdetected "
+            "(watch for overfiltering).<br>"
+            "- Increase <code>min_saccade_amplitude_px</code> to remove small events."
+        )
     )
     missed_input = widgets.BoundedIntText(
         value=max(0, default_missed_saccades),
@@ -1530,20 +1272,27 @@ try:
     status = widgets.HTML()
 
     def _save_manual_qc_counts(_):
+        manual_missed = int(missed_input.value)
+        manual_false_pos = int(false_pos_input.value)
         metadata["manual_qc_counts"] = {
-            "manual_missed_saccades": int(missed_input.value),
-            "manual_false_positives": int(false_pos_input.value),
-            "updated_utc": pd.Timestamp.utcnow().isoformat(),
+            "manual_missed_saccades": manual_missed,
+            "manual_false_positives": manual_false_pos,
+            "auto_detected_final_saccades": auto_detected_final_saccades,
         }
         with open(metadata_path, "w") as f:
             json.dump(metadata, f, indent=2)
         status.value = (
             "✅ Saved manual QC counts: "
-            f"missed={int(missed_input.value)}, "
-            f"overdetections={int(false_pos_input.value)}"
+            f"missed={manual_missed}, "
+            f"overdetections={manual_false_pos}, "
+            f"auto_detected_final_saccades={auto_detected_final_saccades}"
         )
 
     save_button.on_click(_save_manual_qc_counts)
-    display(widgets.VBox([header, missed_input, false_pos_input, save_button, status]))
+    display(
+        widgets.VBox(
+            [header, tuning_help, missed_input, false_pos_input, save_button, status]
+        )
+    )
 except Exception:
     print("⚠️ ipywidgets unavailable. Manual QC widget could not be displayed.")
