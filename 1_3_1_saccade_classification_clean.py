@@ -175,8 +175,8 @@ refractory_period_s = 0.2  # to detect transients, transient-pair ISI window (no
 same_direction_dedup_window_s = (
     refractory_period_s  # collapse close same-direction duplicates
 )
-transient_pair_max_net_displacement_px = 5.0  # max pair net displacement to classify close opposite-direction transient, i.e. does the transient come back to baseline?
-min_saccade_amplitude_px = 4.0  # minimum amplitude to keep final event
+transient_pair_max_net_displacement_px = 3.0  # max pair net displacement to classify close opposite-direction transient, i.e. does the transient come back to baseline?
+min_saccade_amplitude_px = 3.0  # minimum amplitude to keep final event
 
 # --- Optional downstream analysis/QC controls ---
 pre_window_s = 0.15  # peri-event snippet window before event time
@@ -944,77 +944,49 @@ if plot_detection_qc:
 
 
 # %%
-# Cell 10: Manual QC count entry (user-reported misses/overdetections)
+# Cell 9: Interactive saccade curation GUI
 ##########################################################################
-existing_manual_qc = metadata.get("manual_qc_counts", {})
-default_missed_saccades = int(existing_manual_qc.get("manual_missed_saccades", 0))
-default_false_positives = int(existing_manual_qc.get("manual_false_positives", 0))
-auto_detected_final_saccades = int(len(all_saccades_df))
+import sys
+from pathlib import Path as _Path
 
-try:
-    import ipywidgets as widgets
+_sleap_dir = str(_Path(__file__).resolve().parent / "sleap") if "__file__" in dir() else "sleap"
+if _sleap_dir not in sys.path:
+    sys.path.insert(0, str(_Path(_sleap_dir).resolve().parent))
 
-    header = widgets.HTML(
-        value="<b>Manual QC entry</b>: enter count of missed true saccades and overdetections."
-    )
-    tuning_help = widgets.HTML(
-        value=(
-            "<b>Tuning suggestions</b><br>"
-            "- Change <code>k</code> for detection sensitivity "
-            "(keep in mind slight overdetection can help transient detection).<br>"
-            "- Increase <code>transient_pair_max_net_displacement_px</code> if transients are underdetected.<br>"
-            "- Increase <code>refractory_period_s</code> if transients are underdetected "
-            "(watch for overfiltering).<br>"
-            "- Increase <code>min_saccade_amplitude_px</code> to remove small events."
+from sleap.saccade_curation import build_curation_gui
+
+curation_widget, curation_state = build_curation_gui(
+    df_work=df_work,
+    auto_events=all_saccades_df,
+    vel_thresh=vel_thresh,
+    cell2_params=cell2_params,
+    metadata=metadata,
+    metadata_path=metadata_path,
+    save_dir=downsampled_output_dir,
+    eye_label=f"({eye_with_least_low_confidence}, eye={selected_eye_code})",
+)
+display(curation_widget)
+
+# %%
+# Cell 10: Save curated events and metadata (click when curation + analysis are done)
+import ipywidgets as _ipyw
+
+_save_btn = _ipyw.Button(
+    description="Save curated events & metadata",
+    icon="save",
+    button_style="success",
+    layout=_ipyw.Layout(width="240px"),
+)
+_save_status = _ipyw.HTML(value="")
+
+def _on_save_click(_):
+    try:
+        result = curation_state.save(
+            downsampled_output_dir, metadata, metadata_path, cell2_params
         )
-    )
-    missed_input = widgets.BoundedIntText(
-        value=max(0, default_missed_saccades),
-        min=0,
-        step=1,
-        description="Missed drops:",
-        style={"description_width": "120px"},
-        layout=widgets.Layout(width="320px"),
-    )
-    false_pos_input = widgets.BoundedIntText(
-        value=max(0, default_false_positives),
-        min=0,
-        step=1,
-        description="Overdetect.:",
-        style={"description_width": "120px"},
-        layout=widgets.Layout(width="320px"),
-    )
-    save_button = widgets.Button(
-        description="Save QC counts to metadata",
-        button_style="success",
-        icon="save",
-        layout=widgets.Layout(width="320px"),
-    )
-    status = widgets.HTML()
+        _save_status.value = f"<span style='color:green'>✅ {result}</span>"
+    except Exception as exc:
+        _save_status.value = f"<span style='color:red'>❌ Save failed: {exc}</span>"
 
-    def _save_manual_qc_counts(_):
-        manual_missed = int(missed_input.value)
-        manual_false_pos = int(false_pos_input.value)
-        metadata["saccade_detection_parameters"] = cell2_params
-        metadata["manual_qc_counts"] = {
-            "manual_missed_saccades": manual_missed,
-            "manual_false_positives": manual_false_pos,
-            "auto_detected_final_saccades": auto_detected_final_saccades,
-        }
-        with open(metadata_path, "w") as f:
-            json.dump(metadata, f, indent=2)
-        status.value = (
-            "✅ Saved manual QC counts: "
-            f"missed={manual_missed}, "
-            f"overdetections={manual_false_pos}, "
-            f"auto_detected_final_saccades={auto_detected_final_saccades}"
-        )
-
-    save_button.on_click(_save_manual_qc_counts)
-    display(
-        widgets.VBox(
-            [header, tuning_help, missed_input, false_pos_input, save_button, status]
-        )
-    )
-except Exception:
-    print("⚠️ ipywidgets unavailable. Manual QC widget could not be displayed.")
+_save_btn.on_click(_on_save_click)
+display(_ipyw.VBox([_save_btn, _save_status]))
