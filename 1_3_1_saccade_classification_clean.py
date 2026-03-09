@@ -41,14 +41,14 @@ from plotly.subplots import make_subplots
 ##########################################################################
 
 # good S/N
-# data_path = Path(
-#     "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4/B6J2783-2025-04-28T14-57-30"
-# )
+data_path = Path(
+    "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4/B6J2783-2025-04-28T14-57-30"
+)
 
 # #bad S/N
-data_path = Path(
-    "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4/B6J2782-2025-04-28T14-22-03"
-)
+# data_path = Path(
+#     "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4/B6J2782-2025-04-28T14-22-03"
+# )
 
 # data_path = Path(
 #     "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4/B6J2781-2025-04-28T13-45-40"
@@ -161,7 +161,7 @@ else:
 smoothing_window_s = 0.08  # median smoothing window before velocity calculation
 
 # --- Velocity-threshold event detection ---
-k = 2.5  # single detection sensitivity parameter
+k = 3.4  # single detection sensitivity parameter
 peak_width_time_s = 0.005  # minimum peak width for velocity peaks
 onset_fraction = (
     0.2  # for saccade duration, start boundary when |vel| falls below this * threshold
@@ -236,7 +236,9 @@ if (
     offset_fraction = _local_scope["offset_fraction"]
     refractory_period_s = _local_scope["refractory_period_s"]
     same_direction_dedup_window_s = _local_scope["same_direction_dedup_window_s"]
-    transient_pair_max_net_displacement_px = _local_scope["transient_pair_max_net_displacement_px"]
+    transient_pair_max_net_displacement_px = _local_scope[
+        "transient_pair_max_net_displacement_px"
+    ]
     min_saccade_amplitude_px = _local_scope["min_saccade_amplitude_px"]
     pre_window_s = _local_scope["pre_window_s"]
     post_window_s = _local_scope["post_window_s"]
@@ -949,7 +951,9 @@ if plot_detection_qc:
 import sys
 from pathlib import Path as _Path
 
-_sleap_dir = str(_Path(__file__).resolve().parent / "sleap") if "__file__" in dir() else "sleap"
+_sleap_dir = (
+    str(_Path(__file__).resolve().parent / "sleap") if "__file__" in dir() else "sleap"
+)
 if _sleap_dir not in sys.path:
     sys.path.insert(0, str(_Path(_sleap_dir).resolve().parent))
 
@@ -979,6 +983,7 @@ _save_btn = _ipyw.Button(
 )
 _save_status = _ipyw.HTML(value="")
 
+
 def _on_save_click(_):
     try:
         result = curation_state.save(
@@ -987,6 +992,7 @@ def _on_save_click(_):
         _save_status.value = f"<span style='color:green'>✅ {result}</span>"
     except Exception as exc:
         _save_status.value = f"<span style='color:red'>❌ Save failed: {exc}</span>"
+
 
 _save_btn.on_click(_on_save_click)
 display(_ipyw.VBox([_save_btn, _save_status]))

@@ -5,7 +5,7 @@ Provides a Plotly FigureWidget + ipywidgets interface for:
 - Reviewing auto-detected saccade events overlaid on position/velocity traces
 - Adding missed saccades via box-select on the position trace
 - Deleting false-positive events via click on event markers
-- Saving curated events to parquet + metadata JSON
+- Saving curated events to CSV + metadata JSON
 
 Usage (from notebook cell)::
 
@@ -224,6 +224,10 @@ class CurationState:
     def get_final_events(self) -> pd.DataFrame:
         kept = self.get_kept_auto_events()
         manual = self.get_manual_events_df()
+        if len(kept) == 0:
+            return manual
+        if len(manual) == 0:
+            return kept
         merged = pd.concat([kept, manual], ignore_index=True)
         if len(merged) > 0:
             merged = merged.sort_values("time").reset_index(drop=True)
@@ -246,13 +250,50 @@ class CurationState:
         metadata_path: Path,
         cell2_params: dict,
     ) -> str:
-        """Save curated events parquet and update metadata JSON."""
+        """Save curated events CSV and update metadata JSON."""
         save_dir = Path(save_dir)
         save_dir.mkdir(parents=True, exist_ok=True)
 
         final = self.get_final_events()
-        parquet_path = save_dir / "curated_saccade_events.parquet"
-        final.to_parquet(parquet_path, index=False)
+        video = metadata.get("eye_with_least_low_confidence", "")
+        # VideoData1: upward→NT, downward→TN; VideoData2: upward→TN, downward→NT
+        if video == "VideoData1":
+            final["TNT_direction"] = final["direction"].map(
+                {"upward": "NT", "downward": "TN"}
+            )
+        elif video == "VideoData2":
+            final["TNT_direction"] = final["direction"].map(
+                {"upward": "TN", "downward": "NT"}
+            )
+        else:
+            final["TNT_direction"] = ""
+        final["TNT_direction"] = final["TNT_direction"].fillna("")
+        csv_path = save_dir / "curated_saccade_events.csv"
+        final.to_csv(csv_path, index=False)
+
+        # Save parquet with ±5 s snippets centered on each saccade
+        SNIPPET_RAD_S = 5.0
+        snippet_rows: list[dict] = []
+        for ev_idx, (_, row) in enumerate(final.iterrows()):
+            center = float(row["time"])
+            lo, hi = center - SNIPPET_RAD_S, center + SNIPPET_RAD_S
+            mask = (self._t >= lo) & (self._t <= hi)
+            t_slice = self._t[mask]
+            x_slice = self._x[mask]
+            f_slice = self._f[mask]
+            for i in range(len(t_slice)):
+                snippet_rows.append(
+                    {
+                        "event_idx": ev_idx,
+                        "time_rel": float(t_slice[i] - center),
+                        "time_abs": float(t_slice[i]),
+                        "X_raw": float(x_slice[i]),
+                        "frame_idx": int(f_slice[i]),
+                    }
+                )
+        snippets_df = pd.DataFrame(snippet_rows)
+        snippets_path = save_dir / "curated_saccade_snippets.parquet"
+        snippets_df.to_parquet(snippets_path, index=False)
 
         metadata["saccade_detection_parameters"] = cell2_params
         metadata["curation_summary"] = {
@@ -267,7 +308,8 @@ class CurationState:
             json.dump(metadata, fh, indent=2)
 
         return (
-            f"Saved {len(final)} events to {parquet_path.name} "
+            f"Saved {len(final)} events to {csv_path.name}, "
+            f"{len(snippet_rows)} snippet rows to {snippets_path.name}, "
             f"and updated {metadata_path.name}"
         )
 
@@ -429,7 +471,7 @@ def build_curation_gui(
     metadata_path : Path
         Path to the metadata JSON file.
     save_dir : Path
-        Directory for saving curated parquet.
+        Directory for saving curated CSV.
     eye_label : str, optional
         Label for figure title (e.g. "VideoData1, eye=L").
     """
@@ -451,22 +493,48 @@ def build_curation_gui(
     t0 = float(t_arr[0])
 
     # Load previous curation if saved (so rerunning Cell 9 preserves edits)
-    parquet_path = save_dir / "curated_saccade_events.parquet"
+    csv_path = save_dir / "curated_saccade_events.csv"
     deleted_auto: set[int] | None = None
     manual_events: list[dict] | None = None
-    if parquet_path.exists():
-        curated = pd.read_parquet(parquet_path)
-        if "source" in curated.columns and len(curated) > 0:
-            auto_curated = curated[curated["source"] == "auto"]
-            manual_df = curated[curated["source"] == "manual"]
-            # Match curated auto events to original by time → kept indices
-            orig_times = auto_events["time"].to_numpy(dtype=float)
-            kept: set[int] = set()
-            for _, row in auto_curated.iterrows():
-                i = int(np.argmin(np.abs(orig_times - float(row["time"]))))
-                kept.add(i)
-            deleted_auto = set(range(len(auto_events))) - kept
-            manual_events = manual_df.to_dict("records") if len(manual_df) > 0 else []
+    if csv_path.exists():
+        curated = pd.read_csv(csv_path)
+    else:
+        curated = None
+    if curated is not None and len(curated) > 0 and "source" in curated.columns:
+        # Normalize source column (strip whitespace, handle CSV quirks)
+        curated["source"] = curated["source"].astype(str).str.strip()
+        auto_curated = curated[curated["source"] == "auto"]
+        manual_df = curated[curated["source"] == "manual"]
+        # Match curated auto events to original by time → kept indices
+        orig_times = auto_events["time"].to_numpy(dtype=float)
+        kept: set[int] = set()
+        for _, row in auto_curated.iterrows():
+            i = int(np.argmin(np.abs(orig_times - float(row["time"]))))
+            kept.add(i)
+        deleted_auto = set(range(len(auto_events))) - kept
+        # Build manual_events with EVENT_COLUMNS schema (native Python types)
+        if len(manual_df) > 0:
+            manual_events = []
+            for _, row in manual_df.iterrows():
+                ev = {
+                    "direction": str(row["direction"]).strip(),
+                    "time": float(row["time"]),
+                    "velocity": float(row["velocity"]),
+                    "start_time": float(row["start_time"]),
+                    "end_time": float(row["end_time"]),
+                    "duration": float(row["duration"]),
+                    "start_position": float(row["start_position"]),
+                    "end_position": float(row["end_position"]),
+                    "amplitude": float(row["amplitude"]),
+                    "displacement": float(row["displacement"]),
+                    "start_frame_idx": int(float(row["start_frame_idx"])),
+                    "peak_frame_idx": int(float(row["peak_frame_idx"])),
+                    "end_frame_idx": int(float(row["end_frame_idx"])),
+                    "source": "manual",
+                }
+                manual_events.append(ev)
+        else:
+            manual_events = []
 
     state = CurationState(
         auto_events,
@@ -506,6 +574,32 @@ def build_curation_gui(
         button_style="success",
         layout=widgets.Layout(width="140px"),
     )
+    event_jump_int = widgets.BoundedIntText(
+        value=1,
+        min=1,
+        max=9999,
+        description="Event #:",
+        layout=widgets.Layout(width="180px"),
+        style={"description_width": "60px"},
+    )
+    go_event_btn = widgets.Button(
+        description="Go",
+        button_style="info",
+        layout=widgets.Layout(width="50px"),
+    )
+    gap_jump_int = widgets.BoundedIntText(
+        value=1,
+        min=1,
+        max=9999,
+        description="Gap #:",
+        layout=widgets.Layout(width="180px"),
+        style={"description_width": "60px"},
+    )
+    go_gap_btn = widgets.Button(
+        description="Go",
+        button_style="info",
+        layout=widgets.Layout(width="50px"),
+    )
     shortcuts_html = widgets.HTML(
         value=(
             "<span style='color:gray; font-size:0.9em'>"
@@ -514,7 +608,7 @@ def build_curation_gui(
             "<b>Click</b> start + end to add &nbsp;|&nbsp; "
             "<b>]</b> delete &nbsp;|&nbsp; "
             "<b>Z</b> undo &nbsp;|&nbsp; "
-            "<b>Done curating</b> when finished"
+            "<b>Jump:</b> Event/Gap # + Go"
             "</span>"
         )
     )
@@ -531,6 +625,9 @@ def build_curation_gui(
 
     def _update_summary():
         summary_html.value = f"<b style='font-size:1.1em'>{state.summary_text()}</b>"
+        n_ev = len(state.get_final_events())
+        event_jump_int.max = max(1, n_ev)
+        gap_jump_int.max = max(1, len(_compute_gaps()))
 
     def _set_status(msg: str):
         status_html.value = f"<i>{msg}</i>"
@@ -724,6 +821,8 @@ def build_curation_gui(
             f"{src}</span>"
         )
         _navigate_to_time(float(ev["time"]), label)
+        event_jump_int.value = idx + 1
+        event_jump_int.max = n_events
 
     # -- Gap navigation (E/R) ----------------------------------------------
     def _compute_gaps() -> list[tuple[float, float]]:
@@ -791,6 +890,7 @@ def build_curation_gui(
         print(
             f"Recording range: t_abs=[{t0:.6f}, {rec_end:.6f}], t_rel=[0, {rec_end - t0:.6f}] s"
         )
+        print("Curation window opening takes a few seconds to load")
 
     def _navigate_to_gap(gap_idx: int):
         gaps = _compute_gaps()
@@ -816,9 +916,12 @@ def build_curation_gui(
             "Click to add saccade, <b>E</b>/<b>R</b> for prev/next gap, "
             "<b>W</b>/<b>Q</b> to return to events."
         )
+        gap_jump_int.value = gap_idx + 1
+        gap_jump_int.max = n_gaps
 
     # Show the first event
     _navigate_to(0)
+    gap_jump_int.max = max(1, len(_compute_gaps()))
 
     # -- Navigation callbacks ----------------------------------------------
     def _go_prev(_=None):
@@ -931,7 +1034,43 @@ def build_curation_gui(
 
     done_btn.on_click(_on_done)
 
+    def _go_to_event(_=None):
+        n = len(state.get_final_events())
+        if n == 0:
+            _set_status("No events.")
+            return
+        idx = max(0, min(int(event_jump_int.value) - 1, n - 1))
+        event_jump_int.value = idx + 1
+        add_click_state["pending_start_rel"] = None
+        _navigate_to(idx)
+
+    def _go_to_gap(_=None):
+        gaps = _compute_gaps()
+        n = len(gaps)
+        if n == 0:
+            _set_status("No gaps.")
+            return
+        idx = max(0, min(int(gap_jump_int.value) - 1, n - 1))
+        gap_jump_int.value = idx + 1
+        add_click_state["pending_start_rel"] = None
+        _navigate_to_gap(idx)
+
+    go_event_btn.on_click(_go_to_event)
+    go_gap_btn.on_click(_go_to_gap)
+
     # -- Layout assembly ---------------------------------------------------
+    jump_row = widgets.HBox(
+        [
+            event_jump_int,
+            go_event_btn,
+            widgets.HTML(value="&nbsp;&nbsp;"),
+            gap_jump_int,
+            go_gap_btn,
+        ],
+        layout=widgets.Layout(
+            justify_content="flex-start", align_items="center", gap="8px"
+        ),
+    )
     action_row = widgets.HBox(
         [undo_btn, done_btn],
         layout=widgets.Layout(
@@ -946,7 +1085,15 @@ def build_curation_gui(
     )
 
     container = widgets.VBox(
-        [nav_row, shortcuts_html, summary_html, status_html, fw, action_row],
+        [
+            nav_row,
+            jump_row,
+            shortcuts_html,
+            summary_html,
+            status_html,
+            fw,
+            action_row,
+        ],
         layout=widgets.Layout(width="100%"),
     )
 
