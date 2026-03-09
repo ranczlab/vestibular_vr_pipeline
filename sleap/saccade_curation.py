@@ -890,7 +890,8 @@ def build_curation_gui(
         print(
             f"Recording range: t_abs=[{t0:.6f}, {rec_end:.6f}], t_rel=[0, {rec_end - t0:.6f}] s"
         )
-        print("Curation window opening takes a few seconds to load")
+        print("Curation window opening takes a few seconds!")
+        print("Navigating between gaps can take a long time as they can be long.")
 
     def _navigate_to_gap(gap_idx: int):
         gaps = _compute_gaps()

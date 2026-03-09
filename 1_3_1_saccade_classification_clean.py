@@ -41,9 +41,9 @@ from plotly.subplots import make_subplots
 ##########################################################################
 
 # good S/N
-data_path = Path(
-    "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4/B6J2783-2025-04-28T14-57-30"
-)
+# data_path = Path(
+#     "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4/B6J2783-2025-04-28T14-57-30"
+# )
 
 # #bad S/N
 # data_path = Path(
@@ -53,6 +53,11 @@ data_path = Path(
 # data_path = Path(
 #     "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4/B6J2781-2025-04-28T13-45-40"
 # )
+
+data_path = Path(
+    "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4/B6J2780-2025-04-28T13-10-18"
+)
+
 
 override_detect_params_with_metadata = True
 debug = False
