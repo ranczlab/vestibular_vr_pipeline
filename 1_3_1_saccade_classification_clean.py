@@ -16,12 +16,13 @@
 # %% [markdown]
 # ## 1_3_1 Saccade Detection + Quantification (rebuild)
 #
-# This notebook currently includes only:
+# This notebook includes:
 # - input contract + loading of selected eye parquet from `1_2` metadata
 # - detection + filtering parameter block
 # - preprocessing (`X_raw`, `X_smooth`, `vel_x_smooth`)
-# - fixed `k` detection run
-# - optional debug plot of `Ellipse.Center.X`
+# - velocity-threshold saccade detection
+# - post-detection filtering (dedup, transient-pair, amplitude)
+# - QC plots and manual QC annotation
 #
 
 # %%
@@ -40,20 +41,20 @@ from plotly.subplots import make_subplots
 ##########################################################################
 
 # good S/N
-data_path = Path(
-    "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4/B6J2783-2025-04-28T14-57-30"
-)
+# data_path = Path(
+#     "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4/B6J2783-2025-04-28T14-57-30"
+# )
 
 # #bad S/N
-# data_path = Path(
-#     "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4/B6J2782-2025-04-28T14-22-03"
-# )
+data_path = Path(
+    "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4/B6J2782-2025-04-28T14-22-03"
+)
 
 # data_path = Path(
 #     "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4/B6J2781-2025-04-28T13-45-40"
 # )
 
-
+override_detect_params_with_metadata = True
 debug = False
 
 save_path = data_path.parent / f"{data_path.name}_processedData"
@@ -184,9 +185,13 @@ baseline_window_start_s = -0.06  # baseline window start (relative to event)
 baseline_window_end_s = -0.02  # baseline window end (relative to event)
 plot_detection_qc = True  # render Cell 8/9 QC figures
 
-# If metadata already has saved parameters, override defaults from this cell.
+# If enabled, metadata can override Cell 2 defaults from prior runs.
 loaded_params = metadata.get("saccade_detection_parameters", {})
-if isinstance(loaded_params, dict) and len(loaded_params) > 0:
+if (
+    override_detect_params_with_metadata
+    and isinstance(loaded_params, dict)
+    and len(loaded_params) > 0
+):
 
     def _as_bool(value):
         if isinstance(value, bool):
@@ -197,47 +202,47 @@ if isinstance(loaded_params, dict) and len(loaded_params) > 0:
             return value.strip().lower() in {"1", "true", "yes", "y", "on"}
         return bool(value)
 
-    def _param_or_default(key, default, caster):
-        raw_value = loaded_params.get(key, default)
-        try:
-            return caster(raw_value)
-        except (TypeError, ValueError):
-            return default
+    _overridable_params = {
+        "smoothing_window_s": float,
+        "k": float,
+        "peak_width_time_s": float,
+        "onset_fraction": float,
+        "offset_fraction": float,
+        "refractory_period_s": float,
+        "same_direction_dedup_window_s": float,
+        "transient_pair_max_net_displacement_px": float,
+        "min_saccade_amplitude_px": float,
+        "pre_window_s": float,
+        "post_window_s": float,
+        "baseline_window_start_s": float,
+        "baseline_window_end_s": float,
+        "plot_detection_qc": _as_bool,
+    }
 
-    # Signal preprocessing
-    smoothing_window_s = _param_or_default(
-        "smoothing_window_s", smoothing_window_s, float
-    )
-    # Velocity-threshold event detection
-    k = _param_or_default("k", k, float)
-    peak_width_time_s = _param_or_default("peak_width_time_s", peak_width_time_s, float)
-    onset_fraction = _param_or_default("onset_fraction", onset_fraction, float)
-    offset_fraction = _param_or_default("offset_fraction", offset_fraction, float)
-    # Post-detection filtering
-    refractory_period_s = _param_or_default(
-        "refractory_period_s", refractory_period_s, float
-    )
-    same_direction_dedup_window_s = _param_or_default(
-        "same_direction_dedup_window_s", same_direction_dedup_window_s, float
-    )
-    transient_pair_max_net_displacement_px = _param_or_default(
-        "transient_pair_max_net_displacement_px",
-        transient_pair_max_net_displacement_px,
-        float,
-    )
-    min_saccade_amplitude_px = _param_or_default(
-        "min_saccade_amplitude_px", min_saccade_amplitude_px, float
-    )
-    # Optional downstream analysis/QC controls
-    pre_window_s = _param_or_default("pre_window_s", pre_window_s, float)
-    post_window_s = _param_or_default("post_window_s", post_window_s, float)
-    baseline_window_start_s = _param_or_default(
-        "baseline_window_start_s", baseline_window_start_s, float
-    )
-    baseline_window_end_s = _param_or_default(
-        "baseline_window_end_s", baseline_window_end_s, float
-    )
-    plot_detection_qc = _param_or_default("plot_detection_qc", plot_detection_qc, _as_bool)
+    _local_scope = locals()
+    for _key, _caster in _overridable_params.items():
+        if _key not in _local_scope or _key not in loaded_params:
+            continue
+        try:
+            _local_scope[_key] = _caster(loaded_params[_key])
+        except (TypeError, ValueError):
+            pass
+
+    # Propagate overrides back into the local namespace.
+    smoothing_window_s = _local_scope["smoothing_window_s"]
+    k = _local_scope["k"]
+    peak_width_time_s = _local_scope["peak_width_time_s"]
+    onset_fraction = _local_scope["onset_fraction"]
+    offset_fraction = _local_scope["offset_fraction"]
+    refractory_period_s = _local_scope["refractory_period_s"]
+    same_direction_dedup_window_s = _local_scope["same_direction_dedup_window_s"]
+    transient_pair_max_net_displacement_px = _local_scope["transient_pair_max_net_displacement_px"]
+    min_saccade_amplitude_px = _local_scope["min_saccade_amplitude_px"]
+    pre_window_s = _local_scope["pre_window_s"]
+    post_window_s = _local_scope["post_window_s"]
+    baseline_window_start_s = _local_scope["baseline_window_start_s"]
+    baseline_window_end_s = _local_scope["baseline_window_end_s"]
+    plot_detection_qc = _local_scope["plot_detection_qc"]
 
     print("ℹ️ Loaded Cell 2 parameter overrides from metadata.")
 
@@ -245,36 +250,39 @@ print("✅ Detection and filtering parameters initialized")
 
 
 # %%
-# Cell 2b: Save Cell 2 parameters into metadata
+# Cell 2b: Prepare Cell 2 parameters for metadata save (written in Cell 10)
 ##########################################################################
 cell2_params = {
-    # Signal preprocessing
-    "smoothing_window_s": float(smoothing_window_s),
-    # Velocity-threshold event detection
-    "k": float(k),
-    "peak_width_time_s": float(peak_width_time_s),
-    "onset_fraction": float(onset_fraction),
-    "offset_fraction": float(offset_fraction),
-    # Post-detection filtering
-    "refractory_period_s": float(refractory_period_s),
-    "same_direction_dedup_window_s": float(same_direction_dedup_window_s),
-    "transient_pair_max_net_displacement_px": float(
-        transient_pair_max_net_displacement_px
-    ),
-    "min_saccade_amplitude_px": float(min_saccade_amplitude_px),
-    # Optional downstream analysis/QC controls
-    "pre_window_s": float(pre_window_s),
-    "post_window_s": float(post_window_s),
-    "baseline_window_start_s": float(baseline_window_start_s),
-    "baseline_window_end_s": float(baseline_window_end_s),
-    "plot_detection_qc": bool(plot_detection_qc),
+    # Keep only currently-defined parameters to avoid stale-key crashes.
 }
 
-metadata["saccade_detection_parameters"] = cell2_params
-with open(metadata_path, "w") as f:
-    json.dump(metadata, f, indent=2)
 
-print(f"✅ Saved Cell 2 parameters to metadata: {metadata_path}")
+def _add_param_if_defined(target_dict, key, caster):
+    scope = globals()
+    if key not in scope:
+        return
+    try:
+        target_dict[key] = caster(scope[key])
+    except (TypeError, ValueError):
+        return
+
+
+_add_param_if_defined(cell2_params, "smoothing_window_s", float)
+_add_param_if_defined(cell2_params, "k", float)
+_add_param_if_defined(cell2_params, "peak_width_time_s", float)
+_add_param_if_defined(cell2_params, "onset_fraction", float)
+_add_param_if_defined(cell2_params, "offset_fraction", float)
+_add_param_if_defined(cell2_params, "refractory_period_s", float)
+_add_param_if_defined(cell2_params, "same_direction_dedup_window_s", float)
+_add_param_if_defined(cell2_params, "transient_pair_max_net_displacement_px", float)
+_add_param_if_defined(cell2_params, "min_saccade_amplitude_px", float)
+_add_param_if_defined(cell2_params, "pre_window_s", float)
+_add_param_if_defined(cell2_params, "post_window_s", float)
+_add_param_if_defined(cell2_params, "baseline_window_start_s", float)
+_add_param_if_defined(cell2_params, "baseline_window_end_s", float)
+_add_param_if_defined(cell2_params, "plot_detection_qc", bool)
+
+print("ℹ️ Cell 2 parameters prepared; they will be saved with Manual QC in Cell 10.")
 
 
 # %%
@@ -321,11 +329,11 @@ print(
 abs_vel = df_work["vel_x_smooth"].abs().dropna()
 if len(abs_vel) == 0:
     raise ValueError("No finite velocity samples available for saccade detection.")
-print("ℹ️ Velocity summary prepared for fixed-k detection workflow.")
+print("ℹ️ Velocity summary prepared for detection.")
 
 
 # %%
-# Cell 5: Detection run with fixed k
+# Cell 5: Detection run
 ##########################################################################
 v = df_work["vel_x_smooth"].to_numpy()
 x = df_work["X_raw"].to_numpy()
@@ -472,7 +480,6 @@ def _events_for_k(k_value: float) -> tuple[pd.DataFrame, float, float, float]:
     return events_df, vel_thresh_k, vel_mean_k, vel_std_k
 
 
-# Run detection using fixed k for downstream QC/analysis.
 k_selected = float(k)
 selected_events_df, vel_thresh, vel_mean, vel_std = _events_for_k(k_selected)
 all_saccades_df = selected_events_df.copy()
@@ -481,16 +488,12 @@ downward_saccades_df = all_saccades_df[
     all_saccades_df["direction"] == "downward"
 ].copy()
 
-print("✅ Detection complete (fixed k)")
+print("✅ Detection complete")
 print(f"  k={k_selected:.2f}")
 print(f"  vel_thresh={vel_thresh:.2f} px/s")
 print(
     f"  upward={len(upward_saccades_df)}, downward={len(downward_saccades_df)}, total={len(all_saccades_df)}"
 )
-
-
-# %%
-# Cell 6 removed: k-sweep diagnostics were replaced with fixed-k detection.
 
 
 # %%
@@ -580,7 +583,7 @@ if debug and n_removed_amp > 0:
 
 
 # %%
-# Cell 8: QC plots for fixed-k detection (after amplitude filtering)
+# Cell 8: QC plots (after amplitude filtering)
 ##########################################################################
 if plot_detection_qc:
     print(
@@ -786,7 +789,7 @@ if plot_detection_qc:
         fig_overlay.update_layout(shapes=overlay_shapes)
 
     fig_overlay.update_layout(
-        title=f"Fixed-k detection QC (global, fast) ({eye_with_least_low_confidence}, eye={selected_eye_code})",
+        title=f"Detection QC (global, fast) ({eye_with_least_low_confidence}, eye={selected_eye_code})",
         template="plotly_white",
         height=650,
         legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0.0),
@@ -941,288 +944,6 @@ if plot_detection_qc:
 
 
 # %%
-# Cell 9: Manual full-resolution QC windows (3-column layout)
-##########################################################################
-# Relative-time windows requested for detailed inspection
-manual_qc_windows = [
-    (162, 164, "overdetection"),
-    (216.0, 218.0, "fast transient"),
-    (575.0, 576.0, ""),
-    (640.0, 645.0, "small saccade filtering"),
-    (1031.0, 1033.0, "fast transient"),
-    (1305.0, 1310.0, "undetected"),
-    (1370.0, 1375.0, "undetected"),
-    (1540.0, 1543.0, "undetected"),
-]
-
-if plot_detection_qc:
-    t0 = float(df_work["Seconds"].iloc[0])
-    n_windows = len(manual_qc_windows)
-    n_cols = 3
-    n_rows = int(np.ceil(n_windows / n_cols))
-    n_plot_rows = 2 * n_rows
-
-    # make_subplots assigns subplot titles in row-major order.
-    # Build titles with explicit row/col indexing so each panel label matches its data.
-    subplot_titles = [""] * (n_plot_rows * n_cols)
-    for i, (ws_rel, we_rel, note) in enumerate(manual_qc_windows):
-        block_row = i // n_cols
-        row_pos = (2 * block_row) + 1
-        row_vel = row_pos + 1
-        col = i % n_cols + 1
-        note_txt = f" ({note})" if note else ""
-        base_label = f"{ws_rel:.0f}-{we_rel:.0f}s{note_txt}"
-        idx_pos = (row_pos - 1) * n_cols + (col - 1)
-        idx_vel = (row_vel - 1) * n_cols + (col - 1)
-        subplot_titles[idx_pos] = f"{base_label} - position"
-        subplot_titles[idx_vel] = f"{base_label} - velocity"
-
-    # Single paired figure per window: top=position, bottom=velocity
-    fig_manual_pairs = make_subplots(
-        rows=n_plot_rows,
-        cols=n_cols,
-        subplot_titles=tuple(subplot_titles),
-        horizontal_spacing=0.06,
-        vertical_spacing=0.08,
-    )
-
-    for i, (ws_rel, we_rel, _) in enumerate(manual_qc_windows):
-        block_row = i // n_cols
-        row_pos = (2 * block_row) + 1
-        row_vel = row_pos + 1
-        col = i % n_cols + 1
-        ws_abs = t0 + ws_rel
-        we_abs = t0 + we_rel
-
-        mask = (df_work["Seconds"] >= ws_abs) & (df_work["Seconds"] <= we_abs)
-        if not mask.any():
-            continue
-
-        x_rel = (df_work.loc[mask, "Seconds"] - t0).to_numpy()
-        x_raw = df_work.loc[mask, "X_raw"].to_numpy()
-        vel = df_work.loc[mask, "vel_x_smooth"].to_numpy()
-
-        # Position trace (top panel)
-        fig_manual_pairs.add_trace(
-            go.Scatter(
-                x=x_rel,
-                y=x_raw,
-                mode="lines",
-                line=dict(color="royalblue", width=1),
-                name="X_raw",
-                showlegend=(i == 0),
-            ),
-            row=row_pos,
-            col=col,
-        )
-
-        # Velocity trace (bottom panel)
-        fig_manual_pairs.add_trace(
-            go.Scatter(
-                x=x_rel,
-                y=vel,
-                mode="lines",
-                line=dict(color="firebrick", width=1),
-                name="vel_x_smooth",
-                showlegend=(i == 0),
-            ),
-            row=row_vel,
-            col=col,
-        )
-
-        # Threshold lines (velocity panel)
-        fig_manual_pairs.add_hline(
-            y=vel_thresh,
-            line_dash="dash",
-            line_color="green",
-            line_width=1,
-            row=row_vel,
-            col=col,
-        )
-        fig_manual_pairs.add_hline(
-            y=-vel_thresh,
-            line_dash="dash",
-            line_color="green",
-            line_width=1,
-            row=row_vel,
-            col=col,
-        )
-
-        # Keep-event threshold-crossing markers on position panel.
-        up_local = upward_saccades_df[
-            (upward_saccades_df["start_time"] >= ws_abs)
-            & (upward_saccades_df["start_time"] <= we_abs)
-        ]
-        if len(up_local) > 0:
-            up_x = up_local["start_time"] - t0
-            up_y = np.interp(
-                up_local["start_time"].to_numpy(dtype=float),
-                df_work["Seconds"].to_numpy(dtype=float),
-                df_work["X_raw"].to_numpy(dtype=float),
-            )
-            fig_manual_pairs.add_trace(
-                go.Scatter(
-                    x=up_x,
-                    y=up_y,
-                    mode="markers",
-                    name="upward threshold-crossing",
-                    marker=dict(color="limegreen", size=7, symbol="circle"),
-                    showlegend=(i == 0),
-                ),
-                row=row_pos,
-                col=col,
-            )
-
-        down_local = downward_saccades_df[
-            (downward_saccades_df["start_time"] >= ws_abs)
-            & (downward_saccades_df["start_time"] <= we_abs)
-        ]
-        if len(down_local) > 0:
-            down_x = down_local["start_time"] - t0
-            down_y = np.interp(
-                down_local["start_time"].to_numpy(dtype=float),
-                df_work["Seconds"].to_numpy(dtype=float),
-                df_work["X_raw"].to_numpy(dtype=float),
-            )
-            fig_manual_pairs.add_trace(
-                go.Scatter(
-                    x=down_x,
-                    y=down_y,
-                    mode="markers",
-                    name="downward threshold-crossing",
-                    marker=dict(color="mediumpurple", size=7, symbol="circle"),
-                    showlegend=(i == 0),
-                ),
-                row=row_pos,
-                col=col,
-            )
-
-        # Transient-pair filtered events (teal hollow circles) on position panel.
-        transient_local = transient_removed_saccades_df[
-            (transient_removed_saccades_df["start_time"] >= ws_abs)
-            & (transient_removed_saccades_df["start_time"] <= we_abs)
-        ]
-        if len(transient_local) > 0:
-            transient_x = transient_local["start_time"] - t0
-            transient_y = np.interp(
-                transient_local["start_time"].to_numpy(dtype=float),
-                df_work["Seconds"].to_numpy(dtype=float),
-                df_work["X_raw"].to_numpy(dtype=float),
-            )
-            fig_manual_pairs.add_trace(
-                go.Scatter(
-                    x=transient_x,
-                    y=transient_y,
-                    mode="markers",
-                    name="transient-pair filtered threshold-crossing",
-                    marker=dict(
-                        color="rgba(0,0,0,0)",
-                        size=8,
-                        symbol="circle",
-                        line=dict(color="darkcyan", width=1.5),
-                    ),
-                    showlegend=(i == 0),
-                ),
-                row=row_pos,
-                col=col,
-            )
-
-        # Amplitude-filtered events (gray hollow circles) on position panel.
-        amp_removed_local = removed_saccades_df[
-            (removed_saccades_df["start_time"] >= ws_abs)
-            & (removed_saccades_df["start_time"] <= we_abs)
-        ]
-        if len(amp_removed_local) > 0:
-            amp_removed_x = amp_removed_local["start_time"] - t0
-            amp_removed_y = np.interp(
-                amp_removed_local["start_time"].to_numpy(dtype=float),
-                df_work["Seconds"].to_numpy(dtype=float),
-                df_work["X_raw"].to_numpy(dtype=float),
-            )
-            fig_manual_pairs.add_trace(
-                go.Scatter(
-                    x=amp_removed_x,
-                    y=amp_removed_y,
-                    mode="markers",
-                    name="amplitude-filtered threshold-crossing",
-                    marker=dict(
-                        color="rgba(0,0,0,0)",
-                        size=8,
-                        symbol="circle",
-                        line=dict(color="gray", width=1.5),
-                    ),
-                    showlegend=(i == 0),
-                ),
-                row=row_pos,
-                col=col,
-            )
-
-        # Keep-event duration spans on position panel only.
-        # Use overlap condition so spans appear even if peak is just outside window.
-        events_local = all_saccades_df[
-            (all_saccades_df["start_time"] <= we_abs)
-            & (all_saccades_df["end_time"] >= ws_abs)
-        ]
-        if len(events_local) > 0:
-            for _, ev in events_local.iterrows():
-                x0 = max(ws_abs, ev["start_time"]) - t0
-                x1 = min(we_abs, ev["end_time"]) - t0
-                fill = (
-                    "rgba(34,139,34,0.10)"
-                    if ev["direction"] == "upward"
-                    else "rgba(128,0,128,0.10)"
-                )
-                line = (
-                    "rgba(34,139,34,0.25)"
-                    if ev["direction"] == "upward"
-                    else "rgba(128,0,128,0.25)"
-                )
-                fig_manual_pairs.add_vrect(
-                    x0=x0,
-                    x1=x1,
-                    fillcolor=fill,
-                    line=dict(color=line, width=1),
-                    row=row_pos,
-                    col=col,
-                )
-
-    fig_manual_pairs.update_layout(
-        title="Manual full-resolution QC windows: Paired position/velocity",
-        template="plotly_white",
-        height=260 * n_plot_rows,
-        width=1400,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.0),
-        font=dict(size=10),
-    )
-
-    for rr in range(1, n_plot_rows + 1):
-        for cc in range(1, n_cols + 1):
-            if rr % 2 == 0:
-                fig_manual_pairs.update_xaxes(
-                    title_text="Relative time (s)",
-                    row=rr,
-                    col=cc,
-                    tickfont=dict(size=9),
-                    title_font=dict(size=10),
-                )
-            else:
-                fig_manual_pairs.update_xaxes(
-                    showticklabels=False,
-                    row=rr,
-                    col=cc,
-                )
-
-            fig_manual_pairs.update_yaxes(
-                title_text="X position (px)" if rr % 2 == 1 else "Velocity (px/s)",
-                row=rr,
-                col=cc,
-                tickfont=dict(size=9),
-                title_font=dict(size=10),
-            )
-    fig_manual_pairs.show()
-
-
-# %%
 # Cell 10: Manual QC count entry (user-reported misses/overdetections)
 ##########################################################################
 existing_manual_qc = metadata.get("manual_qc_counts", {})
@@ -1274,6 +995,7 @@ try:
     def _save_manual_qc_counts(_):
         manual_missed = int(missed_input.value)
         manual_false_pos = int(false_pos_input.value)
+        metadata["saccade_detection_parameters"] = cell2_params
         metadata["manual_qc_counts"] = {
             "manual_missed_saccades": manual_missed,
             "manual_false_positives": manual_false_pos,
