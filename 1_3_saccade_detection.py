@@ -44,18 +44,36 @@ from plotly.subplots import make_subplots
 # data_path = Path(
 #     "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4/B6J2783-2025-04-28T14-57-30"
 # )
-
 # #bad S/N
 # data_path = Path(
 #     "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4/B6J2782-2025-04-28T14-22-03"
 # )
-
 # data_path = Path(
 #     "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4/B6J2781-2025-04-28T13-45-40"
 # )
-
+# data_path = Path(
+#     "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4/B6J2780-2025-04-28T13-10-18"
+# )
+# data_path = Path(
+#     "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day3/B6J2783-2025-04-25T13-41-53"
+# )
+# data_path = Path(
+#     "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day3/B6J2781-2025-04-25T12-30-52"
+# )
+# data_path = Path(
+#     "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day3/B6J2780-2025-04-25T11-51-53"
+# )
+# data_path = Path(
+#     "/Users/rancze/Documents/Data/vestVR/20241125_Cohort1_rotation/Visual_mismatch_day4/B6J2722-2024-12-11T15-42-27"
+# )
+# data_path = Path(
+#     "/Users/rancze/Documents/Data/vestVR/20241125_Cohort1_rotation/Visual_mismatch_day4/B6J2721-2024-12-11T15-05-01"
+# )
+# data_path = Path(
+#     "/Users/rancze/Documents/Data/vestVR/20241125_Cohort1_rotation/Visual_mismatch_day4/B6J2719-2024-12-11T14-26-30"
+# )
 data_path = Path(
-    "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4/B6J2780-2025-04-28T13-10-18"
+    "/Users/rancze/Documents/Data/vestVR/20241125_Cohort1_rotation/Visual_mismatch_day4/B6J2718-2024-12-11T13-49-13"
 )
 
 
@@ -180,7 +198,7 @@ else:
 smoothing_window_s = 0.08  # median smoothing window before velocity calculation
 
 # --- Velocity-threshold event detection ---
-k = 3.4  # single detection sensitivity parameter
+k = 3.5  # single detection sensitivity parameter
 peak_width_time_s = 0.005  # minimum peak width for velocity peaks
 onset_fraction = (
     0.2  # for saccade duration, start boundary when |vel| falls below this * threshold
@@ -190,12 +208,12 @@ offset_fraction = (
 )
 
 # --- Post-detection filtering ---
-refractory_period_s = 0.2  # to detect transients, transient-pair ISI window (not used in find_peaks spacing)
+refractory_period_s = 0.3  # to detect transients, transient-pair ISI window (not used in find_peaks spacing)
 same_direction_dedup_window_s = (
     refractory_period_s  # collapse close same-direction duplicates
 )
-transient_pair_max_net_displacement_px = 3.0  # max pair net displacement to classify close opposite-direction transient, i.e. does the transient come back to baseline?
-min_saccade_amplitude_px = 3.0  # minimum amplitude to keep final event
+transient_pair_max_net_displacement_px = 4  # max pair net displacement to classify close opposite-direction transient, i.e. does the transient come back to baseline? smaller less sensitive 
+min_saccade_amplitude_px = 3  # minimum amplitude to keep final event
 
 # --- Optional downstream analysis/QC controls ---
 pre_window_s = 0.15  # peri-event snippet window before event time
@@ -1019,3 +1037,6 @@ def _on_save_click(_):
 
 _save_btn.on_click(_on_save_click)
 display(_ipyw.VBox([_save_btn, _save_status]))
+print ("Can take 10+ seconds, be patient")
+
+# %%
