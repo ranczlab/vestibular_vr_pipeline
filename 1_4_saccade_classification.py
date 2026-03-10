@@ -12,7 +12,7 @@
 #     name: python3
 # ---
 
-# ### 1_4 Saccade classification 
+# ### 1_4 Saccade classification
 #
 # - load curated saccade events csv and saccade snipets 1_3_saccade_detection
 # - load motor velocity data_filter
@@ -95,24 +95,30 @@ if not motor_path.exists():
         f"Motor velocity data not found at {motor_path}. "
         "Run 1_1_Loading_and_Sync first."
     )
-motor_df = pd.read_parquet(motor_path, columns=["Motor_Velocity"])
+turning_df = pd.read_parquet(motor_path, columns=["Motor_Velocity", "Velocity_0Y"])
 
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
-print(f"✅ Loaded {len(saccade_events_df)} curated saccade events from {events_path.name}")
+print(
+    f"✅ Loaded {len(saccade_events_df)} curated saccade events from {events_path.name}"
+)
 print(f"   index: {saccade_events_df.index.min()} → {saccade_events_df.index.max()}")
-print(f"✅ Loaded saccade snippets: {saccade_snippets_df.shape} "
-      f"({saccade_snippets_df['event_idx'].nunique()} events)")
-print(f"   index: {saccade_snippets_df.index.min()} → {saccade_snippets_df.index.max()}")
-print(f"✅ Loaded motor velocity: {motor_df.shape}")
-print(f"   index: {motor_df.index.min()} → {motor_df.index.max()}")
+print(
+    f"✅ Loaded saccade snippets: {saccade_snippets_df.shape} "
+    f"({saccade_snippets_df['event_idx'].nunique()} events)"
+)
+print(
+    f"   index: {saccade_snippets_df.index.min()} → {saccade_snippets_df.index.max()}"
+)
+print(f"✅ Loaded motor velocity: {turning_df.shape}")
+print(f"   index: {turning_df.index.min()} → {turning_df.index.max()}")
 print(f"ℹ️ Save dir: {classification_output_dir}")
 
 if debug:
     display(saccade_events_df.head())
     display(saccade_snippets_df.head())
-    display(motor_df.head())
+    display(turning_df.head())
 
 
 # +
@@ -124,31 +130,33 @@ if debug:
 display(saccade_events_df.head(10))
 
 # ---------------------------------------------------------------------------
-# Two-row QC figure
+# Three-row QC figure
 #   Row 1: all saccade snippets (X_raw) over the recording timeline
-#   Row 2: motor velocity over the same timeline
-# All three datasets share a naive DatetimeIndex (aeon_time).
+#   Row 2: Motor_Velocity over the same timeline
+#   Row 3: Velocity_0Y over the same timeline
+# All datasets share a naive DatetimeIndex (aeon_time).
 # x-axis is relative time in seconds from the earliest sample.
 # ---------------------------------------------------------------------------
 
-# Global t0: earliest timestamp across snippets and motor velocity
-t0 = min(saccade_snippets_df.index.min(), motor_df.index.min())
+# Global t0: earliest timestamp across snippets and turning data
+t0 = min(saccade_snippets_df.index.min(), turning_df.index.min())
 
 # --- Colour map keyed on TNT_direction ---
 _colour_map = {"NT": "limegreen", "TN": "mediumpurple"}
 _tnt_by_event = (
-    saccade_events_df["TNT_direction"]
-    .reindex(saccade_snippets_df["event_idx"].unique())
+    saccade_events_df["TNT_direction"].reindex(
+        saccade_snippets_df["event_idx"].unique()
+    )
     if "TNT_direction" in saccade_events_df.columns
     else pd.Series(dtype=str)
 )
 
 fig = make_subplots(
-    rows=2,
+    rows=3,
     cols=1,
     shared_xaxes=True,
-    vertical_spacing=0.08,
-    subplot_titles=("Saccade snippets (X position)", "Motor velocity"),
+    vertical_spacing=0.06,
+    subplot_titles=("Saccade snippets (X position)", "Motor velocity", "Velocity_0Y"),
 )
 
 # --- Row 1: saccade snippets ---
@@ -174,16 +182,17 @@ for ev_idx, snip in saccade_snippets_df.groupby("event_idx"):
         col=1,
     )
 
-# --- Row 2: motor velocity (decimated to ≤30k points) ---
-n_motor = len(motor_df)
+# Shared decimation index for rows 2 and 3 (same source DataFrame)
+n_motor = len(turning_df)
 _stride = max(1, int(np.ceil(n_motor / 30_000)))
 _idx = np.arange(0, n_motor, _stride)
-motor_time_rel = (motor_df.index[_idx] - t0).total_seconds()
+_time_rel = (turning_df.index[_idx] - t0).total_seconds()
 
+# --- Row 2: Motor_Velocity (decimated) ---
 fig.add_trace(
     go.Scatter(
-        x=motor_time_rel,
-        y=motor_df["Motor_Velocity"].to_numpy()[_idx],
+        x=_time_rel,
+        y=turning_df["Motor_Velocity"].to_numpy()[_idx],
         mode="lines",
         line=dict(width=1, color="firebrick"),
         name="Motor velocity",
@@ -192,15 +201,29 @@ fig.add_trace(
     col=1,
 )
 
+# --- Row 3: Velocity_0Y (decimated) ---
+fig.add_trace(
+    go.Scatter(
+        x=_time_rel,
+        y=turning_df["Velocity_0Y"].to_numpy()[_idx],
+        mode="lines",
+        line=dict(width=1, color="darkorange"),
+        name="Velocity_0Y",
+    ),
+    row=3,
+    col=1,
+)
+
 fig.update_layout(
     template="plotly_white",
-    height=650,
-    title="Saccade QC: snippets & motor velocity",
+    height=900,
+    title="Saccade QC: snippets, motor velocity & Velocity_0Y",
     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.0),
 )
-fig.update_xaxes(title_text="Relative time (s)", row=2, col=1)
+fig.update_xaxes(title_text="Relative time (s)", row=3, col=1)
 fig.update_yaxes(title_text="X position (px)", row=1, col=1)
 fig.update_yaxes(title_text="Motor velocity (deg/s)", row=2, col=1)
+fig.update_yaxes(title_text="Velocity_0Y (deg/s)", row=3, col=1)
 fig.show()
 
 
