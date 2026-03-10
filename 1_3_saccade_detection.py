@@ -14,7 +14,7 @@
 # ---
 
 # %% [markdown]
-# ## 1_3_1 Saccade Detection + Quantification (rebuild)
+# ## 1_3 Saccade Detection + Quantification
 #
 # This notebook includes:
 # - input contract + loading of selected eye parquet from `1_2` metadata
@@ -112,7 +112,7 @@ if not video_parquet_path.exists():
         f"Parquet file not found at {video_parquet_path} for {eye_with_least_low_confidence}."
     )
 
-VideoData = pd.read_parquet(video_parquet_path).reset_index(drop=True)
+VideoData = pd.read_parquet(video_parquet_path)
 
 required_columns = ["Seconds", "Ellipse.Center.X"]
 missing_columns = [c for c in required_columns if c not in VideoData.columns]
@@ -121,6 +121,20 @@ if missing_columns:
 
 if VideoData["Seconds"].diff().dropna().le(0).any():
     raise ValueError("Seconds must be strictly increasing.")
+
+if isinstance(VideoData.index, pd.DatetimeIndex):
+    # Keep the parquet's Aeon timeline as the source of truth; float Seconds may
+    # not round-trip back to datetimes exactly after resampling.
+    aeon_index = pd.DatetimeIndex(VideoData.index)
+else:
+    # Fall back to the Aeon epoch used upstream if the parquet index is missing.
+    aeon_index = pd.to_datetime("1904-01-01") + pd.to_timedelta(
+        VideoData["Seconds"], unit="s"
+    )
+
+VideoData = VideoData.copy()
+VideoData.insert(0, "aeon_time", aeon_index.to_numpy())
+VideoData = VideoData.reset_index(drop=True)
 
 if "frame_idx" not in VideoData.columns:
     VideoData["frame_idx"] = np.arange(len(VideoData), dtype=int)
@@ -132,7 +146,7 @@ if debug:
     print(f"VideoData shape: {VideoData.shape}")
     display(VideoData.head())
 
-    # Debug plot (inline): Ellipse.Center.X vs relative time
+    # Plot in relative seconds for readability; saved event times stay in absolute Aeon time.
     time_rel_s = VideoData["Seconds"] - VideoData["Seconds"].iloc[0]
     fig = go.Figure(
         data=[
@@ -296,7 +310,7 @@ print("ℹ️ Cell 2 parameters prepared; they will be saved with Manual QC in C
 # Cell 3: Preprocess eye position for velocity-based saccade detection
 ##########################################################################
 
-df_work = VideoData[["Seconds", "Ellipse.Center.X", "frame_idx"]].copy()
+df_work = VideoData[["aeon_time", "Seconds", "Ellipse.Center.X", "frame_idx"]].copy()
 df_work["X_raw"] = df_work["Ellipse.Center.X"].astype(float)
 
 fps = 1.0 / df_work["Seconds"].diff().median()
@@ -345,6 +359,7 @@ print("ℹ️ Velocity summary prepared for detection.")
 v = df_work["vel_x_smooth"].to_numpy()
 x = df_work["X_raw"].to_numpy()
 t = df_work["Seconds"].to_numpy()
+aeon_t = pd.to_datetime(df_work["aeon_time"]).to_numpy()
 f = df_work["frame_idx"].to_numpy()
 peak_width_points = max(1, int(round(peak_width_time_s * fps)))
 
@@ -464,9 +479,12 @@ def _events_for_k(k_value: float) -> tuple[pd.DataFrame, float, float, float]:
                 {
                     "direction": direction,
                     "time": float(t[peak_idx]),
+                    "aeon_time": pd.Timestamp(aeon_t[peak_idx]),
                     "velocity": float(v[peak_idx]),
                     "start_time": float(t[start_idx]),
+                    "aeon_start_time": pd.Timestamp(aeon_t[start_idx]),
                     "end_time": float(t[end_idx]),
+                    "aeon_end_time": pd.Timestamp(aeon_t[end_idx]),
                     "duration": float(t[end_idx] - t[start_idx]),
                     "start_position": float(start_x),
                     "end_position": float(end_x),

@@ -48,12 +48,17 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Event schema shared between auto and manual saccades
 # ---------------------------------------------------------------------------
+AEON_TIME_COLUMNS = ["aeon_time", "aeon_start_time", "aeon_end_time"]
+
 EVENT_COLUMNS = [
     "direction",
     "time",
+    "aeon_time",
     "velocity",
     "start_time",
+    "aeon_start_time",
     "end_time",
+    "aeon_end_time",
     "duration",
     "start_position",
     "end_position",
@@ -66,6 +71,34 @@ EVENT_COLUMNS = [
 ]
 
 
+def _coerce_aeon_timestamp(value: Any) -> pd.Timestamp | pd.NaT:
+    """Return a pandas timestamp for Aeon-aligned values, preserving missing data."""
+    if value is None or pd.isna(value):
+        return pd.NaT
+    ts = pd.to_datetime(value, errors="coerce")
+    if pd.isna(ts):
+        return pd.NaT
+    return pd.Timestamp(ts)
+
+
+def _aeon_timestamp_from_seconds(
+    abs_seconds: float, t: np.ndarray, aeon_t: np.ndarray | None
+) -> pd.Timestamp | pd.NaT:
+    """Map absolute Aeon seconds back to the nearest Aeon datetime sample."""
+    if aeon_t is None or len(aeon_t) == 0:
+        return pd.NaT
+    idx = int(np.clip(np.searchsorted(t, abs_seconds), 0, len(t) - 1))
+    return pd.Timestamp(aeon_t[idx])
+
+
+def _isoformat_or_blank(value: Any) -> str:
+    """Serialize Aeon datetimes for CSV output."""
+    ts = _coerce_aeon_timestamp(value)
+    if pd.isna(ts):
+        return ""
+    return ts.isoformat()
+
+
 def quantify_manual_saccade(
     start_time: float,
     end_time: float,
@@ -73,6 +106,7 @@ def quantify_manual_saccade(
     x: np.ndarray,
     v: np.ndarray,
     f: np.ndarray,
+    aeon_t: np.ndarray | None = None,
 ) -> dict:
     """Quantify a manually selected saccade from start/end times.
 
@@ -100,9 +134,14 @@ def quantify_manual_saccade(
     return {
         "direction": "upward" if displacement >= 0 else "downward",
         "time": float(t[peak_idx]),
+        "aeon_time": _aeon_timestamp_from_seconds(float(t[peak_idx]), t, aeon_t),
         "velocity": float(v[peak_idx]) if np.isfinite(v[peak_idx]) else 0.0,
         "start_time": float(t[start_idx]),
+        "aeon_start_time": _aeon_timestamp_from_seconds(
+            float(t[start_idx]), t, aeon_t
+        ),
         "end_time": float(t[end_idx]),
+        "aeon_end_time": _aeon_timestamp_from_seconds(float(t[end_idx]), t, aeon_t),
         "duration": float(t[end_idx] - t[start_idx]),
         "start_position": float(x[start_idx]),
         "end_position": float(x[end_idx]),
@@ -133,6 +172,7 @@ class CurationState:
         x: np.ndarray,
         v: np.ndarray,
         f: np.ndarray,
+        aeon_t: np.ndarray | None = None,
         *,
         deleted_auto_indices: set[int] | None = None,
         manual_events: list[dict] | None = None,
@@ -152,13 +192,14 @@ class CurationState:
         self._x = x
         self._v = v
         self._f = f
+        self._aeon_t = aeon_t
 
     # -- mutators ----------------------------------------------------------
 
     def add_manual_saccade(self, start_time: float, end_time: float) -> dict:
         """Quantify and record a manually added saccade. Returns the event."""
         event = quantify_manual_saccade(
-            start_time, end_time, self._t, self._x, self._v, self._f
+            start_time, end_time, self._t, self._x, self._v, self._f, self._aeon_t
         )
         self._manual.append(event)
         self._undo_stack.append(("add_manual", len(self._manual) - 1))
@@ -269,7 +310,11 @@ class CurationState:
             final["TNT_direction"] = ""
         final["TNT_direction"] = final["TNT_direction"].fillna("")
         csv_path = save_dir / "curated_saccade_events.csv"
-        final.to_csv(csv_path, index=False)
+        final_to_save = final.copy()
+        for col in AEON_TIME_COLUMNS:
+            if col in final_to_save.columns:
+                final_to_save[col] = final_to_save[col].map(_isoformat_or_blank)
+        final_to_save.to_csv(csv_path, index=False)
 
         # Save parquet with ±5 s snippets centered on each saccade
         SNIPPET_RAD_S = 5.0
@@ -281,12 +326,18 @@ class CurationState:
             t_slice = self._t[mask]
             x_slice = self._x[mask]
             f_slice = self._f[mask]
+            aeon_slice = self._aeon_t[mask] if self._aeon_t is not None else None
             for i in range(len(t_slice)):
                 snippet_rows.append(
                     {
                         "event_idx": ev_idx,
                         "time_rel": float(t_slice[i] - center),
                         "time_abs": float(t_slice[i]),
+                        "aeon_time": (
+                            pd.Timestamp(aeon_slice[i])
+                            if aeon_slice is not None
+                            else pd.NaT
+                        ),
                         "X_raw": float(x_slice[i]),
                         "frame_idx": int(f_slice[i]),
                     }
@@ -458,7 +509,7 @@ def build_curation_gui(
     Parameters
     ----------
     df_work : DataFrame
-        Working DataFrame with columns ``Seconds``, ``X_raw``,
+        Working DataFrame with columns ``aeon_time``, ``Seconds``, ``X_raw``,
         ``vel_x_smooth``, ``frame_idx``.
     auto_events : DataFrame
         Auto-detected saccade events (output of Cell 7 filtering).
@@ -487,6 +538,7 @@ def build_curation_gui(
     save_dir = Path(save_dir)
 
     t_arr = df_work["Seconds"].to_numpy(dtype=float)
+    aeon_arr = pd.to_datetime(df_work["aeon_time"]).to_numpy()
     x_arr = df_work["X_raw"].to_numpy(dtype=float)
     v_arr = df_work["vel_x_smooth"].to_numpy(dtype=float)
     f_arr = df_work["frame_idx"].to_numpy(dtype=int)
@@ -519,9 +571,28 @@ def build_curation_gui(
                 ev = {
                     "direction": str(row["direction"]).strip(),
                     "time": float(row["time"]),
+                    "aeon_time": (
+                        _coerce_aeon_timestamp(row["aeon_time"])
+                        if "aeon_time" in row.index
+                        else _aeon_timestamp_from_seconds(float(row["time"]), t_arr, aeon_arr)
+                    ),
                     "velocity": float(row["velocity"]),
                     "start_time": float(row["start_time"]),
+                    "aeon_start_time": (
+                        _coerce_aeon_timestamp(row["aeon_start_time"])
+                        if "aeon_start_time" in row.index
+                        else _aeon_timestamp_from_seconds(
+                            float(row["start_time"]), t_arr, aeon_arr
+                        )
+                    ),
                     "end_time": float(row["end_time"]),
+                    "aeon_end_time": (
+                        _coerce_aeon_timestamp(row["aeon_end_time"])
+                        if "aeon_end_time" in row.index
+                        else _aeon_timestamp_from_seconds(
+                            float(row["end_time"]), t_arr, aeon_arr
+                        )
+                    ),
                     "duration": float(row["duration"]),
                     "start_position": float(row["start_position"]),
                     "end_position": float(row["end_position"]),
@@ -542,6 +613,7 @@ def build_curation_gui(
         x_arr,
         v_arr,
         f_arr,
+        aeon_arr,
         deleted_auto_indices=deleted_auto,
         manual_events=manual_events,
     )
