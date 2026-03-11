@@ -13,8 +13,8 @@
    - **Underdetected** (missed saccades): decrease `k` in Cell 2 (e.g. try 2.5–3.0).
    - **Overdetected** (false positives): increase `k` in Cell 2 (e.g. 3.4 or higher).
    - For noisy recordings, `k ≈ 2.5` often works well; for cleaner data, `k ≈ 3.4` or higher.
-   - increse transient_pair_max_net_displacement_px if there are too many noise transients remaining 
-   - ultimately there will be manual curation for both over- and underdetection, but overdetection is easier to deal with
+   - increse transient_pair_max_net_displacement_px if there are too many noise transients remaining (range 3-5)
+   - ultimately there will be manual curation for both over- and underdetection, but overdetection is easier to deal with.
 
 4. **Manual curation (Cell 9)**  
    Use the curation GUI:
@@ -26,7 +26,10 @@
    - **Done curating:** Click when finished.
    - **Reset:** If the GUI stops working (e.g. you can't add saccades), press Done Curating, then SAVE in Cell 10. Now you can safely re-run Cell 9 without loosing the previous curration. 
    **Notes** 
+   - curate events first (Q/W)
+   - then go through the gaps containing no events (E/R) and add missed saccades
    - manually add saccades even if post-saccade data points are missing, if it is a clear saccade
+   - if in doubt, leave / add the saccade, it can be filtered out during the curation of the classification
 
 5. **Save**  
    Run Cell 10. Click **Save curated events & metadata** when you are ready to write the curated outputs.

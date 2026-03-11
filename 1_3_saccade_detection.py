@@ -40,6 +40,9 @@ from plotly.subplots import make_subplots
 # Cell 1: Input contract + load selected eye data from 1_2 metadata
 ##########################################################################
 
+override_detect_params_with_metadata = True
+debug = False
+
 # good S/N
 # data_path = Path(
 #     "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day4/B6J2783-2025-04-28T14-57-30"
@@ -60,9 +63,9 @@ from plotly.subplots import make_subplots
 # data_path = Path(
 #     "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day3/B6J2781-2025-04-25T12-30-52"
 # )
-# data_path = Path(
-#     "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day3/B6J2780-2025-04-25T11-51-53"
-# )
+data_path = Path(
+    "/Users/rancze/Documents/Data/vestVR/20250409_Cohort3_rotation/Visual_mismatch_day3/B6J2780-2025-04-25T11-51-53"
+)
 # data_path = Path(
 #     "/Users/rancze/Documents/Data/vestVR/20241125_Cohort1_rotation/Visual_mismatch_day4/B6J2722-2024-12-11T15-42-27"
 # )
@@ -72,13 +75,24 @@ from plotly.subplots import make_subplots
 # data_path = Path(
 #     "/Users/rancze/Documents/Data/vestVR/20241125_Cohort1_rotation/Visual_mismatch_day4/B6J2719-2024-12-11T14-26-30"
 # )
-data_path = Path(
-    "/Users/rancze/Documents/Data/vestVR/20241125_Cohort1_rotation/Visual_mismatch_day4/B6J2718-2024-12-11T13-49-13"
-)
-
-
-override_detect_params_with_metadata = True
-debug = False
+# data_path = Path(
+#     "/Users/rancze/Documents/Data/vestVR/20241125_Cohort1_rotation/Visual_mismatch_day4/B6J2718-2024-12-11T13-49-13"
+# )
+# data_path = Path(
+#     "/Users/rancze/Documents/Data/vestVR/20241125_Cohort1_rotation/Visual_mismatch_day3/B6J2722-2024-12-10T14-58-52"
+# )
+# data_path = Path(
+#     "/Users/rancze/Documents/Data/vestVR/20241125_Cohort1_rotation/Visual_mismatch_day3/B6J2721-2024-12-10T14-18-54"
+# )
+# data_path = Path(
+#     "/Users/rancze/Documents/Data/vestVR/20241125_Cohort1_rotation/Visual_mismatch_day3/B6J2719-2024-12-10T13-36-31"
+# )
+# data_path = Path(
+#     "/Users/rancze/Documents/Data/vestVR/20241125_Cohort1_rotation/Visual_mismatch_day3/B6J2718-2024-12-10T12-57-02"
+# )
+# data_path = Path(
+#     "/Users/rancze/Documents/Data/vestVR/20241125_Cohort1_rotation/Visual_mismatch_day3/B6J2717-2024-12-10T12-17-03"
+# )
 
 save_path = data_path.parent / f"{data_path.name}_processedData"
 downsampled_output_dir = save_path / "downsampled_data"
@@ -198,7 +212,7 @@ else:
 smoothing_window_s = 0.08  # median smoothing window before velocity calculation
 
 # --- Velocity-threshold event detection ---
-k = 3.5  # single detection sensitivity parameter
+k = 3  # single detection sensitivity parameter
 peak_width_time_s = 0.005  # minimum peak width for velocity peaks
 onset_fraction = (
     0.2  # for saccade duration, start boundary when |vel| falls below this * threshold
@@ -208,12 +222,12 @@ offset_fraction = (
 )
 
 # --- Post-detection filtering ---
-refractory_period_s = 0.3  # to detect transients, transient-pair ISI window (not used in find_peaks spacing)
+refractory_period_s = 0.18  # to detect transients, transient-pair ISI window (not used in find_peaks spacing)
 same_direction_dedup_window_s = (
     refractory_period_s  # collapse close same-direction duplicates
 )
 transient_pair_max_net_displacement_px = 4  # max pair net displacement to classify close opposite-direction transient, i.e. does the transient come back to baseline? smaller less sensitive 
-min_saccade_amplitude_px = 3  # minimum amplitude to keep final event
+min_saccade_amplitude_px = 2.5  # minimum amplitude to keep final event
 
 # --- Optional downstream analysis/QC controls ---
 pre_window_s = 0.15  # peri-event snippet window before event time
@@ -999,6 +1013,22 @@ if _sleap_dir not in sys.path:
     sys.path.insert(0, str(_Path(_sleap_dir).resolve().parent))
 
 from sleap.saccade_curation import build_curation_gui
+
+# Preflight: make sure reruns point to this recording's curated file.
+curated_events_path = downsampled_output_dir / "curated_saccade_events.csv"
+curation_summary = metadata.get("curation_summary", {})
+if curated_events_path.exists():
+    print(
+        f"ℹ️ Found existing curated events for this recording: {curated_events_path}. "
+        "Cell 9 will preload these edits."
+    )
+elif isinstance(curation_summary, dict) and curation_summary.get("total_final", 0) > 0:
+    print(
+        "⚠️ Metadata reports previous curation, but curated_saccade_events.csv was not found "
+        f"at {curated_events_path}. Cell 9 will open with current auto-detected events."
+    )
+else:
+    print("ℹ️ No prior curated file found; Cell 9 will start from auto-detected events.")
 
 curation_widget, curation_state = build_curation_gui(
     df_work=df_work,
